@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
-    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/opencode-v2/*.test.js",
+    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/*/*.test.js",
     "audit:review": "npm run build && node dist/storage/audit-review-cli.js",
     "typecheck": "tsc --noEmit"
   },
@@ -14,8 +14,12 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.4.0",
     "@types/node": "^26.6.5",
     "@types/picomatch": "^4.0.3",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "undici": "8.12.3"
   }
 }

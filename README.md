@@ -1,215 +1,218 @@
+<p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
+</p>
+
 <h1 align="center">Project-Amos</h1>
 
 <p align="center">
-  <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Agent 行为授权与监督系统
+  <strong>Agent Mandate &amp; Oversight System</strong>
 </p>
 
 <p align="center">
-  把 agent 的行为约束，从提示词里的愿望，变成有证据、有审批、有过期、可评测、由 harness 强制执行的工程资产。
+  Turn agent behavioral constraints from wishes written in a prompt into engineering assets that are evidence-backed, approved, expirable, evaluable, and enforced by the harness.
 </p>
 
 <p align="center">
-  <code>阶段 A</code> · log-only · OpenCode V2
+  <code>Stage A</code> · log-only · OpenCode V2
 </p>
 
 ---
 
-> 约束不该只活在提示词里。它应该在动作发生前被执行。
+> Constraints should not live only in prompts. They should be enforced before an action happens.
 
-Project-Amos 的 AMOS 取自 **A**gent **M**andate & **O**versight **S**ystem：它管的是 mandate 与 oversight，不是 intelligence。它不试图让模型更聪明，而是让模型的动作更可约束。
+The name Project-Amos (AMOS) comes from **A**gent **M**andate & **O**versight **S**ystem: it is about mandate and oversight, not intelligence. It does not try to make models smarter; it tries to make their actions more constrainable.
 
-## 设想
+## Vision
 
-今天，agent 的行为约束几乎只有一个载体：`AGENTS.md`、系统提示、项目说明里的自然语言。这类约束有三个结构性缺陷：
+Today, many agent behavior rules are still expressed primarily as natural language in `AGENTS.md` files, system prompts, and project documentation. Natural language is effective at communicating intent, but it cannot, by itself, guarantee enforcement when an agent acts. This approach has three structural flaws:
 
-1. **全靠模型自觉**——遵守是概率，不是保证；
-2. **注意力稀释**——约束越多，每条越不容易被遵守（Lost-in-the-Middle）；
-3. **压缩丢失**——上下文塞不下时必须裁剪，裁哪条却没有判据。
+1. **Compliance depends on the model** — probability, not a guarantee;
+2. **Attention dilution** — the more constraints there are, the less likely each one is followed (Lost-in-the-Middle);
+3. **Compression loss** — when context does not fit, something must be cut, and there is no criterion for what to cut.
 
-Amos 的设想是把约束从“提醒”变成“机制”：模型只负责提议动作，harness 在动作产生副作用之前做确定性裁决。硬边界由引擎执行，软偏好才进入上下文。
+Amos turns constraints from “reminders” into “mechanisms”: the model only proposes actions; the harness makes a deterministic decision before an action has side effects. Hard boundaries are enforced by the engine; only soft preferences enter the context.
 
-### 核心主张
+### Core positions
 
-- **模型是 proposer，harness 是 disposer。** 每个 action 在执行前都要经过确定性策略引擎；模型不能用自己的解释覆盖裁决。
-- **可强制的规则必须有确定性命中条件（`predicate`）。** 自然语言 `narrative` 面向人和 prompt，是 advisory 视图；写不出命中条件的规则标为 `advisory_only`，不硬凑。
-- **约束表是唯一核心数据结构。** 引擎是它的执行语义，git 是它的历史，治理流程是它的写权限。
-- **激活与注入分离。** 全局规则库 → 项目激活集 → 当前任务注入集。激活决定规则是否适用于项目，注入决定模型此刻看到哪些提醒，是否硬执行不取决于是否被注入。
-- **规则从证据编译。** 每条规则强制引用威胁模型、事故报告或 probe 结果；证据消失时，规则应进入待复审，而不是悄悄活在表里。
-- **agent 可以提议改表，但不能直接写表。** 改表本身是一类受管 action；0 层（硬不变量）物理拒绝。
-- **硬约束不靠注意力。** 不做微调、不做注意力手术，也不把安全交给“更醒目的 prompt”。
+- **The model is the proposer; the harness is the disposer.** Every action passes through the deterministic policy engine before execution; the model cannot override a verdict with its own explanation.
+- **Enforceable rules need a deterministic match condition** (machine field: `predicate`). The natural-language `narrative` is an advisory view for humans and prompts. Rules that cannot be expressed deterministically are marked `advisory_only` rather than forced into a fake condition.
+- **The constraint table is the single core data structure.** The engine is its execution semantics, git is its history, and the governance process is its write permission.
+- **Activation and injection are separate.** Global rule library → project activation set → current task injection set. Activation decides whether a rule applies to the project; injection decides which reminders the model sees right now. Whether a hard rule is enforced does not depend on whether it was injected.
+- **Rules are compiled from evidence.** Every rule must reference a threat model, incident, or probe result. When the evidence disappears, the rule should be flagged for review instead of quietly outliving its justification.
+- **Agents may propose table changes, but cannot write directly.** Changing the table is itself a governed action; attempts to touch level-0 hard invariants are rejected outright.
+- **Hard constraints do not rely on attention.** No fine-tuning, no attention surgery, and no delegating safety to a more prominent prompt.
 
-### 硬约束与软约束
+### Hard vs. soft constraints
 
-| | 硬约束 | 软约束 |
+| | Hard constraints | Soft constraints |
 | --- | --- | --- |
-| 载体 | `predicate` + `on_hit` | `narrative` |
-| 执行者 | 策略引擎 | prompt 上下文 |
-| 生效时机 | 动作产生副作用之前 | 模型阅读上下文时 |
-| 失败形态 | fail-closed：默认拒绝 | 模型可能忽略 |
-| 治理 | 0 层不可触碰；改动走提案 | 可随项目与任务路由 |
+| Carrier | `predicate` + `on_hit` | `narrative` |
+| Executor | policy engine | prompt context |
+| When it takes effect | before an action has side effects | when the model reads context |
+| Failure mode | fail-closed: deny by default | the model may ignore it |
+| Governance | level 0 is untouchable; changes go through proposals | routable by project and task |
 
-### 与 AGENTS.md 的关系
+### Relationship to AGENTS.md
 
-不是取代，是投影。项目知识（怎么 build、怎么 test）仍归 `AGENTS.md` 本体；约束表里的 `narrative` 按维度渲染，自动生成或更新 `AGENTS.md` 的约束章节。把硬约束只写在 `AGENTS.md` 里，执行就只能靠模型自觉或外部检查，那是语义错位。
+Not a replacement — a projection. Project knowledge (how to build and test) still belongs in `AGENTS.md`; the `narrative` column renders by dimension and generates or updates the constraint section of `AGENTS.md`. Hard constraints written only in `AGENTS.md` can rely only on model compliance or external checks; that is a category error.
 
-## 工作方式
+## How it works
 
-下面是系统的目标工作方式。阶段 A 只落地了其中的观察部分：引擎照常裁决，但所有结果只写日志，不阻断真实工具调用。
+The following is the target design. Stage A implements only the observation part: the engine still evaluates, but every result is logged and no real tool call is blocked.
 
-### 一次 action 的路径
+### Lifecycle of an action
 
 ```text
-模型提议 action
+Model proposes an action
       │
       ▼
-拦截器：归一化为 (tool, operation, target)
+Interceptor: normalize to (tool, operation, target)
       │
       ▼
-策略引擎：读取项目激活快照 → 匹配 predicate → 合并裁决
+Policy engine: load project activation snapshot → match conditions → combine verdicts
       │
-      ├─ deny    → 阻断副作用，记录
-      ├─ confirm → 展示结构化摘要，等待人
-      ├─ log     → 放行，记录“如果强制会怎样”
-      └─ allow   → 放行
+      ├─ deny    → block side effects, log
+      ├─ confirm → show structured summary, wait for a human
+      ├─ log     → allow, record “what would have happened”
+      └─ allow   → allow
       │
       ▼
-harness / sandbox 执行 → 追加 JSONL 审计日志
+harness / sandbox executes → append JSONL audit log
 ```
 
-拦截器只消费结构化信封，不读取自由文本。路由和裁决因此不直接暴露给 prompt injection：攻击者要操纵路由，得先改工具名，而工具名由 harness 解析器控制。
+The interceptor consumes only the structured envelope, never free text. That is why routing and adjudication are not directly exposed to prompt injection: to manipulate routing, an attacker would have to change the tool name itself, and tool names are controlled by the harness parser.
 
-### 规则如何表达
+### How rules are expressed
 
-每条规则至少有三块：
+Every rule has at least three parts:
 
-- `predicate`：给引擎的确定性命中条件；
-- `on_hit`：`deny` / `confirm` / `log`；
-- `narrative`：给人读、给模型念的说明。
+- `predicate`: the deterministic match condition for the engine;
+- `on_hit`: `deny` / `confirm` / `log`;
+- `narrative`: the explanation for humans and models.
 
-机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+The machine field remains `predicate`; in prose we call it a match condition.
 
-G0 冻结了 7 个命中条件操作符：`op_in`、`target_glob`、`target_outside_glob`、`url_query_key_in`、`target_scheme_in`、`target_host_in`、`target_host_not_in`。没有变量、脚本、嵌套布尔表达式、正则或自由文本条件；表达不了的状态就标 `advisory_only`，不用 target 猜内容。
+G0 froze 7 match-condition operators: `op_in`, `target_glob`, `target_outside_glob`, `url_query_key_in`, `target_scheme_in`, `target_host_in`, and `target_host_not_in`. There are no variables, scripts, nested boolean expressions, regex, or free-text conditions. States that cannot be expressed are marked `advisory_only`; we do not guess them from the target.
 
-### 三种集合，不要混用
+### Three sets, do not mix them
 
-| 集合 | 决定什么 | 谁消费 |
+| Set | Decides | Consumed by |
 | --- | --- | --- |
-| 全局规则库 | 有哪些候选规则 | 治理与激活 |
-| 项目激活集 | 哪些规则在这个项目里有意义 | 引擎与 narrative 路由 |
-| 当前任务注入集 | 此刻该提醒模型哪几条软约束 | prompt 上下文 |
+| Global rule library | which candidate rules exist | governance and activation |
+| Project activation set | which rules matter in this project | the engine and narrative routing |
+| Current task injection set | which soft constraints to remind the model about now | prompt context |
 
-引擎执行项目激活集里的全部硬规则，不管它有没有被注入；注入只减少噪音，不改变强制面。激活按规则级 tags / `exclude_rules` 生效，不能只按整个维度开关。新增激活视同收紧；停用或排除已激活规则视同放宽，需要人工确认。检测失败保留上一个有效激活快照，不自动停用。
+The engine enforces every hard rule in the project activation set, whether or not it was injected; injection only reduces noise, it does not change the enforcement surface. Activation is per rule via tags / `exclude_rules`; it cannot be an all-or-nothing dimension switch. Activating a rule counts as tightening; disabling or excluding an active rule counts as relaxing and requires human approval. If detection fails, keep the last valid activation snapshot; do not auto-disable.
 
-### 裁决如何合并
+### How verdicts combine
 
-- 命中多条时：`deny > confirm > log > allow`；
-- 同层冲突：`deny` 获胜；
-- 非法输入、未知命中条件操作符、解析失败和引擎内部异常：`deny`（fail-closed）。
+- Multiple hits: `deny > confirm > log > allow`;
+- Same-level conflict: `deny` wins;
+- Invalid input, unknown match-condition operator, parse failure, and internal engine errors: `deny` (fail-closed).
 
-### 治理：提案，不是写入
+### Governance: proposals, not writes
 
-改表与普通 action 走同一套 harness：
+Changing the table goes through the same harness as any other action:
 
-- 新增 / 收紧 → 自动生效，TTL 强制，git 留痕；
-- 放宽 / 删除 / 降级 → 结构化 diff 摘要 → 人工确认；
-- 碰 0 层 → 物理拒绝 + 越权日志，试一次吊销 session 的改表权；
-- TTL 到期 → 自动 revert，不提醒、不续期。
+- Add / tighten → effective automatically, mandatory TTL, git trace;
+- Relax / delete / downgrade → structured diff summary → human approval;
+- Touch level 0 → rejected outright + privilege log; one attempt revokes the session’s table-write permission;
+- TTL expires → automatic revert, no reminder, no renewal.
 
-提案里的“理由”字段不参与自动审批——它可能是注入产物。confirm 和审批视图只展示结构化摘要（工具、参数、目标、命中规则），不展示模型撰写的说服性文案。
+The proposal’s “reason” field is not used for automatic approval — it may be an injection artifact. Confirm and approval views show only structured summaries (tool, parameters, target, matched rules), never persuasive prose written by the model.
 
-### 事实源、快照与日志
+### Sources of truth, snapshots, and logs
 
-- **YAML 是规则事实源。** JSON Schema 与封闭词表在 loader 校验；规则本身可读、可 diff、可 review。
-- **JSONL 是原始审计事实源。** 只追加，不重写；派生样本和审核工作表可以重建，但不能回写原始日志。
-- **SQLite 只在阶段 D 作为可删除、可重建的派生读模型。** 它永远不进入裁决热路径；引擎加载的是深度冻结的内存快照。
-- **快照失败保留最后正常版本。** 非法 reload 不会把系统带进半坏状态；首次加载失败按 fail-closed 记录。
+- **YAML is the source of truth for rules.** JSON Schema and the closed vocabulary are validated in the loader; rules are readable, diffable, and reviewable.
+- **JSONL is the source of truth for raw audit.** Append-only, never rewritten; derived samples and review worksheets can be rebuilt, but never written back to the raw log.
+- **SQLite is only a deletable, rebuildable derived read model in Stage D.** It never enters the hot path; the engine loads a deeply frozen in-memory snapshot.
+- **Snapshot failure keeps the last good version.** An invalid reload cannot leave the system half-broken; a first-load failure is logged as fail-closed.
 
-### 冷启动
+### Cold start
 
-1. **log-only**：只记录“如果强制会怎么裁决”，跑真实任务流收集误拒；
-2. **选择性强制**：只对 0 层开 deny；
-3. **confirm 上线**：不可逆副作用进入人工确认；
-4. **治理上线**：提案队列、TTL、git 治理。
+1. **log-only**: record “what would have happened” and collect false positives from real task flows;
+2. **Selective enforcement**: deny only level 0;
+3. **confirm**: irreversible side effects require human confirmation;
+4. **Governance**: proposal queue, TTL, git governance.
 
-跳步的结局通常是 deny 风暴，然后用户关掉系统。**会被关掉的安全系统，比没有更糟。**
+Skipping steps usually ends in a deny storm, then users turn the system off. **A safety system that gets turned off is worse than none.**
 
-## 目前已经做的
+## What exists today
 
-当前处于**阶段 A：log-only 验证**。真实 deny、confirm、提案治理、SQLite 读模型和本地 Web 治理台尚未启用。
+Currently in **Stage A: log-only validation**. Real deny, confirm, proposal governance, the SQLite read model, and the local web governance console are not enabled.
 
-| 部分 | 状态 | 证据 |
+| Part | Status | Evidence |
 | --- | --- | --- |
-| 规则表 | 15 条，5 个维度 | `constraints/rules.yaml` |
-| 命中条件词表 | 7 个，已冻结 | `constraints/vocabulary.md` |
-| 规则校验 | JSON Schema + loader 语义校验 | `constraints/schema.json` |
-| 引擎 | TypeScript 纯函数，注入时钟，fail-closed | `engine/engine.ts` |
-| 语言中立 fixtures | 覆盖命中条件、多命中、TTL、非法输入 | `fixtures/` |
-| 快照 | 深度冻结；非法 reload 保留最后正常版本 | `storage/snapshot.ts` |
-| 审计日志 | 只追加 JSONL + 错误分类 | `storage/jsonl.ts` |
-| OpenCode V2 | 编译后 log-only 插件；真实会话样本 | `adapters/opencode-v2/`、`spike/` |
-| 人审工作表 | 分层抽样；拒绝覆盖既有结论 | `storage/audit-review.ts` |
-| 测试 | 109 个用例全绿 | `npm test` |
+| Rule table | 15 rules, 5 dimensions | `constraints/rules.yaml` |
+| Match-condition vocabulary | 7 operators, frozen | `constraints/vocabulary.md` |
+| Rule validation | JSON Schema + loader semantic checks | `constraints/schema.json` |
+| Engine | TypeScript pure function, injected clock, fail-closed | `engine/engine.ts` |
+| Language-neutral fixtures | match conditions, multi-hit, TTL, invalid input | `fixtures/` |
+| Snapshot | deeply frozen; invalid reload keeps the last good version | `storage/snapshot.ts` |
+| Audit log | append-only JSONL + error classification | `storage/jsonl.ts` |
+| OpenCode V2 | compiled log-only plugin; real session sample | `adapters/opencode-v2/`, `spike/` |
+| Review worksheet | stratified sampling; refuses to overwrite existing conclusions | `storage/audit-review.ts` |
+| Tests | 109 passing | `npm test` |
 
-首批 15 条规则中，10 条是 deterministic，5 条是 advisory_only；按 `on_hit` 声明值分为 11 条 deny、3 条 confirm、1 条 log（advisory_only 条目不进入硬裁决）。每条规则都有具体的 `source` 引用和诱人违反场景 `probe`；最初的约束先由威胁场景整理成候选，再逐条落成可执行的命中条件。
+Of the first 15 rules, 10 are deterministic and 5 are `advisory_only`; by declared `on_hit`, 11 are marked `deny`, 3 are marked `confirm`, and 1 is marked `log` (`advisory_only` rules never enter hard adjudication). Every rule has a concrete `source` reference and a tempting-violation `probe`; the first constraints started as threat scenarios and were then turned into executable match conditions.
 
-实时接缝目前只挂文件类通道：`read` → `file_read`，`write` / `edit` → `file_write`，`glob` / `grep` → `file_search`，`list` → `file_list`。目标路径归一化为绝对路径；不读取、不记录文件内容；未知 payload 和解析失败显式记录，不静默忽略。hook 不修改 input、不返回裁决、不阻断工具调用。`http_request` 等网络规则已在引擎和 fixtures 中，但尚未接入实时 hook；shell、patch 和其他写旁路同样还没有覆盖。
+The live seam currently covers only the file channel: `read` → `file_read`, `write` / `edit` → `file_write`, `glob` / `grep` → `file_search`, and `list` → `file_list`. Targets are normalized to absolute paths; file contents are neither read nor logged; unknown payloads and parse failures are recorded explicitly, never silently ignored. The hook does not mutate input, return a verdict, or block tool calls. `http_request` and other network rules are present in the engine and fixtures but not wired into the live hook; shell, patch, and other write paths remain uncovered.
 
-人审工作表从原始 JSONL 派生，0 层命中全量、非 0 层 deny 全量、confirm 优先按工具和规则覆盖抽样、错误与覆盖缺口全量。当前工作表（生成时点）基于 158 条记录：0 层 1 条、非 0 层 deny 0 条、错误/缺口 35 条、confirm 65 条中抽 20 条。工作表只生成队列，不自动判断误拒或放行；输出拒绝覆盖已有人工结论的文件。
+The review worksheet is derived from raw JSONL: all level-0 hits, all non-level-0 denies, confirm sampled with tool/rule coverage first, and all errors and coverage gaps. The current worksheet (at generation time) covers 158 records: 1 level-0 hit, 0 non-level-0 denies, 35 errors/gaps, and 20 of 65 confirm records sampled. It only builds a queue; it does not decide false positives or approvals. Output refuses to overwrite a file that already contains human conclusions.
 
-**尚未启用**：真实 deny / confirm、shell 与 patch 等写旁路、项目激活快照与 narrative 路由、提案队列、TTL 清理、SQLite、本地 Web 治理台、第二 harness、探针执行与违反率/误拒率仪表盘。
+**Not yet enabled**: real deny / confirm, shell and patch write paths, project activation snapshot and narrative routing, proposal queue, TTL cleanup, SQLite, local web governance console, second harness, and probe execution with violation/false-positive dashboards.
 
-G0（go/no-go）门禁定于 **2026-10-30** 由人逐项核对，当前状态为**未裁决**；agent 不自行放行。门禁标准见 [docs/go-no-go.md](docs/go-no-go.md)。
+The G0 (go/no-go) gate is scheduled for **2026-10-30**; humans check each item. Current status: **not decided**. Agents do not self-approve. See [docs/go-no-go.md](docs/go-no-go.md).
 
-## 灵感来源
+## Inspiration
 
-最初的约束，来自设计 Termcp 威胁模型时的灵感：先把“什么行为会造成不可接受的后果”写成威胁场景，再从中提炼可执行的命中条件。
+The first constraints were inspired by designing the Termcp threat model: write down “what behavior would cause unacceptable consequences” as threat scenarios, then distill executable match conditions from them.
 
-### llm-wiki：把约束当“编译产物”
+### llm-wiki: constraints as compiled artifacts
 
-Karpathy 的 llm-wiki 哲学是这套设计最直接的哲学参照。它的核心原则几乎逐条映射：
+Karpathy’s llm-wiki philosophy is the most direct philosophical reference for this design. Its core principles map almost one-to-one:
 
 | llm-wiki | Project-Amos |
 | --- | --- |
-| 原子化 | 一条规则就是一个最小单元 |
-| 数据驱动 | 规则从威胁模型、事故、probe 编译，不写直觉 |
-| 显式溯源 | `source` 是强制引用，不是装饰 |
-| 无损演进 | 提案即 ADD/FIX，git 保留全轨迹，TTL 是带过期标记的 ADD |
-| 晋升管道 | 想法 → 实验规则（TTL + log-only）→ probe 证据 → 强制层 |
+| Atomic | one rule is the smallest unit |
+| Data-driven | rules are compiled from threat models, incidents, and probes, not written from intuition |
+| Grounding | `source` is a mandatory reference, not decoration |
+| Non-destructive evolution | proposals are ADD/FIX, git keeps the full trace, TTL is an ADD with an explicit expiry |
+| Promotion pipeline | idea → experimental rule (TTL + log-only) → probe evidence → enforcement layer |
 
-两条修正：执行点不追 living wiki，引擎加载 pin 住的项目激活快照（lockfile 语义）；规则是否晋升由 probe 决定，不由编辑共识决定。用一句话定位：**llm-wiki 存 facts，Amos 存 norms。**
+Two amendments: the enforcement point does not chase a living wiki — the engine loads a pinned project activation snapshot (lockfile semantics); and whether a rule is promoted is decided by probes, not editorial consensus. In one line: **llm-wiki stores facts; Amos stores norms.**
 
-### obelisk：读侧与写侧
+### obelisk: the read side and the write side
 
-[tommy0103/obelisk](https://github.com/tommy0103/obelisk) 是 agent 历史检索层：把多家编程 agent 的 session JSONL 归一进单库，给 agent 提供 CLI、给人提供浏览界面。它管 agent 记得什么；Amos 管 agent 不许做什么。两者是同一套架构的读写两侧。
+[tommy0103/obelisk](https://github.com/tommy0103/obelisk) is an agent history retrieval layer: it normalizes session JSONL from multiple coding agents into one database and gives agents a CLI and humans a browsing UI. It governs what agents remember; Amos governs what agents must not do. They are the read and write sides of the same architecture.
 
-借走的模式：
+Borrowed patterns:
 
-- 单库归一 + dual audience：agent 用 CLI 查，人用界面审；
-- 把 N 家 provider 投影进共享 schema：对应未来如果出现第二 harness，如何把异构 action 归一；当前不预留空接口，也不实现第二适配器；
-- 记忆层的“agent 提议 → 人批准 → 注册 → 日后召回”，是提案管线的现成原型；
-- 读表接口分层：typed helpers 为主，raw 查询做逃生舱。
+- Single-database normalization + dual audience: agents query through a CLI, humans review through a UI;
+- Project N provider formats into a shared schema: this maps to how a second harness could normalize heterogeneous actions in the future; we do not reserve an empty interface or implement a second adapter today;
+- The memory layer’s “agent proposes → human approves → register → recall later” is a ready prototype for the proposal pipeline;
+- A layered read API: typed helpers first, raw queries as an escape hatch.
 
-不借的边界：
+Boundaries we do not borrow:
 
-- **热路径查库**：读侧可以慢、可以失败；裁决侧库损坏在 fail-closed 下等于全舰队 DoS；
-- **任意 JS 查询面**：只能开在审计 / 读表侧，裁决侧永不开；
-- **Electron**：人管界面做本地 Web 服务，不做桌面应用；也不在第一天做，界面渲染状态，状态先于界面存在；
-- **AGPL 污染**：只读 README / docs / ADR，代码净室重写，规范与一致性套件从第一天用宽松许可证。
+- **Hot-path database reads**: the read side can be slow and can fail; on the enforcement side, a corrupt database under fail-closed equals a fleet-wide DoS;
+- **An arbitrary JS query surface**: only on the audit/read side, never on the enforcement side;
+- **Electron**: the human console is a local web service, not a desktop app; and not on day one — the UI renders state, and state must exist before the UI;
+- **AGPL contamination**: read only its README/docs/ADR, clean-room rewrite the code, and use a permissive license for the spec and conformance suite from day one.
 
-### Jev：只坐 advisory 席
+### Jev: an advisory seat only
 
-Jev（TypeSafe AI 的 System One 决策模型）只出现在四个 advisory 位置：语义路由、提案预分类、probe 评测（Jev-as-a-Judge）、意图到命中条件模板的路由。它不进引擎、不审批、不碰 0 层。`confidence` 不是 `permission`；可解释性不足的模型永远不上裁决席。
+Jev (TypeSafe AI’s System One decision model) appears only in four advisory positions: semantic routing, proposal pre-classification, probe evaluation (Jev-as-a-Judge), and intent-to-match-condition-template routing. It never enters the engine, never approves, and never touches level 0. `confidence` is not `permission`; a model with weak explainability never gets a seat at the adjudication table.
 
-### 其他参照
+### Other references
 
-- **iptables / 防火墙语义**：narrative 路由只查结构化信封，精确 + glob 匹配，specificity 优先；查不到时 fail-open 回退到当前项目激活的全部软约束。可以把它理解成 “iptables for narratives”。
-- **Lost-in-the-Middle（Liu et al., 2023）**：约束越多、位置越中间，越容易被忽略。这条实证是“动态注入”和“激活 / 注入分离”的理由，而不是把强制责任推给 prompt 的理由。
-- **AGENTS.md**：约定与执行机制分离。AGENTS.md 继续做项目知识的入口，约束章节成为规则表的 advisory 派生视图。
+- **iptables / firewall semantics**: narrative routing inspects only the structured envelope, uses exact + glob matching, and prefers specificity; on no match it fails open to all active soft constraints for the project. Think of it as “iptables for narratives”.
+- **Lost-in-the-Middle (Liu et al., 2023)**: the more constraints there are, and the more central their position, the more likely they are to be ignored. This is the reason for dynamic injection and activation/injection separation, not a reason to delegate enforcement to prompts.
+- **AGENTS.md**: convention and enforcement mechanism are separate. `AGENTS.md` remains the entry point for project knowledge; its constraint section becomes an advisory projection of the rule table.
 
-## 快速开始
+## Quick start
 
-环境：Node.js 26、npm；运行适配器时另需 OpenCode V2。
+Requirements: Node.js 26, npm; OpenCode V2 is needed only to run the adapter.
 
 ```bash
 npm ci
@@ -218,17 +221,17 @@ npm test
 npm run typecheck
 ```
 
-`npm test` 会先构建，再运行编译后的 JavaScript 测试。
+`npm test` builds first, then runs the compiled JavaScript tests.
 
-### 以 log-only 接入 OpenCode V2
+### Integrate with OpenCode V2 in log-only mode
 
 ```bash
 npm run build
 ```
 
-项目根 `opencode.jsonc` 从 `dist/adapters/opencode-v2/` 加载插件，显式传入规则、Schema、日志路径和 `log-only` 模式。随后从这个目录启动 OpenCode V2 即可。插件只记录假设裁决，不阻断真实工具调用；实时日志写入 `spike/logs/opencode.jsonl`（git 忽略）。
+The root `opencode.jsonc` loads the plugin from `dist/adapters/opencode-v2/`, passing the rules, schema, log path, and `log-only` mode explicitly. Start OpenCode V2 from this directory afterward. The plugin only records hypothetical verdicts and does not block real tool calls; the live log is written to `spike/logs/opencode.jsonl` (git-ignored).
 
-### 生成人审工作表
+### Generate a review worksheet
 
 ```bash
 npm run audit:review -- \
@@ -237,44 +240,47 @@ npm run audit:review -- \
   --output spike/review/new-review.md
 ```
 
-输出必须是尚不存在的新文件，避免覆盖人已经填写的结论。历史归档可以通过重复 `--log` 一并传入。
+Output must be a new file that does not exist, so human conclusions are never overwritten. Historical archives can be passed with repeated `--log` flags.
 
-## 目录
+## Repository layout
 
 ```text
-constraints/       规则、JSON Schema、封闭词表
-engine/            纯函数引擎与测试
-fixtures/          语言中立裁决 fixtures
-adapters/          OpenCode V2 归一化与 hook
-storage/           快照、JSONL、审核队列
-spike/             接缝说明、真实日志样本、人审材料
-docs/              决策、门禁与覆盖说明
+constraints/       rules, JSON Schema, closed vocabulary
+engine/            pure-function engine and tests
+fixtures/          language-neutral verdict fixtures
+adapters/          OpenCode V2 normalization and hook
+storage/           snapshot, JSONL, review queue
+spike/             seam notes, real log samples, human review material
+docs/              decisions, gates, and coverage notes
 ```
 
-## 文档
+## Documentation
 
-- [产品与工程决策](docs/decisions.md)
+The documents below are currently in Chinese.
+
+- [Product and engineering decisions](docs/decisions.md)
 - [G0 go/no-go](docs/go-no-go.md)
-- [Fixture 覆盖](docs/fixture-coverage.md)
-- [Advisory-only 翻译缺口](docs/translation-notes.md)
-- [OpenCode V2 log-only 接缝](spike/README.md)
-- [设计文档（Notion）](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
+- [Fixture coverage](docs/fixture-coverage.md)
+- [Advisory-only translation gaps](docs/translation-notes.md)
+- [OpenCode V2 log-only seam](spike/README.md)
+- [Design document (Notion)](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
+- [中文 README](README.zh-CN.md)
 
-## 边界
+## Boundaries
 
-目标是单机、单信任根的完整治理闭环：面向个人与封闭舰队，不引入多用户、SaaS 或云控制面。
+The goal is a single-machine, single-trust-root governance loop for individuals and closed fleets: no multi-user, SaaS, or cloud control plane.
 
-阶段门禁：
+Stage gates:
 
-- **阶段 A**：log-only、真实日志和误拒审核。（当前）
-- **阶段 B**：选择性 0 层强制，再启用 confirm。
-- **阶段 C**：提案、人工审批、git 治理与 TTL。
-- **阶段 D**：SQLite 派生读模型与本地 Web 治理台。
+- **Stage A** (current): log-only, real logs, and false-positive review.
+- **Stage B**: selective level-0 enforcement, then confirm.
+- **Stage C**: proposals, human approval, git governance, and TTL.
+- **Stage D**: SQLite derived read model and a local web governance console.
 
-当前只交付 OpenCode V2 适配器。不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
+Currently only the OpenCode V2 adapter is delivered. No prompt-engineering soft constraints, second harness, multi-user support, SaaS, cloud control plane, LLM adjudication, custom match-condition DSL, regex routing, or rule marketplace. Do not change `deny > confirm > log > allow`, same-level deny, or fail-closed semantics for architectural aesthetics.
 
 ---
 
 <p align="center">
-  <sub>约束不该是写在提示词里的愿望，而应是动作发生前的一道确定性检查。</sub>
+  <sub>Constraints should not be wishes written in a prompt; they should be a deterministic check before an action happens.</sub>
 </p>
