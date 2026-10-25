@@ -32,7 +32,7 @@ Amos 的设想是把约束从“提醒”变成“机制”：模型只负责提
 ### 核心主张
 
 - **模型是 proposer，harness 是 disposer。** 每个 action 在执行前都要经过确定性策略引擎；模型不能用自己的解释覆盖裁决。
-- **可强制的规则必须有确定性命中条件（`predicate`）。** 自然语言 `narrative` 面向人和 prompt，是 advisory 视图；写不出 predicate 的规则标为 `advisory_only`，不硬凑。
+- **可强制的规则必须有确定性命中条件（`predicate`）。** 自然语言 `narrative` 面向人和 prompt，是 advisory 视图；写不出命中条件的规则标为 `advisory_only`，不硬凑。
 - **约束表是唯一核心数据结构。** 引擎是它的执行语义，git 是它的历史，治理流程是它的写权限。
 - **激活与注入分离。** 全局规则库 → 项目激活集 → 当前任务注入集。激活决定规则是否适用于项目，注入决定模型此刻看到哪些提醒，是否硬执行不取决于是否被注入。
 - **规则从证据编译。** 每条规则强制引用威胁模型、事故报告或 probe 结果；证据消失时，规则应进入待复审，而不是悄悄活在表里。
@@ -87,7 +87,9 @@ harness / sandbox 执行 → 追加 JSONL 审计日志
 - `on_hit`：`deny` / `confirm` / `log`；
 - `narrative`：给人读、给模型念的说明。
 
-G0 冻结了 7 个谓词：`op_in`、`target_glob`、`target_outside_glob`、`url_query_key_in`、`target_scheme_in`、`target_host_in`、`target_host_not_in`。没有变量、脚本、嵌套布尔表达式、正则或自由文本条件；表达不了的状态就标 `advisory_only`，不用 target 猜内容。
+机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+
+G0 冻结了 7 个命中条件操作符：`op_in`、`target_glob`、`target_outside_glob`、`url_query_key_in`、`target_scheme_in`、`target_host_in`、`target_host_not_in`。没有变量、脚本、嵌套布尔表达式、正则或自由文本条件；表达不了的状态就标 `advisory_only`，不用 target 猜内容。
 
 ### 三种集合，不要混用
 
@@ -103,7 +105,7 @@ G0 冻结了 7 个谓词：`op_in`、`target_glob`、`target_outside_glob`、`ur
 
 - 命中多条时：`deny > confirm > log > allow`；
 - 同层冲突：`deny` 获胜；
-- 非法输入、未知谓词、解析失败和引擎内部异常：`deny`（fail-closed）。
+- 非法输入、未知命中条件操作符、解析失败和引擎内部异常：`deny`（fail-closed）。
 
 ### 治理：提案，不是写入
 
@@ -139,10 +141,10 @@ G0 冻结了 7 个谓词：`op_in`、`target_glob`、`target_outside_glob`、`ur
 | 部分 | 状态 | 证据 |
 | --- | --- | --- |
 | 规则表 | 15 条，5 个维度 | `constraints/rules.yaml` |
-| 谓词词表 | 7 个，已冻结 | `constraints/vocabulary.md` |
+| 命中条件词表 | 7 个，已冻结 | `constraints/vocabulary.md` |
 | 规则校验 | JSON Schema + loader 语义校验 | `constraints/schema.json` |
 | 引擎 | TypeScript 纯函数，注入时钟，fail-closed | `engine/engine.ts` |
-| 语言中立 fixtures | 覆盖谓词、多命中、TTL、非法输入 | `fixtures/` |
+| 语言中立 fixtures | 覆盖命中条件、多命中、TTL、非法输入 | `fixtures/` |
 | 快照 | 深度冻结；非法 reload 保留最后正常版本 | `storage/snapshot.ts` |
 | 审计日志 | 只追加 JSONL + 错误分类 | `storage/jsonl.ts` |
 | OpenCode V2 | 编译后 log-only 插件；真实会话样本 | `adapters/opencode-v2/`、`spike/` |
@@ -195,7 +197,7 @@ Karpathy 的 llm-wiki 哲学是这套设计最直接的哲学参照。它的核�
 
 ### Jev：只坐 advisory 席
 
-Jev（TypeSafe AI 的 System One 决策模型）只出现在四个 advisory 位置：语义路由、提案预分类、probe 评测（Jev-as-a-Judge）、意图到谓词模板的路由。它不进引擎、不审批、不碰 0 层。`confidence` 不是 `permission`；可解释性不足的模型永远不上裁决席。
+Jev（TypeSafe AI 的 System One 决策模型）只出现在四个 advisory 位置：语义路由、提案预分类、probe 评测（Jev-as-a-Judge）、意图到命中条件模板的路由。它不进引擎、不审批、不碰 0 层。`confidence` 不是 `permission`；可解释性不足的模型永远不上裁决席。
 
 ### 其他参照
 
@@ -268,7 +270,7 @@ docs/              决策、门禁与覆盖说明
 - **阶段 C**：提案、人工审批、git 治理与 TTL。
 - **阶段 D**：SQLite 派生读模型与本地 Web 治理台。
 
-当前只交付 OpenCode V2 适配器。不修改或依赖 Termcp；不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研谓词 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
+当前只交付 OpenCode V2 适配器。不修改或依赖 Termcp；不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
 
 ---
 
