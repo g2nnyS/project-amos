@@ -1,0 +1,330 @@
+[
+  {
+    "name": "rule table that is not an array fails closed",
+    "table": {},
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "null rule table fails closed",
+    "table": null,
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule entry that is not an object fails closed",
+    "table": ["not a rule"],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule missing a probe fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "missing probe",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" }
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with a blank probe fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "blank probe",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "   "
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with a negative level fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": -1,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "negative level",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown scope fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad scope",
+        "on_hit": "deny",
+        "scope": "global",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown owner fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad owner",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "robot",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown expressivity fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "sometimes",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad expressivity",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "source missing a required field fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad source",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "deterministic rule with an empty predicate fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [],
+        "narrative": "empty predicate",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "advisory-only rule carrying a predicate fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "advisory_only",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "advisory with predicate",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "unknown predicate op fails closed even when the action would not match",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "rate_exceeds", "args": { "limit": ["1"] } }],
+        "narrative": "unknown predicate",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "unknown on_hit fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "unknown on_hit",
+        "on_hit": "allow",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "invalid ttl text fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad ttl",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "not-a-date",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "predicate args with an empty string array fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": [] } }],
+        "narrative": "empty operations",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "predicate args with a non-string array item fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "target_glob", "args": { "patterns": [1] } }],
+        "narrative": "non-string pattern",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  }
+]

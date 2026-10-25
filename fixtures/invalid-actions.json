@@ -1,0 +1,59 @@
+[
+  {
+    "name": "null action fails closed",
+    "table": [],
+    "action": null,
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "array action fails closed",
+    "table": [],
+    "action": [],
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "action missing its operation fails closed",
+    "table": [],
+    "action": { "tool": "fs", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "action with a non-string tool fails closed",
+    "table": [],
+    "action": { "tool": 7, "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "action with a blank target fails closed",
+    "table": [],
+    "action": { "tool": "fs", "operation": "file_read", "target": "   " },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "malformed URL target fails closed when a URL predicate is reached",
+    "table": [
+      {
+        "id": "url-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "url_query_key_in", "args": { "keys": ["token"] } }],
+        "narrative": "secret query parameter",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "send a token in the query string"
+      }
+    ],
+    "action": { "tool": "http", "operation": "http_request", "target": "not a url" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  }
+]

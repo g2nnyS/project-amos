@@ -1,0 +1,338 @@
+[
+  {
+    "name": "op_in matches the operation exactly (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read", "file_stat"] } }
+        ],
+        "narrative": "operation is in the frozen set",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "op_in is case-sensitive and rejects another operation (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read", "file_stat"] } }
+        ],
+        "narrative": "operation is in the frozen set",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "write a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "FILE_READ", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "target_glob matches an absolute target path (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*", "/**/*.pem"] } }
+        ],
+        "narrative": "secret path pattern",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a private key"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/alice/.ssh/id_ed25519" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "target_glob does not match an unrelated absolute path (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*", "/**/*.pem"] } }
+        ],
+        "narrative": "secret path pattern",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a note"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/alice/notes.txt" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "target_outside_glob matches a path outside every pattern (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_outside_glob", "args": { "patterns": ["/home/ganyu/projects/**"] } }
+        ],
+        "narrative": "path leaves the capability whitelist",
+        "on_hit": "deny",
+        "scope": "session",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read an incoming patch"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/tmp/opencode/incoming.patch" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "target_outside_glob does not match a path inside a pattern (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_outside_glob", "args": { "patterns": ["/home/ganyu/projects/**"] } }
+        ],
+        "narrative": "path leaves the capability whitelist",
+        "on_hit": "deny",
+        "scope": "session",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a project file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/nested/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "url_query_key_in matches a query key case-insensitively (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
+        ],
+        "narrative": "secret query parameter",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "send a token in the query string"
+      }
+    ],
+    "action": { "tool": "http", "operation": "http_request", "target": "https://example.test/api?Token=secret&x=1" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "url_query_key_in requires an exact key name (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
+        ],
+        "narrative": "secret query parameter",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "send an unrelated query parameter"
+      }
+    ],
+    "action": { "tool": "http", "operation": "http_request", "target": "https://example.test/api?tokenized=secret" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "target_scheme_in matches a normalized scheme (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_scheme_in", "args": { "schemes": ["dynamic"] } }
+        ],
+        "narrative": "dynamic forward",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "open a dynamic forward"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "DYNAMIC://192.168.1.20:1080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "target_scheme_in rejects a different scheme (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_scheme_in", "args": { "schemes": ["dynamic"] } }
+        ],
+        "narrative": "dynamic forward",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "open a local forward"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "local://localhost:8080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "target_host_in normalizes IPv6 brackets and matches (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }
+        ],
+        "narrative": "forward binds every interface",
+        "on_hit": "confirm",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "publish a tunnel on all interfaces"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "dynamic://[::]:1080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "confirm", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "target_host_in rejects a host outside the exact set (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }
+        ],
+        "narrative": "forward binds every interface",
+        "on_hit": "confirm",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "publish a tunnel on one interface"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "dynamic://192.168.1.20:1080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "target_host_not_in matches a host outside the excluded set (positive)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_host_not_in", "args": { "hosts": ["localhost"] } }
+        ],
+        "narrative": "dynamic forward is not loopback",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "open a dynamic forward to a LAN host"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "dynamic://192.168.1.20:1080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
+  },
+  {
+    "name": "target_host_not_in rejects an excluded host (negative)",
+    "table": [
+      {
+        "id": "predicate-rule",
+        "dimension": "network",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "target_host_not_in", "args": { "hosts": ["localhost"] } }
+        ],
+        "narrative": "dynamic forward is not loopback",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "open a dynamic forward to localhost"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "local://localhost:8080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  }
+]

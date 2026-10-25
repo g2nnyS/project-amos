@@ -1,0 +1,206 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atmos G0 constraint rule table",
+  "description": "Language-neutral schema for the rule array in constraints/rules.yaml. Unknown fields are allowed on every object so the engine can keep ignoring them. Date and semantic validation of ttl remains the job of engine.assertValidTable.",
+  "type": "array",
+  "items": { "$ref": "#/definitions/rule" },
+  "definitions": {
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "source": {
+      "type": "object",
+      "required": ["repo", "rev", "path", "section", "lines", "quote"],
+      "properties": {
+        "repo": { "type": "string", "minLength": 1 },
+        "rev": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "section": { "type": "string", "minLength": 1 },
+        "lines": { "type": "string", "minLength": 1 },
+        "quote": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "predicate": {
+      "type": "object",
+      "required": ["op", "args"],
+      "properties": {
+        "op": {
+          "enum": [
+            "op_in",
+            "target_glob",
+            "target_outside_glob",
+            "url_query_key_in",
+            "target_scheme_in",
+            "target_host_in",
+            "target_host_not_in"
+          ]
+        },
+        "args": { "type": "object" }
+      },
+      "additionalProperties": true,
+      "oneOf": [
+        {
+          "properties": {
+            "op": { "const": "op_in" },
+            "args": {
+              "type": "object",
+              "required": ["operations"],
+              "properties": {
+                "operations": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "target_glob" },
+            "args": {
+              "type": "object",
+              "required": ["patterns"],
+              "properties": {
+                "patterns": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "target_outside_glob" },
+            "args": {
+              "type": "object",
+              "required": ["patterns"],
+              "properties": {
+                "patterns": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "url_query_key_in" },
+            "args": {
+              "type": "object",
+              "required": ["keys"],
+              "properties": {
+                "keys": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "target_scheme_in" },
+            "args": {
+              "type": "object",
+              "required": ["schemes"],
+              "properties": {
+                "schemes": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "target_host_in" },
+            "args": {
+              "type": "object",
+              "required": ["hosts"],
+              "properties": {
+                "hosts": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "op": { "const": "target_host_not_in" },
+            "args": {
+              "type": "object",
+              "required": ["hosts"],
+              "properties": {
+                "hosts": { "$ref": "#/definitions/nonEmptyStringArray" }
+              },
+              "additionalProperties": true
+            }
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "required": [
+        "id",
+        "dimension",
+        "level",
+        "expressivity",
+        "predicate",
+        "narrative",
+        "on_hit",
+        "scope",
+        "ttl",
+        "owner",
+        "source",
+        "probe"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "dimension": { "type": "string", "minLength": 1 },
+        "level": { "type": "integer", "minimum": 0 },
+        "expressivity": { "enum": ["deterministic", "advisory_only"] },
+        "predicate": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/definitions/predicate" }
+            }
+          ]
+        },
+        "narrative": { "type": "string" },
+        "on_hit": { "enum": ["deny", "confirm", "log"] },
+        "scope": { "enum": ["project", "session"] },
+        "ttl": { "type": ["string", "null"], "minLength": 1 },
+        "owner": { "enum": ["human", "agent"] },
+        "source": { "$ref": "#/definitions/source" },
+        "probe": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "expressivity": { "const": "advisory_only" } },
+            "required": ["expressivity"]
+          },
+          "then": {
+            "properties": { "predicate": { "type": "null" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "expressivity": { "const": "deterministic" } },
+            "required": ["expressivity"]
+          },
+          "then": {
+            "properties": {
+              "predicate": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/definitions/predicate" }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

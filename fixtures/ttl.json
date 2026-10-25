@@ -1,0 +1,146 @@
+[
+  {
+    "name": "ttl is live one millisecond before the expiry instant",
+    "table": [
+      {
+        "id": "expiring-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "expiring denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "2026-10-25T00:00:00.000Z",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T23:59:59.999Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["expiring-rule"] }
+  },
+  {
+    "name": "ttl expires at the exact boundary instant",
+    "table": [
+      {
+        "id": "expiring-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "expiring denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "2026-10-25T00:00:00.000Z",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-25T00:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "ttl stays expired after the boundary",
+    "table": [
+      {
+        "id": "expiring-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "expiring denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "2026-10-25T00:00:00.000Z",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-25T00:00:00.001Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  },
+  {
+    "name": "null ttl is permanent even after another rule's expiry",
+    "table": [
+      {
+        "id": "permanent-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "permanent denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-25T00:00:10.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["permanent-rule"] }
+  },
+  {
+    "name": "date-only ttl is live just before midnight UTC",
+    "table": [
+      {
+        "id": "date-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "date-bound denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "2026-10-25",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T23:59:59.999Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["date-rule"] }
+  },
+  {
+    "name": "date-only ttl expires at midnight UTC",
+    "table": [
+      {
+        "id": "date-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "date-bound denial",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": "2026-10-25",
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-25T00:00:00.000Z",
+    "expect": { "verdict": "allow", "matched_rule_ids": [] }
+  }
+]

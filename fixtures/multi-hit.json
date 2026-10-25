@@ -1,0 +1,190 @@
+[
+  {
+    "name": "multi-hit priority picks the strictest verdict and lists every matched id in table order",
+    "table": [
+      {
+        "id": "log-rule",
+        "dimension": "side_effect",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "read activity is logged",
+        "on_hit": "log",
+        "scope": "session",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "confirm-rule",
+        "dimension": "side_effect",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "read activity requires confirmation",
+        "on_hit": "confirm",
+        "scope": "session",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "deny-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "read activity is denied",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "unmatched-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_write"] } }
+        ],
+        "narrative": "write activity is denied",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "write a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["log-rule", "confirm-rule", "deny-rule"] }
+  },
+  {
+    "name": "same-level deny and confirm conflicts resolve to deny and keep both ids",
+    "table": [
+      {
+        "id": "deny-a",
+        "dimension": "filesystem",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "deny at level one",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "confirm-b",
+        "dimension": "side_effect",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "confirm at level one",
+        "on_hit": "confirm",
+        "scope": "session",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["deny-a", "confirm-b"] }
+  },
+  {
+    "name": "two same-level denies both match and keep their ids",
+    "table": [
+      {
+        "id": "deny-a",
+        "dimension": "filesystem",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "first same-level deny",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "deny-b",
+        "dimension": "credential",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [
+          { "op": "op_in", "args": { "operations": ["file_read"] } }
+        ],
+        "narrative": "second same-level deny",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["deny-a", "deny-b"] }
+  },
+  {
+    "name": "unknown fields on action, rule, predicate call and args are ignored",
+    "table": [
+      {
+        "id": "extra-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "unexpected_rule_field": { "anything": true },
+        "predicate": [
+          {
+            "op": "op_in",
+            "args": { "operations": ["file_read"], "ignored_arg": 123 },
+            "extra_call_field": "ignored"
+          }
+        ],
+        "narrative": "extra fields do not change matching",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote", "extra_source_field": 1 },
+        "probe": "read a file"
+      }
+    ],
+    "action": {
+      "tool": "fs",
+      "operation": "file_read",
+      "target": "/home/ganyu/projects/a.ts",
+      "request_id": "abc",
+      "metadata": { "nested": true },
+      "extra": [1, 2, 3]
+    },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": ["extra-rule"] }
+  }
+]

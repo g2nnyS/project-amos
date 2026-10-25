@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Project-root sample. Run npm run build before starting OpenCode V2.
+  "plugins": [
+    {
+      "package": "./dist/adapters/opencode-v2",
+      "options": {
+        "mode": "log-only",
+        "rulesPath": "./constraints/rules.yaml",
+        "schemaPath": "./constraints/schema.json",
+        "logPath": "./spike/logs/opencode.jsonl"
+      }
+    }
+  ]
+}
