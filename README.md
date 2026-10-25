@@ -151,7 +151,7 @@ G0 冻结了 7 个命中条件操作符：`op_in`、`target_glob`、`target_outs
 | 人审工作表 | 分层抽样；拒绝覆盖既有结论 | `storage/audit-review.ts` |
 | 测试 | 109 个用例全绿 | `npm test` |
 
-首批 15 条规则中，10 条是 deterministic，5 条是 advisory_only；按 `on_hit` 声明值分为 11 条 deny、3 条 confirm、1 条 log（advisory_only 条目不进入硬裁决）。每条规则都有具体的 `source` 引用和诱人违反场景 `probe`，全部从 Termcp 的安全模型、API 文档和会话存储设计逐条翻译，引用固定在具体 revision。
+首批 15 条规则中，10 条是 deterministic，5 条是 advisory_only；按 `on_hit` 声明值分为 11 条 deny、3 条 confirm、1 条 log（advisory_only 条目不进入硬裁决）。每条规则都有具体的 `source` 引用和诱人违反场景 `probe`；最初的约束先由威胁场景整理成候选，再逐条落成可执行的命中条件。
 
 实时接缝目前只挂文件类通道：`read` → `file_read`，`write` / `edit` → `file_write`，`glob` / `grep` → `file_search`，`list` → `file_list`。目标路径归一化为绝对路径；不读取、不记录文件内容；未知 payload 和解析失败显式记录，不静默忽略。hook 不修改 input、不返回裁决、不阻断工具调用。`http_request` 等网络规则已在引擎和 fixtures 中，但尚未接入实时 hook；shell、patch 和其他写旁路同样还没有覆盖。
 
@@ -162,6 +162,8 @@ G0 冻结了 7 个命中条件操作符：`op_in`、`target_glob`、`target_outs
 G0（go/no-go）门禁定于 **2026-10-30** 由人逐项核对，当前状态为**未裁决**；agent 不自行放行。门禁标准见 [docs/go-no-go.md](docs/go-no-go.md)。
 
 ## 灵感来源
+
+最初的约束，来自设计 Termcp 威胁模型时的灵感：先把“什么行为会造成不可接受的后果”写成威胁场景，再从中提炼可执行的命中条件。
 
 ### llm-wiki：把约束当“编译产物”
 
@@ -203,7 +205,6 @@ Jev（TypeSafe AI 的 System One 决策模型）只出现在四个 advisory 位�
 
 - **iptables / 防火墙语义**：narrative 路由只查结构化信封，精确 + glob 匹配，specificity 优先；查不到时 fail-open 回退到当前项目激活的全部软约束。可以把它理解成 “iptables for narratives”。
 - **Lost-in-the-Middle（Liu et al., 2023）**：约束越多、位置越中间，越容易被忽略。这条实证是“动态注入”和“激活 / 注入分离”的理由，而不是把强制责任推给 prompt 的理由。
-- **Termcp 威胁模型**：首批 15 条规则逐条翻译自它的安全模型、API 文档和会话存储设计，并在 `source` 里固定 revision、路径、章节、行号和原文引用。
 - **AGENTS.md**：约定与执行机制分离。AGENTS.md 继续做项目知识的入口，约束章节成为规则表的 advisory 派生视图。
 
 ## 快速开始
@@ -270,7 +271,7 @@ docs/              决策、门禁与覆盖说明
 - **阶段 C**：提案、人工审批、git 治理与 TTL。
 - **阶段 D**：SQLite 派生读模型与本地 Web 治理台。
 
-当前只交付 OpenCode V2 适配器。不修改或依赖 Termcp；不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
+当前只交付 OpenCode V2 适配器。不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
 
 ---
 
