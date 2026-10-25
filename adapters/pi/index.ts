@@ -118,19 +118,21 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
   }
 
   pi.on('session_start', (_event, ctx) => {
-    ensureRecorder(ctx.cwd);
+    try {
+      ensureRecorder(ctx.cwd);
+    } catch {
+      // Initialization is best-effort; tool hooks retry ensure if needed.
+    }
   });
 
   pi.on('tool_call', (event, ctx) => {
     const now = Date.now();
     const started = performance.now();
-    const recorder = ensureRecorder(ctx.cwd);
-    if (recorder === null) {
-      return undefined;
-    }
-
     try {
-      recorder.record(normalizePiToolCall(event, ctx.cwd), now, started);
+      const recorder = ensureRecorder(ctx.cwd);
+      if (recorder !== null) {
+        recorder.record(normalizePiToolCall(event, ctx.cwd), now, started);
+      }
     } catch {
       // Pi blocks a tool call when a hook throws. Log-only must stay passive.
     }
@@ -140,13 +142,11 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
   pi.on('user_bash', (event, ctx) => {
     const now = Date.now();
     const started = performance.now();
-    const recorder = ensureRecorder(ctx.cwd);
-    if (recorder === null) {
-      return undefined;
-    }
-
     try {
-      recorder.record(normalizePiUserBash(event, ctx.cwd), now, started);
+      const recorder = ensureRecorder(ctx.cwd);
+      if (recorder !== null) {
+        recorder.record(normalizePiUserBash(event, ctx.cwd), now, started);
+      }
     } catch {
       // A user shell must run exactly as it would without this extension.
     }

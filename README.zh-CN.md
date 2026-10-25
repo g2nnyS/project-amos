@@ -1,7 +1,3 @@
-<p align="center">
-  <a href="README.md">English</a> · <strong>中文</strong>
-</p>
-
 <h1 align="center">Project-Amos</h1>
 
 <p align="center">
@@ -15,6 +11,10 @@
 
 <p align="center">
   <code>阶段 A</code> · log-only · OpenCode V2
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <strong>中文</strong>
 </p>
 
 ---
