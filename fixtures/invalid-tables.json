@@ -326,5 +326,63 @@
     "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "predicate args with an empty string item fails closed",
+    "table": [
+      {
+        "id": "bad-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "target_glob", "args": { "patterns": [""] } }],
+        "narrative": "empty pattern item",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule table with duplicate rule ids fails closed",
+    "table": [
+      {
+        "id": "dup-rule",
+        "dimension": "filesystem",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "first duplicate id",
+        "on_hit": "log",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      },
+      {
+        "id": "dup-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_write"] } }],
+        "narrative": "second duplicate id",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "write a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   }
 ]

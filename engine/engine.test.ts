@@ -155,9 +155,13 @@ test('invalid tables fail closed as a whole', () => {
     'blank probe': [baseRule({ probe: '   ' })],
     'missing id': [baseRule({ id: undefined })],
     'empty id': [baseRule({ id: '' })],
+    'blank id': [baseRule({ id: '   ' })],
+    'blank dimension': [baseRule({ dimension: '   ' })],
+    'duplicate rule id': [baseRule({ id: 'dup' }), baseRule({ id: 'dup' })],
     'negative level': [baseRule({ level: -1 })],
     'fractional level': [baseRule({ level: 1.5 })],
     'missing narrative': [baseRule({ narrative: undefined })],
+    'blank narrative': [baseRule({ narrative: '   ' })],
     'bad scope': [baseRule({ scope: 'global' })],
     'bad owner': [baseRule({ owner: 'robot' })],
     'bad expressivity': [baseRule({ expressivity: 'sometimes' })],
@@ -178,6 +182,12 @@ test('invalid tables fail closed as a whole', () => {
     ],
     'empty operations list': [
       baseRule({ predicate: [call('op_in', { operations: [] })] }),
+    ],
+    'blank operation item': [
+      baseRule({ predicate: [call('op_in', { operations: ['   '] })] }),
+    ],
+    'empty pattern item': [
+      baseRule({ predicate: [call('target_glob', { patterns: [''] })] }),
     ],
     'non-string pattern': [
       baseRule({ predicate: [call('target_glob', { patterns: [1] })] }),
@@ -584,6 +594,32 @@ test('malformed URLs fail closed with empty matches', () => {
     evaluateWithMatches(httpAction(''), [httpRule([call('target_scheme_in', { schemes: ['https'] })])], NOW),
     ENGINE_ERROR,
   );
+  assert.deepEqual(
+    evaluateWithMatches(
+      action({ tool: 'forward', operation: 'forward_open', target: 'local:///0.0.0.0:8080' }),
+      [baseRule({ predicate: [call('target_host_in', { hosts: ['0.0.0.0', '::'] })] })],
+      NOW,
+    ),
+    ENGINE_ERROR,
+  );
+});
+
+test('non-canonical file targets fail closed instead of bypassing target_glob', () => {
+  const globRule = baseRule({
+    predicate: [call('target_glob', { patterns: ['/**/sessions/*/*/log.bin'] })],
+  });
+  for (const target of [
+    '/var/lib/termcp/sessions/s/1//log.bin',
+    '/var/lib/termcp/sessions/s/1/./log.bin',
+    '/var/lib/termcp/sessions/s/1/../1/log.bin',
+    '/var/lib/termcp/sessions/s/1/log.bin/',
+  ]) {
+    assert.deepEqual(
+      evaluateWithMatches(action({ target }), [globRule], NOW),
+      ENGINE_ERROR,
+      target,
+    );
+  }
 });
 
 test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke results', () => {
@@ -655,6 +691,16 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     [
       'credential secret path read',
       action({ tool: 'fs', operation: 'file_read', target: '/home/alice/.ssh/id_ed25519' }),
+      'deny',
+    ],
+    [
+      'credential secret path search via grep',
+      action({ tool: 'grep', operation: 'file_search', target: '/home/ganyu/projects/app/server.key' }),
+      'deny',
+    ],
+    [
+      'credential root ssh key read',
+      action({ tool: 'fs', operation: 'file_read', target: '/root/.ssh/id_ed25519' }),
       'deny',
     ],
     [

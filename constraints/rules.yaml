@@ -5,15 +5,16 @@
   predicate:
     - op: op_in
       args:
-        operations: [file_read]
+        operations: [file_read, file_search]
     - op: target_glob
       args:
         patterns:
           - /home/*/.ssh/id_*
+          - "/**/.ssh/id_*"
           - "/**/*.pem"
           - "/**/*.key"
           - "/**/ssh_configs/*/config.toml"
-  narrative: "禁止 Agent 通过文件读取动作读取已知私钥或明文凭据文件路径；profile 标识不能代替凭据内容。"
+  narrative: "禁止 Agent 通过文件读取或内容检索动作读取已知私钥或明文凭据文件路径；profile 标识不能代替凭据内容。"
   on_hit: deny
   scope: project
   ttl: null
@@ -106,6 +107,8 @@
         patterns:
           - /home/*/.ssh/config
           - /home/*/.ssh/config.d/**
+          - "/**/.ssh/config"
+          - "/**/.ssh/config.d/**"
           - "/**/ssh_configs/**"
   narrative: "SSH 配置写能力按默认关闭处理；Agent 不得直接改写用户 SSH 配置或 ssh_configs 存储。"
   on_hit: deny

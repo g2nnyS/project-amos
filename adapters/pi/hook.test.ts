@@ -94,6 +94,12 @@ function setup(
         ctx,
       );
     },
+    rawToolCall(event: unknown): unknown {
+      return handler('tool_call')(event, ctx);
+    },
+    rawUserBash(event: unknown): unknown {
+      return handler('user_bash')(event, ctx);
+    },
     logPath(): string {
       return join(directory, 'audit.jsonl');
     },
@@ -205,6 +211,67 @@ test('a tool call ensures the recorder even without session_start', async (t) =>
     operation: 'file_search',
     target: join(ROOT, 'engine'),
   });
+});
+
+test('throwing payload getters are audited as engine_error without leaking values', async (t) => {
+  const hook = setup(t);
+  assert.equal(await hook.sessionStart(), undefined);
+
+  const toolSecret = 'TOOL_GETTER_SECRET';
+  const badToolCall = {
+    type: 'tool_call',
+    toolCallId: 'call-throwing-tool-name',
+    input: { path: join(ROOT, 'src/example.ts') },
+  };
+  Object.defineProperty(badToolCall, 'toolName', {
+    enumerable: true,
+    get() {
+      throw new Error(toolSecret);
+    },
+  });
+  assert.equal(await hook.rawToolCall(badToolCall), undefined);
+
+  const bashSecret = 'USER_BASH_GETTER_SECRET';
+  const badUserBash = {
+    type: 'user_bash',
+    excludeFromContext: false,
+    cwd: hook.directory,
+  };
+  Object.defineProperty(badUserBash, 'command', {
+    enumerable: true,
+    get() {
+      throw new Error(bashSecret);
+    },
+  });
+  assert.equal(await hook.rawUserBash(badUserBash), undefined);
+
+  const entries = hook.entries();
+  assert.equal(entries.length, 2);
+  assert.deepEqual(
+    entries.map((entry) => ({
+      verdict: entry.verdict,
+      error: entry.error,
+      matched_rule_ids: entry.matched_rule_ids,
+    })),
+    [
+      { verdict: 'deny', error: 'engine_error', matched_rule_ids: [] },
+      { verdict: 'deny', error: 'engine_error', matched_rule_ids: [] },
+    ],
+  );
+  assert.deepEqual(entries[0].action, {
+    tool: 'unknown',
+    operation: 'unknown',
+    target: 'unknown',
+  });
+  assert.deepEqual(entries[1].action, {
+    tool: 'user_bash',
+    operation: 'unknown',
+    target: 'unknown',
+  });
+
+  const rawLog = readFileSync(hook.logPath(), 'utf8');
+  assert.equal(rawLog.includes(toolSecret), false);
+  assert.equal(rawLog.includes(bashSecret), false);
 });
 
 test('configuration failure never throws and is reported once', async (t) => {

@@ -103,7 +103,15 @@ function validateTable(value: unknown): Rule[] {
   if (!Array.isArray(value)) {
     throw new Error('table must be an array');
   }
-  return value.map(validateRule);
+  const rules = value.map(validateRule);
+  const seenIds = new Set<string>();
+  for (const rule of rules) {
+    if (seenIds.has(rule.id)) {
+      throw new Error(`duplicate rule id: ${rule.id}`);
+    }
+    seenIds.add(rule.id);
+  }
+  return rules;
 }
 
 function validateAction(value: unknown): Action {
@@ -156,8 +164,8 @@ function validateRule(value: unknown): Rule {
     throw new Error('unknown expressivity');
   }
 
-  if (typeof value.narrative !== 'string') {
-    throw new Error('narrative must be a string');
+  if (!isNonBlankString(value.narrative)) {
+    throw new Error('narrative must be a non-empty string');
   }
 
   const onHit = value.on_hit;
@@ -371,21 +379,43 @@ function evaluatePredicate(predicate: Predicate, action: Action): boolean {
 }
 
 function assertAbsoluteTarget(target: string): void {
-  if (!target.startsWith('/')) {
-    throw new Error('file target must be an absolute path');
+  if (
+    !target.startsWith('/') ||
+    target.includes('\0') ||
+    target.includes('//') ||
+    (target.length > 1 && target.endsWith('/'))
+  ) {
+    throw new Error('file target must be a normalized absolute path');
+  }
+  const segments = target.split('/');
+  for (let index = 1; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment === '.' || segment === '..') {
+      throw new Error('file target must be a normalized absolute path');
+    }
   }
 }
 
 function normalizeScheme(scheme: string): string {
-  return (scheme.endsWith(':') ? scheme.slice(0, -1) : scheme).toLowerCase();
+  const normalized = (
+    scheme.endsWith(':') ? scheme.slice(0, -1) : scheme
+  ).toLowerCase();
+  if (normalized.length === 0) {
+    throw new Error('URL scheme must be non-empty');
+  }
+  return normalized;
 }
 
 function normalizeHost(host: string): string {
   const lowered = host.toLowerCase();
-  if (lowered.startsWith('[') && lowered.endsWith(']')) {
-    return lowered.slice(1, -1);
+  const normalized =
+    lowered.startsWith('[') && lowered.endsWith(']')
+      ? lowered.slice(1, -1)
+      : lowered;
+  if (normalized.length === 0) {
+    throw new Error('URL target must include a hostname');
   }
-  return lowered;
+  return normalized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -401,7 +431,7 @@ function readNonEmptyString(
   field: string,
 ): string {
   const candidate = value[field];
-  if (typeof candidate !== 'string' || candidate.length === 0) {
+  if (!isNonBlankString(candidate)) {
     throw new Error(`${field} must be a non-empty string`);
   }
   return candidate;
@@ -415,7 +445,7 @@ function readStringArray(
   if (
     !Array.isArray(candidate) ||
     candidate.length === 0 ||
-    !candidate.every((item) => typeof item === 'string')
+    !candidate.every(isNonBlankString)
   ) {
     throw new Error(`${field} must be a non-empty string array`);
   }

@@ -1,6 +1,6 @@
 import type { AuditAction } from '../../storage/jsonl.ts';
 
-/** Structured file-channel action produced by a harness adapter. */
+/** Structured action produced by a harness adapter. */
 export type NormalizedAction = AuditAction;
 
 /**

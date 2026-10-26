@@ -7,9 +7,9 @@
 - `predicate` 是内置命中条件操作符调用的数组，数组内逐项做 AND；`advisory_only` 条目的值固定为 `null`。
 - 每项只有 `op` 与 `args`；没有变量、脚本、嵌套布尔表达式、正则、自由文本条件或自定义扩展。
 - action 只含 `tool`、`operation`、`target` 三个语义字段；额外字段不参与裁决。文件内容为秘密的约束不能假装可由路径推断。
-- 文件 target 是调用方给出的归一化绝对路径；引擎不做 realpath、不访问文件系统，也不承诺识别 symlink。
-- URL target 是归一化绝对 URL。forward 用 `dynamic://`、`local://` 或 `remote://` 表示类型；loopback 统一成 `localhost`，绑定 `*` 统一成 `0.0.0.0`。
-- 任一未知 `op`、参数类型错误、URL 解析失败或内部异常都使整次评估 fail-closed 为 `deny`。
+- 文件 target 必须已是规范化绝对路径：以 `/` 开头，不含 `//`、`.`、`..`、末尾 `/` 或 NUL。引擎不折叠这些形式，也不做 realpath、不访问文件系统、不识别 symlink；非规范化路径整次 fail-closed，避免用未折叠路径绕过 glob。
+- URL target 是可解析的绝对 URL，且 host 谓词要求非空 hostname。forward 用 `dynamic://`、`local://` 或 `remote://` 表示类型；loopback 统一成 `localhost`，绑定 `*` 统一成 `0.0.0.0`。空 host 或空 scheme 不当作未命中。
+- 重复规则 ID、空白 narrative、空白谓词参数、未知 `op`、参数类型错误、URL 解析失败或内部异常都使整次评估 fail-closed 为 `deny`。
 - `ttl` 只接受 `null`、真实日历日期 `YYYY-MM-DD`，或与 `new Date(parsed).toISOString()` 完全一致的 UTC 时间；`now >= ttl` 时条目过期。
 
 ## 冻结清单

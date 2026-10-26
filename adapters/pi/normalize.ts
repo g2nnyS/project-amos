@@ -141,6 +141,10 @@ export function normalizePiToolCall(
     if (!usableCwd(cwd)) {
       return error('unknown_payload', tool, 'shell_input');
     }
+    const input: unknown = event.input;
+    if (!isRecord(input) || !isNonBlankString(input.command)) {
+      return error('parse_error', tool, 'shell_input');
+    }
     return action(tool, 'shell_input', 'unknown');
   }
 
@@ -156,7 +160,7 @@ export function normalizePiToolCall(
   return normalizeFileTool(tool, operation, event.input, cwd);
 }
 
-/** Normalize a Pi `user_bash` event. The command is never read or recorded. */
+/** Normalize a Pi `user_bash` event. The command is never stored in the action or audit log. */
 export function normalizePiUserBash(
   event: UserBashEvent,
   cwd: string,
@@ -167,6 +171,10 @@ export function normalizePiUserBash(
 
   if (!usableCwd(cwd)) {
     return error('unknown_payload', 'user_bash', 'shell_input');
+  }
+
+  if (!isNonBlankString(event.command)) {
+    return error('parse_error', 'user_bash', 'shell_input');
   }
 
   return action('user_bash', 'shell_input', 'unknown');

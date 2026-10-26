@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>Stage A</code> · log-only · OpenCode V2
+  <code>Stage A</code> · log-only · OpenCode V2 + Pi
 </p>
 
 <p align="center">
@@ -151,16 +151,17 @@ Currently in **Stage A: log-only validation**. Real deny, confirm, proposal gove
 | Snapshot | deeply frozen; invalid reload keeps the last good version | `storage/snapshot.ts` |
 | Audit log | append-only JSONL + error classification | `storage/jsonl.ts` |
 | OpenCode V2 | compiled log-only plugin; real session sample | `adapters/opencode-v2/`, `spike/` |
+| Pi | compiled log-only adapter; no real CLI sample yet | `adapters/pi/`, `docs/pi-adapter.md` |
 | Review worksheet | stratified sampling; refuses to overwrite existing conclusions | `storage/audit-review.ts` |
-| Tests | 109 passing | `npm test` |
+| Tests | 142 passing | `npm test` |
 
 Of the first 15 rules, 10 are deterministic and 5 are `advisory_only`; by declared `on_hit`, 11 are marked `deny`, 3 are marked `confirm`, and 1 is marked `log` (`advisory_only` rules never enter hard adjudication). Every rule has a concrete `source` reference and a tempting-violation `probe`; the first constraints started as threat scenarios and were then turned into executable match conditions.
 
-The live seam currently covers only the file channel: `read` → `file_read`, `write` / `edit` → `file_write`, `glob` / `grep` → `file_search`, and `list` → `file_list`. Targets are normalized to absolute paths; file contents are neither read nor logged; unknown payloads and parse failures are recorded explicitly, never silently ignored. The hook does not mutate input, return a verdict, or block tool calls. `http_request` and other network rules are present in the engine and fixtures but not wired into the live hook; shell, patch, and other write paths remain uncovered.
+OpenCode currently covers the file channel: `read` → `file_read`, `write` / `edit` → `file_write`, `glob` / `grep` → `file_search`, and `list` → `file_list`. Pi covers the same file operations under its own tool names, and records `bash` / `user_bash` as `shell_input` without the command text. Targets are resolved to absolute paths, including `~`; the engine rejects uncollapsed `.`, `..`, and `//` instead of matching them. File contents are neither read nor logged. Unknown payloads and parse failures are recorded explicitly. Neither hook mutates input, returns a verdict, or blocks tool calls. `http_request` and other network rules exist in the engine and fixtures but are not wired into either live hook. OpenCode still skips shell; patch remains unstructured on both.
 
 The review worksheet is derived from raw JSONL: all level-0 hits, all non-level-0 denies, confirm sampled with tool/rule coverage first, and all errors and coverage gaps. The current worksheet (at generation time) covers 158 records: 1 level-0 hit, 0 non-level-0 denies, 35 errors/gaps, and 20 of 65 confirm records sampled. It only builds a queue; it does not decide false positives or approvals. Output refuses to overwrite a file that already contains human conclusions.
 
-**Not yet enabled**: real deny / confirm, shell and patch write paths, project activation snapshot and narrative routing, proposal queue, TTL cleanup, SQLite, local web governance console, second harness, and probe execution with violation/false-positive dashboards.
+**Not yet enabled**: real deny / confirm, OpenCode shell and both adapters' patch paths, project activation snapshot and narrative routing, proposal queue, TTL cleanup, SQLite, local web governance console, and probe execution with violation/false-positive dashboards. Pi has no real CLI sample yet.
 
 The G0 (go/no-go) gate is scheduled for **2026-10-30**; humans check each item. Current status: **not decided**. Agents do not self-approve. See [docs/go-no-go.md](docs/go-no-go.md).
 
@@ -189,7 +190,7 @@ Two amendments: the enforcement point does not chase a living wiki — the engin
 Borrowed patterns:
 
 - Single-database normalization + dual audience: agents query through a CLI, humans review through a UI;
-- Project N provider formats into a shared schema: this maps to how a second harness could normalize heterogeneous actions in the future; we do not reserve an empty interface or implement a second adapter today;
+- Project N provider formats into a shared schema: OpenCode and Pi each normalize into the same action envelope; that is not a generic harness framework;
 - The memory layer’s “agent proposes → human approves → register → recall later” is a ready prototype for the proposal pipeline;
 - A layered read API: typed helpers first, raw queries as an escape hatch.
 
@@ -212,7 +213,7 @@ Jev (TypeSafe AI’s System One decision model) appears only in four advisory po
 
 ## Quick start
 
-Requirements: Node.js 26, npm; OpenCode V2 is needed only to run the adapter.
+Requirements: Node.js 26, npm; OpenCode V2 and Pi are needed only to run their respective adapters.
 
 ```bash
 npm ci
@@ -231,6 +232,8 @@ npm run build
 
 The root `opencode.jsonc` loads the plugin from `dist/adapters/opencode-v2/`, passing the rules, schema, log path, and `log-only` mode explicitly. Start OpenCode V2 from this directory afterward. The plugin only records hypothetical verdicts and does not block real tool calls; the live log is written to `spike/logs/opencode.jsonl` (git-ignored).
 
+The Pi adapter lives in `adapters/pi/` and is also log-only.
+
 ### Generate a review worksheet
 
 ```bash
@@ -248,7 +251,7 @@ Output must be a new file that does not exist, so human conclusions are never ov
 constraints/       rules, JSON Schema, closed vocabulary
 engine/            pure-function engine and tests
 fixtures/          language-neutral verdict fixtures
-adapters/          OpenCode V2 normalization and hook
+adapters/          OpenCode V2 and Pi normalization and hooks
 storage/           snapshot, JSONL, review queue
 spike/             seam notes, real log samples, human review material
 docs/              decisions, gates, and coverage notes
@@ -263,12 +266,13 @@ The documents below are currently in Chinese.
 - [Fixture coverage](docs/fixture-coverage.md)
 - [Advisory-only translation gaps](docs/translation-notes.md)
 - [OpenCode V2 log-only seam](spike/README.md)
+- [Pi log-only adapter](docs/pi-adapter.md)
 - [Design document (Notion)](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
 - [中文 README](README.zh-CN.md)
 
 ## Boundaries
 
-The goal is a single-machine, single-trust-root governance loop for individuals and closed fleets: no multi-user, SaaS, or cloud control plane.
+The current focus is a single-machine, single-trust-root governance loop for individuals and closed fleets. Multi-device collaboration and team features — including hosted or cloud-assisted options — are a later direction, not a current deliverable.
 
 Stage gates:
 
@@ -277,7 +281,7 @@ Stage gates:
 - **Stage C**: proposals, human approval, git governance, and TTL.
 - **Stage D**: SQLite derived read model and a local web governance console.
 
-Currently only the OpenCode V2 adapter is delivered. No prompt-engineering soft constraints, second harness, multi-user support, SaaS, cloud control plane, LLM adjudication, custom match-condition DSL, regex routing, or rule marketplace. Do not change `deny > confirm > log > allow`, same-level deny, or fail-closed semantics for architectural aesthetics.
+Currently the delivered adapters are OpenCode V2 and Pi, both log-only. No prompt-engineering soft constraints, additional harnesses beyond those two, LLM adjudication, custom match-condition DSL, regex routing, or rule marketplace. Do not change `deny > confirm > log > allow`, same-level deny, or fail-closed semantics for architectural aesthetics.
 
 ---
 

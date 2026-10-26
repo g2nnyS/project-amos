@@ -130,6 +130,27 @@ test('empty-hit legacy deny is a gap, not a non-zero rule deny', () => {
   );
 });
 
+test('unknown error types, invalid verdicts, non-array matched_rule_ids and empty-match confirm/log enter gaps', () => {
+  const queue = buildReviewQueue(
+    [
+      source('corrupted.jsonl', [
+        auditLine({ matched_rule_ids: [], verdict: 'deny', error: 'weird_error' }),
+        auditLine({ matched_rule_ids: [], verdict: 'deny', error: '' }),
+        auditLine({ matched_rule_ids: [], verdict: 'block' }),
+        auditLine({ matched_rule_ids: 'not-an-array', verdict: 'allow' }),
+        auditLine({ matched_rule_ids: [], verdict: 'confirm' }),
+        auditLine({ matched_rule_ids: [], verdict: 'log' }),
+      ]),
+    ],
+    BASE_RULES,
+  );
+
+  assert.equal(queue.gaps.length, 6);
+  for (const record of queue.gaps) {
+    assert.equal(record.reasons.includes('unknown_payload'), true, `line ${record.line}`);
+  }
+});
+
 test('malformed JSON and incomplete action enter gaps without leaking source text', () => {
   const secret = '{"token":"SUPER_SECRET_TOKEN"';
   const queue = buildReviewQueue(

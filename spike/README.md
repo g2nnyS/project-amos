@@ -7,7 +7,7 @@
 - 配置显式传入 `rulesPath`、`schemaPath`、`logPath` 和 `mode=log-only`；相对路径以 OpenCode 项目位置解析，不依赖 cwd。
 - loader 校验 YAML、JSON Schema 和规则语义，成功后加载深度冻结的内存快照；首次快照失败记录 `snapshot_error`，非法 reload 保留最后正常快照。
 - `read` → `file_read`；`write` / `edit` → `file_write`；`glob` / `grep` → `file_search`；`list` → `file_list`。
-- 文件目标归一化为绝对路径。不读取或记录文件内容，不由引擎理解 OpenCode payload。
+- 文件目标解析为绝对路径，并展开 `~` / `~/`。不读取或记录文件内容，不由引擎理解 OpenCode payload。
 - 已知非文件工具显式跳过；patch、未知工具或畸形文件 payload 记录 `unknown_payload` / `parse_error`，不静默忽略。
 - hook 不修改 input、不返回裁决、不向工具管线抛错。实际工具调用始终按 harness 原有流程继续。
 - 实时日志写入 `spike/logs/opencode.jsonl`（git 忽略），只追加。每行至少有 `ts / action / matched_rule_ids / verdict / latency_ms`，错误时增加 `error`。
@@ -36,4 +36,4 @@ npm test
 npm run typecheck
 ```
 
-当前仍处阶段 A，不包含真实 deny、confirm、SQLite、Web 治理台、第二 harness 或任何 LLM 裁决。shell、patch 等写旁路必须在阶段 B 前另行裁决。
+当前仍处阶段 A，不包含真实 deny、confirm、SQLite、Web 治理台或任何 LLM 裁决。Pi 是单独的 log-only 适配器，见 `docs/pi-adapter.md`。OpenCode 的 shell、patch 等写旁路必须在阶段 B 前另行裁决。
