@@ -10,6 +10,8 @@
 - 多规则命中时选择最严格的裁决；现有用例覆盖 `deny` 胜过 `confirm` 和 `log`，以及同级 `deny`/`confirm` 冲突归为 `deny`。
 - 所有命中规则的 ID 按 `table` 中的顺序保留，包括同级多个 `deny`；未命中规则不列入结果。
 - `action`、规则、命中条件调用及其 `args` 等位置的未知额外字段不会改变匹配结果。
+- 含 `.`、`..`、`//` 或末尾 `/` 的文件 target，以及没有 hostname 的 URL target，在对应谓词被求值时 fail-closed，而不是当成未命中。
+- 重复规则 ID、空白谓词参数和空白 narrative 使整张表 fail-closed。
 
 ## 7 个命中条件操作符
 

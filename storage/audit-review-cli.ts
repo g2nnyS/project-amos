@@ -105,6 +105,7 @@ function readRules(path: string): ReviewRuleInput[] {
     throw new Error('rules file must contain a YAML sequence');
   }
 
+  const seenIds = new Set<string>();
   return parsed.map((entry, index) => {
     if (!isRecord(entry)) {
       throw new Error(`rule at index ${index} must be an object`);
@@ -114,6 +115,10 @@ function readRules(path: string): ReviewRuleInput[] {
     if (typeof id !== 'string' || id.trim().length === 0) {
       throw new Error(`rule at index ${index} has no valid id`);
     }
+    if (seenIds.has(id)) {
+      throw new Error(`duplicate rule id: ${id}`);
+    }
+    seenIds.add(id);
     if (
       typeof level !== 'number' ||
       !Number.isInteger(level) ||

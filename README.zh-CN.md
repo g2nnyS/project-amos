@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <code>阶段 A</code> · log-only · OpenCode V2
+  <code>阶段 A</code> · log-only · OpenCode V2 + Pi
 </p>
 
 <p align="center">
@@ -152,16 +152,17 @@ G0 冻结了 7 个命中条件操作符：`op_in`、`target_glob`、`target_outs
 | 快照 | 深度冻结；非法 reload 保留最后正常版本 | `storage/snapshot.ts` |
 | 审计日志 | 只追加 JSONL + 错误分类 | `storage/jsonl.ts` |
 | OpenCode V2 | 编译后 log-only 插件；真实会话样本 | `adapters/opencode-v2/`、`spike/` |
+| Pi | log-only 扩展；真实 CLI 样本仍因 provider 未配置而缺失 | `adapters/pi/`、`docs/pi-adapter.md` |
 | 人审工作表 | 分层抽样；拒绝覆盖既有结论 | `storage/audit-review.ts` |
-| 测试 | 109 个用例全绿 | `npm test` |
+| 测试 | 142 个用例全绿 | `npm test` |
 
 首批 15 条规则中，10 条是 deterministic，5 条是 advisory_only；按 `on_hit` 声明值分为 11 条 deny、3 条 confirm、1 条 log（advisory_only 条目不进入硬裁决）。每条规则都有具体的 `source` 引用和诱人违反场景 `probe`；最初的约束先由威胁场景整理成候选，再逐条落成可执行的命中条件。
 
-实时接缝目前只挂文件类通道：`read` → `file_read`，`write` / `edit` → `file_write`，`glob` / `grep` → `file_search`，`list` → `file_list`。目标路径归一化为绝对路径；不读取、不记录文件内容；未知 payload 和解析失败显式记录，不静默忽略。hook 不修改 input、不返回裁决、不阻断工具调用。`http_request` 等网络规则已在引擎和 fixtures 中，但尚未接入实时 hook；shell、patch 和其他写旁路同样还没有覆盖。
+OpenCode 目前只挂文件类通道：`read` → `file_read`，`write` / `edit` → `file_write`，`glob` / `grep` → `file_search`，`list` → `file_list`。Pi 覆盖对应的文件工具，并把 `bash` / `user_bash` 记为 `shell_input`，不记录命令文本。目标路径解析为绝对路径，包括 `~`；引擎拒绝未折叠的 `.`、`..` 和 `//`，而不是把它们当成未命中。不读取、不记录文件内容；未知 payload 和解析失败显式记录。两个 hook 都不修改 input、不返回裁决、不阻断工具调用。`http_request` 等网络规则已在引擎和 fixtures 中，但尚未接入任一实时 hook。OpenCode 仍跳过 shell；两边的 patch 仍无法结构化。
 
 人审工作表从原始 JSONL 派生，0 层命中全量、非 0 层 deny 全量、confirm 优先按工具和规则覆盖抽样、错误与覆盖缺口全量。当前工作表（生成时点）基于 158 条记录：0 层 1 条、非 0 层 deny 0 条、错误/缺口 35 条、confirm 65 条中抽 20 条。工作表只生成队列，不自动判断误拒或放行；输出拒绝覆盖已有人工结论的文件。
 
-**尚未启用**：真实 deny / confirm、shell 与 patch 等写旁路、项目激活快照与 narrative 路由、提案队列、TTL 清理、SQLite、本地 Web 治理台、第二 harness、探针执行与违反率/误拒率仪表盘。
+**尚未启用**：真实 deny / confirm、OpenCode 的 shell 与两边的 patch、项目激活快照与 narrative 路由、提案队列、TTL 清理、SQLite、本地 Web 治理台、探针执行与违反率/误拒率仪表盘。Pi 还没有真实 CLI 样本。
 
 G0（go/no-go）门禁定于 **2026-10-30** 由人逐项核对，当前状态为**未裁决**；agent 不自行放行。门禁标准见 [docs/go-no-go.md](docs/go-no-go.md)。
 
@@ -190,7 +191,7 @@ Karpathy 的 llm-wiki 哲学是这套设计最直接的哲学参照。它的核�
 借走的模式：
 
 - 单库归一 + dual audience：agent 用 CLI 查，人用界面审；
-- 把 N 家 provider 投影进共享 schema：对应未来如果出现第二 harness，如何把异构 action 归一；当前不预留空接口，也不实现第二适配器；
+- 把 N 家 provider 投影进共享 schema：OpenCode 与 Pi 各自把事件归一进同一 action 信封；这不是通用 harness 框架；
 - 记忆层的“agent 提议 → 人批准 → 注册 → 日后召回”，是提案管线的现成原型；
 - 读表接口分层：typed helpers 为主，raw 查询做逃生舱。
 
@@ -213,7 +214,7 @@ Jev（TypeSafe AI 的 System One 决策模型）只出现在四个 advisory 位�
 
 ## 快速开始
 
-环境：Node.js 26、npm；运行适配器时另需 OpenCode V2。
+环境：Node.js 26、npm；运行适配器时另需对应的 OpenCode V2 或 Pi。
 
 ```bash
 npm ci
@@ -232,6 +233,8 @@ npm run build
 
 项目根 `opencode.jsonc` 从 `dist/adapters/opencode-v2/` 加载插件，显式传入规则、Schema、日志路径和 `log-only` 模式。随后从这个目录启动 OpenCode V2 即可。插件只记录假设裁决，不阻断真实工具调用；实时日志写入 `spike/logs/opencode.jsonl`（git 忽略）。
 
+Pi 适配器位于 `adapters/pi/`，同样只启用 log-only。
+
 ### 生成人审工作表
 
 ```bash
@@ -249,7 +252,7 @@ npm run audit:review -- \
 constraints/       规则、JSON Schema、封闭词表
 engine/            纯函数引擎与测试
 fixtures/          语言中立裁决 fixtures
-adapters/          OpenCode V2 归一化与 hook
+adapters/          OpenCode V2 与 Pi 的 log-only 适配器
 storage/           快照、JSONL、审核队列
 spike/             接缝说明、真实日志样本、人审材料
 docs/              决策、门禁与覆盖说明
@@ -262,12 +265,13 @@ docs/              决策、门禁与覆盖说明
 - [Fixture 覆盖](docs/fixture-coverage.md)
 - [Advisory-only 翻译缺口](docs/translation-notes.md)
 - [OpenCode V2 log-only 接缝](spike/README.md)
+- [Pi log-only 适配器](docs/pi-adapter.md)
 - [设计文档（Notion）](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
 - [English README](README.md)
 
 ## 边界
 
-目标是单机、单信任根的完整治理闭环：面向个人与封闭舰队，不引入多用户、SaaS 或云控制面。
+当前重点是单机、单信任根的治理闭环，面向个人与封闭舰队。多端协作和团队功能（包括托管或云辅助形态）是后续方向，不属于当前交付范围。
 
 阶段门禁：
 
@@ -276,7 +280,7 @@ docs/              决策、门禁与覆盖说明
 - **阶段 C**：提案、人工审批、git 治理与 TTL。
 - **阶段 D**：SQLite 派生读模型与本地 Web 治理台。
 
-当前只交付 OpenCode V2 适配器。不做提示词工程软约束、第二 harness、多用户、SaaS、云控制面、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
+当前交付 OpenCode V2 与 Pi 两个 log-only 适配器。不做提示词工程软约束、第三 harness、LLM 裁决、自研命中条件 DSL、正则路由或规则市场。不得为了架构观感改变 `deny > confirm > log > allow`、同层 deny 和 fail-closed 语义。
 
 ---
 

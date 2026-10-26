@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { ActionNormalization, NormalizedAction } from '../shared/types.ts';
 
 export type { NormalizedAction };
@@ -72,6 +73,20 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function usableProjectDirectory(value: unknown): value is string {
+  return isNonBlankString(value) && isAbsolute(value);
+}
+
+function expandHome(path: string): string {
+  if (path === '~') {
+    return homedir();
+  }
+  if (path.startsWith('~/')) {
+    return join(homedir(), path.slice(2));
+  }
+  return path;
+}
+
 function action(
   tool: string,
   operation: string,
@@ -122,7 +137,7 @@ export function normalizeOpenCodeAction(
     return error('unknown_payload', tool, 'unknown');
   }
 
-  if (!isNonBlankString(projectDirectory)) {
+  if (!usableProjectDirectory(projectDirectory)) {
     return error('unknown_payload', tool, operation);
   }
 
@@ -136,7 +151,7 @@ export function normalizeOpenCodeAction(
     if (!isNonBlankString(path)) {
       return error('parse_error', tool, operation);
     }
-    return action(tool, operation, resolve(projectDirectory, path));
+    return action(tool, operation, resolve(projectDirectory, expandHome(path)));
   }
 
   // Glob, grep and list have an optional path. An omitted path explicitly
@@ -148,7 +163,7 @@ export function normalizeOpenCodeAction(
     if (!isNonBlankString(path)) {
       return error('parse_error', tool, operation);
     }
-    return action(tool, operation, resolve(projectDirectory, path));
+    return action(tool, operation, resolve(projectDirectory, expandHome(path)));
   }
 
   return error('unknown_payload', tool, 'unknown');

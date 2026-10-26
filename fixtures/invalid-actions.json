@@ -55,5 +55,49 @@
     "action": { "tool": "http", "operation": "http_request", "target": "not a url" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "non-canonical file target with dot or double-slash segments fails closed",
+    "table": [
+      {
+        "id": "glob-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*"] } }],
+        "narrative": "secret path pattern",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a private key via dot segments"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/alice/.ssh/./id_ed25519" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "URL target without a hostname fails closed when a host predicate is reached",
+    "table": [
+      {
+        "id": "host-rule",
+        "dimension": "network",
+        "level": 1,
+        "expressivity": "deterministic",
+        "predicate": [{ "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }],
+        "narrative": "forward binds every interface",
+        "on_hit": "confirm",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "open a forward with a triple-slash hostless URL"
+      }
+    ],
+    "action": { "tool": "forward", "operation": "forward_open", "target": "local:///0.0.0.0:8080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   }
 ]

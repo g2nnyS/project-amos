@@ -117,13 +117,18 @@ const AUDIT_ERROR_REASONS = new Set<ReviewReason>([
   'snapshot_error',
 ]);
 
+const KNOWN_VERDICTS = new Set<string>(['allow', 'deny', 'confirm', 'log']);
+
 export function buildReviewQueue(
   sources: readonly ReviewSource[],
   rules: readonly ReviewRuleInput[],
 ): ReviewQueue {
   const ruleMap = new Map<string, ReviewRuleInput>();
   for (const rule of rules) {
-    if (!ruleMap.has(rule.id)) {
+    const existing = ruleMap.get(rule.id);
+    if (existing === undefined) {
+      ruleMap.set(rule.id, rule);
+    } else if (rule.level < existing.level) {
       ruleMap.set(rule.id, rule);
     }
   }
@@ -230,9 +235,19 @@ function parseRecord(
     reasons.add('action_invalid');
   }
 
-  const matchedRuleIds = Array.isArray(parsed.matched_rule_ids)
-    ? parsed.matched_rule_ids.filter(
-        (id): id is string => typeof id === 'string',
+  const rawMatchedIds = parsed.matched_rule_ids;
+  if (
+    !Array.isArray(rawMatchedIds) ||
+    !rawMatchedIds.every(
+      (id): id is string => typeof id === 'string' && id.trim().length > 0,
+    )
+  ) {
+    reasons.add('unknown_payload');
+  }
+
+  const matchedRuleIds = Array.isArray(rawMatchedIds)
+    ? rawMatchedIds.filter(
+        (id): id is string => typeof id === 'string' && id.trim().length > 0,
       )
     : [];
 
@@ -261,6 +276,9 @@ function parseRecord(
   }
 
   const verdict = typeof parsed.verdict === 'string' ? parsed.verdict : null;
+  if (verdict === null || !KNOWN_VERDICTS.has(verdict)) {
+    reasons.add('unknown_payload');
+  }
   if (verdict === 'confirm') {
     reasons.add('confirm');
   }
@@ -271,8 +289,20 @@ function parseRecord(
       ? parsed.error
       : null;
 
-  if (error !== null && AUDIT_ERROR_REASONS.has(error as ReviewReason)) {
-    reasons.add(error as ReviewReason);
+  if (hasOwnError) {
+    if (error !== null && AUDIT_ERROR_REASONS.has(error as ReviewReason)) {
+      reasons.add(error as ReviewReason);
+    } else {
+      reasons.add('unknown_payload');
+    }
+  }
+
+  if (
+    !hasOwnError &&
+    (verdict === 'confirm' || verdict === 'log') &&
+    matchedRuleIds.length === 0
+  ) {
+    reasons.add('unknown_payload');
   }
 
   // A legacy record has no `error` field at all. Records that explicitly say

@@ -35,9 +35,23 @@ function readConfig(options: Record<string, unknown>, directory: string) {
   };
 }
 
-function fallbackAction(event: ToolEvent): AuditAction {
+function fallbackAction(event: unknown): AuditAction {
+  let tool = "unknown";
+  try {
+    if (
+      typeof event === "object" &&
+      event !== null &&
+      !Array.isArray(event) &&
+      typeof (event as ToolEvent).tool === "string" &&
+      (event as { tool: string }).tool.trim().length > 0
+    ) {
+      tool = (event as { tool: string }).tool;
+    }
+  } catch {
+    // A throwing getter on event.tool must not escape the hook.
+  }
   return {
-    tool: typeof event.tool === "string" && event.tool.length > 0 ? event.tool : "unknown",
+    tool,
     operation: "unknown",
     target: "unknown",
   };
@@ -59,11 +73,15 @@ export default {
       try {
         recorder.record(normalizeOpenCodeAction(event, config.directory), now, started);
       } catch {
-        recorder.record(
-          { kind: "error", error: "engine_error", action: fallbackAction(event) },
-          now,
-          started,
-        );
+        try {
+          recorder.record(
+            { kind: "error", error: "engine_error", action: fallbackAction(event) },
+            now,
+            started,
+          );
+        } catch {
+          // Log-only must never throw into OpenCode's tool pipeline.
+        }
       }
     });
 

@@ -285,6 +285,41 @@ test('user_bash maps to shell_input without leaking the command', () => {
   assert.ok(!JSON.stringify(normalized).includes('echo'));
 });
 
+test('shell tools with missing or blank command return parse_error', () => {
+  for (const tool of ['bash', 'powershell']) {
+    for (const input of [undefined, null, {}, { command: '' }, { command: '   ' }, { command: 42 }]) {
+      assert.deepStrictEqual(
+        normalizePiToolCall(event(tool, input), CWD),
+        {
+          kind: 'error',
+          error: 'parse_error',
+          action: { tool, operation: 'shell_input', target: 'unknown' },
+        },
+      );
+    }
+  }
+
+  for (const badCommand of ['', '   ']) {
+    assert.deepStrictEqual(
+      normalizePiUserBash(userBash(badCommand), CWD),
+      {
+        kind: 'error',
+        error: 'parse_error',
+        action: { tool: 'user_bash', operation: 'shell_input', target: 'unknown' },
+      },
+    );
+  }
+
+  assert.deepStrictEqual(
+    normalizePiUserBash(null as unknown as UserBashEvent, CWD),
+    {
+      kind: 'error',
+      error: 'unknown_payload',
+      action: { tool: 'user_bash', operation: 'unknown', target: 'unknown' },
+    },
+  );
+});
+
 test('custom and unknown tools are unknown_payload and hide raw payload', () => {
   const customInput = {
     path: '/home/ganyu/.ssh/id_ed25519',

@@ -87,6 +87,15 @@ test('the schema rejects unknown ops, missing args, bad ttl types and expressivi
     validate([withPredicate([{ op: 'op_in', args: { operations: [] } }])]),
     false,
   );
+  assert.equal(
+    validate([withPredicate([{ op: 'op_in', args: { operations: [''] } }])]),
+    false,
+  );
+  assert.equal(
+    validate([withPredicate([{ op: 'target_glob', args: { patterns: [''] } }])]),
+    false,
+  );
+  assert.equal(validate([{ ...base, narrative: '' }]), false);
   assert.equal(validate([{ ...base, ttl: 123 }]), false);
   assert.equal(validate([{ ...base, ttl: '' }]), false);
   assert.equal(validate([{ ...base, predicate: null }]), false);

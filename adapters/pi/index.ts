@@ -27,6 +27,21 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/** Read a tool name for the engine_error fallback without trusting getters. */
+function fallbackToolName(event: unknown): string {
+  try {
+    if (isRecord(event)) {
+      const tool = event.toolName;
+      if (isNonBlankString(tool)) {
+        return tool;
+      }
+    }
+  } catch {
+    // A throwing getter cannot contribute a tool name.
+  }
+  return 'unknown';
+}
+
 /**
  * Read `.pi/atmos.json` relative to the explicit Pi session directory.
  *
@@ -134,7 +149,28 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
         recorder.record(normalizePiToolCall(event, ctx.cwd), now, started);
       }
     } catch {
-      // Pi blocks a tool call when a hook throws. Log-only must stay passive.
+      try {
+        // Unexpected normalization/recording failures still leave an audit
+        // trail. Configuration failures have no recorder and stay silent.
+        const recorder = ensureRecorder(ctx.cwd);
+        if (recorder !== null) {
+          recorder.record(
+            {
+              kind: 'error',
+              error: 'engine_error',
+              action: {
+                tool: fallbackToolName(event),
+                operation: 'unknown',
+                target: 'unknown',
+              },
+            },
+            now,
+            started,
+          );
+        }
+      } catch {
+        // Pi blocks a tool call when a hook throws. Log-only stays passive.
+      }
     }
     return undefined;
   });
@@ -148,7 +184,26 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
         recorder.record(normalizePiUserBash(event, ctx.cwd), now, started);
       }
     } catch {
-      // A user shell must run exactly as it would without this extension.
+      try {
+        const recorder = ensureRecorder(ctx.cwd);
+        if (recorder !== null) {
+          recorder.record(
+            {
+              kind: 'error',
+              error: 'engine_error',
+              action: {
+                tool: 'user_bash',
+                operation: 'unknown',
+                target: 'unknown',
+              },
+            },
+            now,
+            started,
+          );
+        }
+      } catch {
+        // A user shell must run exactly as it would without this extension.
+      }
     }
     return undefined;
   });

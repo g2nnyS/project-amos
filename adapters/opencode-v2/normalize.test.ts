@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
 import { normalizeOpenCodeAction } from './normalize.ts';
@@ -290,7 +291,7 @@ test('malformed events or tools are unknown_payload with a valid fallback action
 });
 
 test('an unusable project directory is unknown_payload for file tools', () => {
-  for (const directory of ['', '   ']) {
+  for (const directory of ['', '   ', 'relative/dir']) {
     assert.deepStrictEqual(
       normalizeOpenCodeAction(event('read', { path: '/tmp/x' }), directory),
       {
@@ -310,6 +311,31 @@ test('an unusable project directory is unknown_payload for file tools', () => {
       kind: 'error',
       error: 'unknown_payload',
       action: { tool: 'read', operation: 'file_read', target: 'unknown' },
+    },
+  );
+});
+
+test('tilde paths are expanded through homedir for file tools', () => {
+  assert.deepStrictEqual(
+    normalizeOpenCodeAction(event('read', { path: '~/.ssh/id_ed25519' }), DIR),
+    {
+      kind: 'action',
+      action: {
+        tool: 'read',
+        operation: 'file_read',
+        target: resolve(homedir(), '.ssh/id_ed25519'),
+      },
+    },
+  );
+  assert.deepStrictEqual(
+    normalizeOpenCodeAction(event('grep', { path: '~' }), DIR),
+    {
+      kind: 'action',
+      action: {
+        tool: 'grep',
+        operation: 'file_search',
+        target: homedir(),
+      },
     },
   );
 });

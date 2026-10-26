@@ -86,6 +86,50 @@ test("first snapshot failure is fail-closed in the audit record", async (t) => {
   assert.deepEqual(entry.matched_rule_ids, []);
 });
 
+test("throwing event getters are audited as engine_error without escaping the hook", async (t) => {
+  const hook = await setupHook(t);
+  const toolSecret = "OPENCODE_TOOL_GETTER_SECRET";
+  const badToolEvent: Event = {};
+  Object.defineProperty(badToolEvent, "tool", {
+    enumerable: true,
+    get() {
+      throw new Error(toolSecret);
+    },
+  });
+  assert.doesNotThrow(() => hook.call(badToolEvent));
+
+  const inputSecret = "OPENCODE_INPUT_GETTER_SECRET";
+  const badInputEvent: Event = { tool: "read" };
+  Object.defineProperty(badInputEvent, "input", {
+    enumerable: true,
+    get() {
+      throw new Error(inputSecret);
+    },
+  });
+  assert.doesNotThrow(() => hook.call(badInputEvent));
+
+  const entries = hook.entries();
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries[0].action, {
+    tool: "unknown",
+    operation: "unknown",
+    target: "unknown",
+  });
+  assert.equal(entries[0].verdict, "deny");
+  assert.equal(entries[0].error, "engine_error");
+  assert.deepEqual(entries[1].action, {
+    tool: "read",
+    operation: "unknown",
+    target: "unknown",
+  });
+  assert.equal(entries[1].verdict, "deny");
+  assert.equal(entries[1].error, "engine_error");
+
+  const rawLog = readFileSync(hook.logPath, "utf8");
+  assert.equal(rawLog.includes(toolSecret), false);
+  assert.equal(rawLog.includes(inputSecret), false);
+});
+
 test("missing explicit configuration and non-log-only modes fail setup", async () => {
   const base = {
     location: { directory: ROOT },
