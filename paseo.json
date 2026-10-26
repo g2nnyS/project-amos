@@ -1,0 +1,7 @@
+{
+  "metadataGeneration": {
+    "commitMessage": {
+      "instructions": "使用带有scope的conventional commits，如没有特别说明和技术术语，那统一使用中文"
+    }
+  }
+}

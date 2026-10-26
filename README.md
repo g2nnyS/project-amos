@@ -5,7 +5,8 @@
 </p>
 
 <p align="center">
-  Turn agent behavioral constraints from wishes written in a prompt into engineering assets that are evidence-backed, approved, expirable, evaluable, and enforced by the harness.
+  Stop treating agent safety boundaries as wishful thinking tucked inside a prompt.<br>
+  Amos turns behavioral constraints into evidence-backed, auditable, expirable, and testable engineering assets—enforced directly by the harness.
 </p>
 
 <p align="center">
@@ -18,202 +19,204 @@
 
 ---
 
-> Constraints should not live only in prompts. They should be enforced before an action happens.
+> Constraints shouldn't just live in prompts. They need to be enforced before an action takes effect.
 
-The name Project-Amos (AMOS) comes from **A**gent **M**andate & **O**versight **S**ystem: it is about mandate and oversight, not intelligence. It does not try to make models smarter; it tries to make their actions more constrainable.
+The name Project-Amos (AMOS) stands for **A**gent **M**andate & **O**versight **S**ystem. As the name implies, it is about mandate and oversight, not intelligence. We are not trying to make models smarter; we are making sure their actions stay within bounds.
 
-## Vision
+## Why Amos?
 
-Today, many agent behavior rules are still expressed primarily as natural language in `AGENTS.md` files, system prompts, and project documentation. Natural language is effective at communicating intent, but it cannot, by itself, guarantee enforcement when an agent acts. This approach has three structural flaws:
+Today, most agent behavioral rules are still written in plain English inside `AGENTS.md` files, system prompts, and project docs. Natural language is great for expressing intent, but relying on a paragraph of text to stop a destructive tool call is wishful thinking. That approach has three structural flaws:
 
-1. **Compliance depends on the model** — probability, not a guarantee;
-2. **Attention dilution** — the more constraints there are, the less likely each one is followed (Lost-in-the-Middle);
-3. **Compression loss** — when context does not fit, something must be cut, and there is no criterion for what to cut.
+1. **Compliance is a coin toss** — Whether the model listens is a matter of probability, never an engineering guarantee.
+2. **Attention dilution** — The more rules you pile on, the less weight each individual rule carries (the classic *Lost-in-the-Middle* problem).
+3. **Context compression loss** — When the context window fills up, something gets truncated—and there is no principled way to know which safety rule just got dropped on the cutting-room floor.
 
-Amos turns constraints from “reminders” into “mechanisms”: the model only proposes actions; the harness makes a deterministic decision before an action has side effects. Hard boundaries are enforced by the engine; only soft preferences enter the context.
+Amos shifts constraints from polite reminders to deterministic mechanisms. The model proposes an action; the harness disposes of it—making a hard, deterministic call before any side effect hits the system. Hard boundaries are enforced by the policy engine; only soft preferences go into the prompt context.
 
-### Core positions
+### Core Principles
 
-- **The model is the proposer; the harness is the disposer.** Every action passes through the deterministic policy engine before execution; the model cannot override a verdict with its own explanation.
-- **Enforceable rules need a deterministic match condition** (machine field: `predicate`). The natural-language `narrative` is an advisory view for humans and prompts. Rules that cannot be expressed deterministically are marked `advisory_only` rather than forced into a fake condition.
-- **The constraint table is the single core data structure.** The engine is its execution semantics, git is its history, and the governance process is its write permission.
-- **Activation and injection are separate.** Global rule library → project activation set → current task injection set. Activation decides whether a rule applies to the project; injection decides which reminders the model sees right now. Whether a hard rule is enforced does not depend on whether it was injected.
-- **Rules are compiled from evidence.** Every rule must reference a threat model, incident, or probe result. When the evidence disappears, the rule should be flagged for review instead of quietly outliving its justification.
-- **Agents may propose table changes, but cannot write directly.** Changing the table is itself a governed action; attempts to touch level-0 hard invariants are rejected outright.
-- **Hard constraints do not rely on attention.** No fine-tuning, no attention surgery, and no delegating safety to a more prominent prompt.
+- **The model proposes; the harness disposes.** Every action runs through a deterministic policy engine before execution. If the engine says no, no amount of clever reasoning from the model can talk its way past the verdict.
+- **Hard rules require deterministic match conditions (`predicate`).** Natural-language descriptions (`narrative`) exist as an advisory view for humans and prompts. If a rule cannot be expressed as a deterministic check, it is marked `advisory_only` rather than shoehorned into a brittle heuristic.
+- **The constraint table is the single source of truth.** The policy engine defines its execution semantics, Git tracks its history, and the governance workflow controls who gets to write to it.
+- **Activation and injection are decoupled.** Rules flow from the *global rule library* → *project activation set* → *current task injection set*. Activation determines which rules apply to a repo; injection merely decides which reminders the model sees right now. **A hard rule is enforced whether or not it was injected into the current prompt.**
+- **Rules are compiled from evidence.** Every rule must cite a concrete threat model, incident report, or probe result. When that underlying evidence goes away, the rule is flagged for review instead of quietly lingering as dead weight.
+- **Agents may propose changes, never write them directly.** Modifying the constraint table is itself a governed action. Any attempt to touch Level-0 hard invariants is rejected outright.
+- **Safety never leans on attention.** No fine-tuning, no attention surgery, and no hoping that ALL-CAPS prompts will save the day.
 
-### Hard vs. soft constraints
+### Hard vs. Soft Constraints
 
-| | Hard constraints | Soft constraints |
+| | Hard Constraints | Soft Constraints |
 | --- | --- | --- |
-| Carrier | `predicate` + `on_hit` | `narrative` |
-| Executor | policy engine | prompt context |
-| When it takes effect | before an action has side effects | when the model reads context |
-| Failure mode | fail-closed: deny by default | the model may ignore it |
-| Governance | level 0 is untouchable; changes go through proposals | routable by project and task |
+| **Carrier** | `predicate` + `on_hit` | `narrative` |
+| **Enforced by** | Policy engine | Prompt context |
+| **When it runs** | **Before** an action causes side effects | When the model reads context |
+| **Failure mode** | Fail-closed (deny by default) | The model may ignore it |
+| **Governance** | Level 0 is immutable; changes require proposals | Routed dynamically by project and task |
 
-### Relationship to AGENTS.md
+### How does this relate to AGENTS.md?
 
-Not a replacement — a projection. Project knowledge (how to build and test) still belongs in `AGENTS.md`; the `narrative` column renders by dimension and generates or updates the constraint section of `AGENTS.md`. Hard constraints written only in `AGENTS.md` can rely only on model compliance or external checks; that is a category error.
+Amos is a projection, not a replacement. Project know-how—how to build, test, and navigate the repo—still belongs in `AGENTS.md`. Meanwhile, the `narrative` column of the constraint table renders by dimension to generate or update the constraints section of `AGENTS.md`. Putting hard safety boundaries *only* in `AGENTS.md` leaves enforcement up to model goodwill—a category error in system design.
 
-## How it works
+## How It Works
 
-The following is the target design. Stage A implements only the observation part: the engine still evaluates, but every result is logged and no real tool call is blocked.
+Below is the full target architecture. Right now, **Stage A** implements the observation pipeline: the engine evaluates every action for real, but verdicts are only logged—no live tool calls are blocked yet.
 
-### Lifecycle of an action
+### Lifecycle of an Action
 
 ```text
 Model proposes an action
-      │
-      ▼
-Interceptor: normalize to (tool, operation, target)
-      │
-      ▼
+       │
+       ▼
+Interceptor: normalize into envelope (tool, operation, target)
+       │
+       ▼
 Policy engine: load project activation snapshot → match conditions → combine verdicts
-      │
-      ├─ deny    → block side effects, log
-      ├─ confirm → show structured summary, wait for a human
-      ├─ log     → allow, record “what would have happened”
-      └─ allow   → allow
-      │
-      ▼
-harness / sandbox executes → append JSONL audit log
+       │
+       ├─ deny    → block side effects, write to audit log
+       ├─ confirm → surface structured summary, wait for human sign-off
+       ├─ log     → allow through, record "what would have happened"
+       └─ allow   → allow through
+       │
+       ▼
+Harness / sandbox executes → append to raw JSONL audit log
 ```
 
-The interceptor consumes only the structured envelope, never free text. That is why routing and adjudication are not directly exposed to prompt injection: to manipulate routing, an attacker would have to change the tool name itself, and tool names are controlled by the harness parser.
+One crucial detail: **the interceptor only inspects the structured action envelope, never free-form text.** That keeps routing and adjudication insulated from prompt injection. To hijack routing, an attacker would have to forge the tool name itself—and tool names are controlled by the harness parser, not the prompt.
 
-### How rules are expressed
+### Anatomy of a Rule
 
-Every rule has at least three parts:
+Every rule has three core fields:
 
-- `predicate`: the deterministic match condition for the engine;
-- `on_hit`: `deny` / `confirm` / `log`;
-- `narrative`: the explanation for humans and models.
+- `predicate`: the deterministic match condition evaluated by the engine;
+- `on_hit`: what happens on a match (`deny` / `confirm` / `log`);
+- `narrative`: the human- and model-readable explanation.
 
-The machine field remains `predicate`; in prose we call it a match condition.
+In code, the field is named `predicate`; in prose, we call it a **match condition**.
 
-G0 froze 7 match-condition operators: `op_in`, `target_glob`, `target_outside_glob`, `url_query_key_in`, `target_scheme_in`, `target_host_in`, and `target_host_not_in`. There are no variables, scripts, nested boolean expressions, regex, or free-text conditions. States that cannot be expressed are marked `advisory_only`; we do not guess them from the target.
+Milestone G0 freezes a closed vocabulary of 7 match-condition operators: `op_in`, `target_glob`, `target_outside_glob`, `url_query_key_in`, `target_scheme_in`, `target_host_in`, and `target_host_not_in`. There are no variables, scripts, nested boolean trees, regular expressions, or free-text matchers. If a condition cannot be expressed cleanly with those 7 operators, the rule is marked `advisory_only`—we never guess intent by scraping the target string.
 
-### Three sets, do not mix them
+### Three Distinct Sets—Don't Mix Them
 
-| Set | Decides | Consumed by |
+| Set | What It Decides | Consumed By |
 | --- | --- | --- |
-| Global rule library | which candidate rules exist | governance and activation |
-| Project activation set | which rules matter in this project | the engine and narrative routing |
-| Current task injection set | which soft constraints to remind the model about now | prompt context |
+| **Global rule library** | Which candidate rules exist in the system | Governance and activation |
+| **Project activation set** | Which rules apply to this specific repository | Policy engine and `narrative` routing |
+| **Current task injection set** | Which soft reminders the model needs right now | Prompt context |
 
-The engine enforces every hard rule in the project activation set, whether or not it was injected; injection only reduces noise, it does not change the enforcement surface. Activation is per rule via tags / `exclude_rules`; it cannot be an all-or-nothing dimension switch. Activating a rule counts as tightening; disabling or excluding an active rule counts as relaxing and requires human approval. If detection fails, keep the last valid activation snapshot; do not auto-disable.
+The engine enforces every hard rule in the **project activation set**, regardless of whether its narrative was injected into the current prompt. Dynamic injection is there to cut prompt noise, never to shrink the enforcement boundary.
 
-### How verdicts combine
+Activation works at the individual rule level via tags and `exclude_rules`, rather than flipping entire dimensions on or off. Turning a rule on tightens policy and takes effect automatically; turning an active rule off relaxes policy and requires human approval. If environment detection fails, Amos falls back to the last valid activation snapshot rather than failing open.
 
-- Multiple hits: `deny > confirm > log > allow`;
-- Same-level conflict: `deny` wins;
-- Invalid input, unknown match-condition operator, parse failure, and internal engine errors: `deny` (fail-closed).
+### Combining Multiple Verdicts
 
-### Governance: proposals, not writes
+- **Precedence**: `deny > confirm > log > allow`;
+- **Ties at the same level**: `deny` always wins;
+- **Malformed input, unknown operators, parse errors, or internal engine faults**: `deny` (strictly fail-closed).
 
-Changing the table goes through the same harness as any other action:
+### Governance: Proposals, Never Direct Writes
 
-- Add / tighten → effective automatically, mandatory TTL, git trace;
-- Relax / delete / downgrade → structured diff summary → human approval;
-- Touch level 0 → rejected outright + privilege log; one attempt revokes the session’s table-write permission;
-- TTL expires → automatic revert, no reminder, no renewal.
+Updating the rule table goes through the exact same harness oversight as any other action:
 
-The proposal’s “reason” field is not used for automatic approval — it may be an injection artifact. Confirm and approval views show only structured summaries (tool, parameters, target, matched rules), never persuasive prose written by the model.
+- **Add / tighten a rule** → takes effect automatically, requires a mandatory TTL, and leaves a Git trace;
+- **Relax / delete / downgrade a rule** → generates a structured diff summary and waits for human approval;
+- **Touch Level 0** → rejected outright, logged as a privilege violation, and immediately revokes the session's proposal privileges;
+- **TTL expires** → reverts automatically, with no nagging prompts and no auto-renewal.
 
-### Sources of truth, snapshots, and logs
+Crucially, the free-text "reason" field in a proposal is **never** trusted for automated approval—it could easily be carrying a prompt injection payload. Both `confirm` prompts and approval views show strictly structured summaries (tool, parameters, target, matched rules), never persuasive essays written by the model.
 
-- **YAML is the source of truth for rules.** JSON Schema and the closed vocabulary are validated in the loader; rules are readable, diffable, and reviewable.
-- **JSONL is the source of truth for raw audit.** Append-only, never rewritten; derived samples and review worksheets can be rebuilt, but never written back to the raw log.
-- **SQLite is only a deletable, rebuildable derived read model in Stage D.** It never enters the hot path; the engine loads a deeply frozen in-memory snapshot.
-- **Snapshot failure keeps the last good version.** An invalid reload cannot leave the system half-broken; a first-load failure is logged as fail-closed.
+### Sources of Truth, Snapshots, and Logs
 
-### Cold start
+- **YAML is the source of truth for rules.** Validated on load against a JSON Schema and a closed operator vocabulary, keeping rules human-readable, diff-friendly, and easy to review in PRs.
+- **JSONL is the source of truth for raw audit logs.** Strictly append-only. Review queues and sample sets can be rebuilt from it at any time, and nothing ever writes back to mutate the raw log.
+- **SQLite (Stage D) is purely a disposable read model.** It can be deleted and rebuilt from scratch, and it **never** sits on the enforcement hot path. During evaluation, the engine reads from a deeply frozen in-memory snapshot.
+- **Bad reloads keep the last known-good snapshot.** A botched config change won't leave a running session half-protected; if the very first load fails at startup, the system logs the failure and stays fail-closed.
 
-1. **log-only**: record “what would have happened” and collect false positives from real task flows;
-2. **Selective enforcement**: deny only level 0;
-3. **confirm**: irreversible side effects require human confirmation;
-4. **Governance**: proposal queue, TTL, git governance.
+### Cold-Start Rollout: Why Not Block on Day One?
 
-Skipping steps usually ends in a deny storm, then users turn the system off. **A safety system that gets turned off is worse than none.**
+1. **Log-only**: Record "what would have happened" against real workflows to surface false positives early;
+2. **Selective enforcement**: Turn on real `deny` verdicts strictly for Level-0 invariants;
+3. **Human confirmation (`confirm`)**: Gate irreversible side effects behind human sign-off;
+4. **Full governance**: Enable the proposal queue, TTL expiration, and Git-backed lifecycle.
 
-## What exists today
+Skipping straight to full enforcement almost always triggers a "deny storm"—until frustrated developers simply disable the tool. **A safety system that gets turned off is worse than having no safety system at all.**
 
-Currently in **Stage A: log-only validation**. Real deny, confirm, proposal governance, the SQLite read model, and the local web governance console are not enabled.
+## Where Things Stand Today
 
-| Part | Status | Evidence |
+Amos is currently in **Stage A: log-only validation**. Live blocking (`deny`), interactive confirmation (`confirm`), proposal governance, the SQLite read model, and the local web console are not enabled yet.
+
+| Component | Current Status | Where to Look |
 | --- | --- | --- |
-| Rule table | 15 rules, 5 dimensions | `constraints/rules.yaml` |
-| Match-condition vocabulary | 7 operators, frozen | `constraints/vocabulary.md` |
-| Rule validation | JSON Schema + loader semantic checks | `constraints/schema.json` |
-| Engine | TypeScript pure function, injected clock, fail-closed | `engine/engine.ts` |
-| Language-neutral fixtures | match conditions, multi-hit, TTL, invalid input | `fixtures/` |
-| Snapshot | deeply frozen; invalid reload keeps the last good version | `storage/snapshot.ts` |
-| Audit log | append-only JSONL + error classification | `storage/jsonl.ts` |
-| OpenCode V2 | compiled log-only plugin; real session sample | `adapters/opencode-v2/`, `spike/` |
-| Pi | compiled log-only adapter; no real CLI sample yet | `adapters/pi/`, `docs/pi-adapter.md` |
-| Review worksheet | stratified sampling; refuses to overwrite existing conclusions | `storage/audit-review.ts` |
-| Tests | 142 passing | `npm test` |
+| **Rule table** | 15 initial rules across 5 dimensions | `constraints/rules.yaml` |
+| **Match-condition vocabulary** | 7 operators, frozen for G0 | `constraints/vocabulary.md` |
+| **Rule validation** | JSON Schema + loader semantic checks | `constraints/schema.json` |
+| **Policy engine** | Pure TypeScript function, injected clock, fail-closed | `engine/engine.ts` |
+| **Language-neutral fixtures** | Covers match conditions, multi-hit, TTL, and malformed input | `fixtures/` |
+| **In-memory snapshot** | Deeply frozen; bad reloads fall back to last good state | `storage/snapshot.ts` |
+| **Audit log** | Append-only JSONL + structured error taxonomy | `storage/jsonl.ts` |
+| **OpenCode V2 adapter** | Compiled log-only plugin with real session traces | `adapters/opencode-v2/`, `spike/` |
+| **Pi adapter** | Compiled log-only extension (real CLI trace pending provider setup) | `adapters/pi/`, `docs/pi-adapter.md` |
+| **Review worksheet builder** | Stratified sampling; refuses to clobber existing human reviews | `storage/audit-review.ts` |
+| **Test suite** | 142 tests passing | `npm test` |
 
-Of the first 15 rules, 10 are deterministic and 5 are `advisory_only`; by declared `on_hit`, 11 are marked `deny`, 3 are marked `confirm`, and 1 is marked `log` (`advisory_only` rules never enter hard adjudication). Every rule has a concrete `source` reference and a tempting-violation `probe`; the first constraints started as threat scenarios and were then turned into executable match conditions.
+Out of the initial 15 rules, 10 use deterministic match conditions and 5 are `advisory_only`. By declared `on_hit` action, 11 are `deny`, 3 are `confirm`, and 1 is `log` (`advisory_only` rules never enter hard adjudication). Every rule carries a concrete `source` reference and a tempting-violation `probe`—each started life as a real threat scenario before being distilled into an executable check.
 
-OpenCode currently covers the file channel: `read` → `file_read`, `write` / `edit` → `file_write`, `glob` / `grep` → `file_search`, and `list` → `file_list`. Pi covers the same file operations under its own tool names, and records `bash` / `user_bash` as `shell_input` without the command text. Targets are resolved to absolute paths, including `~`; the engine rejects uncollapsed `.`, `..`, and `//` instead of matching them. File contents are neither read nor logged. Unknown payloads and parse failures are recorded explicitly. Neither hook mutates input, returns a verdict, or blocks tool calls. `http_request` and other network rules exist in the engine and fixtures but are not wired into either live hook. OpenCode still skips shell; patch remains unstructured on both.
+On the integration side, the OpenCode adapter currently covers file operations: `read` → `file_read`, `write` / `edit` → `file_write`, `glob` / `grep` → `file_search`, and `list` → `file_list`. The Pi adapter maps the equivalent file tools under its own naming conventions and logs `bash` / `user_bash` calls as `shell_input` (omitting command text for privacy and safety). Target paths are normalized to absolute paths (including `~` expansion); any path still containing uncollapsed `.`, `..`, or `//` segments is rejected by the engine rather than treated as a non-match. File contents are never read or logged, and unknown payloads or parse failures are recorded explicitly. Both hooks remain strictly observational: neither mutates tool inputs, returns verdicts upstream, or blocks execution. Network rules like `http_request` are implemented in the engine and fixtures but not yet wired into live hooks. OpenCode currently skips shell commands, and patch operations remain unstructured in both adapters.
 
-The review worksheet is derived from raw JSONL: all level-0 hits, all non-level-0 denies, confirm sampled with tool/rule coverage first, and all errors and coverage gaps. The current worksheet (at generation time) covers 158 records: 1 level-0 hit, 0 non-level-0 denies, 35 errors/gaps, and 20 of 65 confirm records sampled. It only builds a queue; it does not decide false positives or approvals. Output refuses to overwrite a file that already contains human conclusions.
+The human review worksheet is generated directly from raw JSONL logs using stratified sampling: 100% of Level-0 hits, 100% of non-Level-0 denies, 100% of errors and coverage gaps, and a coverage-weighted sample of `confirm` verdicts across tools and rules. The current baseline worksheet covers 158 raw records: 1 Level-0 hit, 0 non-Level-0 denies, 35 errors/gaps, and 20 sampled `confirm` records (out of 65). The generator only builds the review queue—it never auto-judges false positives, and it refuses to overwrite any file that already contains human sign-offs.
 
-**Not yet enabled**: real deny / confirm, OpenCode shell and both adapters' patch paths, project activation snapshot and narrative routing, proposal queue, TTL cleanup, SQLite, local web governance console, and probe execution with violation/false-positive dashboards. Pi has no real CLI sample yet.
+**Not yet enabled**: live `deny` / `confirm` enforcement, OpenCode shell hooks, structured patch parsing in either adapter, project activation snapshots and `narrative` routing, the proposal queue, TTL cleanup, SQLite, the local web governance console, and automated probe dashboards. Pi is also awaiting a live CLI session sample.
 
-The G0 (go/no-go) gate is scheduled for **2026-10-30**; humans check each item. Current status: **not decided**. Agents do not self-approve. See [docs/go-no-go.md](docs/go-no-go.md).
+The G0 (go/no-go) gate is scheduled for human review on **2026-10-30**. Current status: **undecided**—agents do not get to grade their own homework. See [docs/go-no-go.md](docs/go-no-go.md) for the checklist.
 
-## Inspiration
+## Design Inspirations
 
-The first constraints were inspired by designing the Termcp threat model: write down “what behavior would cause unacceptable consequences” as threat scenarios, then distill executable match conditions from them.
+The earliest rules grew out of threat-modeling sessions for Termcp: we wrote down concrete scenarios where an agent action would cause unacceptable damage, then worked backward to extract deterministic match conditions.
 
-### llm-wiki: constraints as compiled artifacts
+### 1. llm-wiki: Constraints as Compiled Artifacts
 
-Karpathy’s llm-wiki philosophy is the most direct philosophical reference for this design. Its core principles map almost one-to-one:
+Karpathy's `llm-wiki` concept is the most direct philosophical influence on Amos. Its core tenets map almost one-to-one:
 
 | llm-wiki | Project-Amos |
 | --- | --- |
-| Atomic | one rule is the smallest unit |
-| Data-driven | rules are compiled from threat models, incidents, and probes, not written from intuition |
-| Grounding | `source` is a mandatory reference, not decoration |
-| Non-destructive evolution | proposals are ADD/FIX, git keeps the full trace, TTL is an ADD with an explicit expiry |
-| Promotion pipeline | idea → experimental rule (TTL + log-only) → probe evidence → enforcement layer |
+| **Atomic** | A single rule is the smallest self-contained unit |
+| **Data-driven** | Rules are compiled from threat models, incidents, and probes—never gut feelings |
+| **Grounded** | `source` is a required citation, not optional commentary |
+| **Non-destructive evolution** | Changes happen via ADD/FIX proposals with full Git history; TTL is simply an ADD with an expiration date |
+| **Promotion pipeline** | Idea → experimental rule (TTL + log-only) → probe evidence → hard enforcement |
 
-Two amendments: the enforcement point does not chase a living wiki — the engine loads a pinned project activation snapshot (lockfile semantics); and whether a rule is promoted is decided by probes, not editorial consensus. In one line: **llm-wiki stores facts; Amos stores norms.**
+We make two deliberate departures for security: first, the enforcement engine never chases a moving target—it loads a pinned project activation snapshot (think lockfile semantics). Second, rule promotion is decided by empirical probe results, not editorial consensus. Put simply: **llm-wiki stores facts; Amos stores norms.**
 
-### obelisk: the read side and the write side
+### 2. obelisk: Read Side vs. Write Side
 
-[tommy0103/obelisk](https://github.com/tommy0103/obelisk) is an agent history retrieval layer: it normalizes session JSONL from multiple coding agents into one database and gives agents a CLI and humans a browsing UI. It governs what agents remember; Amos governs what agents must not do. They are the read and write sides of the same architecture.
+[tommy0103/obelisk](https://github.com/tommy0103/obelisk) is a session-history retrieval layer for coding agents: it normalizes session JSONL logs from multiple agents into a single database, offering a CLI for agents and a web UI for humans. **If obelisk governs what agents remember, Amos governs what agents are forbidden to do.** They sit on opposite sides—read vs. write—of the same architectural coin.
 
-Borrowed patterns:
+Patterns we borrowed:
 
-- Single-database normalization + dual audience: agents query through a CLI, humans review through a UI;
-- Project N provider formats into a shared schema: OpenCode and Pi each normalize into the same action envelope; that is not a generic harness framework;
-- The memory layer’s “agent proposes → human approves → register → recall later” is a ready prototype for the proposal pipeline;
-- A layered read API: typed helpers first, raw queries as an escape hatch.
+- **Single-schema normalization + dual audience**: Agents query via CLI; humans audit via UI.
+- **Projecting N harnesses into one envelope**: OpenCode and Pi each normalize events into the same action envelope, without pretending to be a universal agent framework.
+- **Proposal workflow**: Obelisk's memory loop (*agent proposes → human approves → register → recall*) maps naturally onto rule governance.
+- **Layered read API**: Typed helpers for everyday queries, with raw queries kept as an escape hatch.
 
-Boundaries we do not borrow:
+Lines we deliberately refuse to cross:
 
-- **Hot-path database reads**: the read side can be slow and can fail; on the enforcement side, a corrupt database under fail-closed equals a fleet-wide DoS;
-- **An arbitrary JS query surface**: only on the audit/read side, never on the enforcement side;
-- **Electron**: the human console is a local web service, not a desktop app; and not on day one — the UI renders state, and state must exist before the UI;
-- **AGPL contamination**: read only its README/docs/ADR, clean-room rewrite the code, and use a permissive license for the spec and conformance suite from day one.
+- **No database reads on the hot path**: A slow or corrupted read-side database is an annoyance; on a fail-closed enforcement path, a corrupted database means an instant fleet-wide DoS.
+- **No arbitrary JS query surface on the enforcement side**: Expressive queries belong exclusively on the audit/read side.
+- **No Electron**: The human console will be a lightweight local web server—and not on day one. UI renders state, so state must be solid before any UI exists.
+- **Zero AGPL contamination**: We studied only public READMEs, docs, and ADRs, building the codebase via clean-room implementation so the spec and conformance suite remain permissively licensed from day one.
 
-### Jev: an advisory seat only
+### 3. Jev: Strictly Advisory
 
-Jev (TypeSafe AI’s System One decision model) appears only in four advisory positions: semantic routing, proposal pre-classification, probe evaluation (Jev-as-a-Judge), and intent-to-match-condition-template routing. It never enters the engine, never approves, and never touches level 0. `confidence` is not `permission`; a model with weak explainability never gets a seat at the adjudication table.
+Jev (TypeSafe AI's System One decision model) is restricted to four purely **advisory** roles: semantic routing, proposal pre-classification, probe evaluation (*Jev-as-a-Judge*), and mapping natural-language intent to match-condition templates. It never enters the policy engine, never approves proposals, and never touches Level 0. Model `confidence` is not system `permission`—an opaque model never gets a vote on the adjudication path.
 
-### Other references
+### 4. Other Touchstones
 
-- **iptables / firewall semantics**: narrative routing inspects only the structured envelope, uses exact + glob matching, and prefers specificity; on no match it fails open to all active soft constraints for the project. Think of it as “iptables for narratives”.
-- **Lost-in-the-Middle (Liu et al., 2023)**: the more constraints there are, and the more central their position, the more likely they are to be ignored. This is the reason for dynamic injection and activation/injection separation, not a reason to delegate enforcement to prompts.
-- **AGENTS.md**: convention and enforcement mechanism are separate. `AGENTS.md` remains the entry point for project knowledge; its constraint section becomes an advisory projection of the rule table.
+- **iptables / firewall semantics**: `narrative` routing inspects only the structured envelope, matching via exact + glob rules with specificity precedence, and failing open to all active project soft constraints when nothing matches. Think of it as **"iptables for prompt narratives."**
+- **Lost-in-the-Middle (Liu et al., 2023)**: Empirical proof that the more constraints you stuff into the middle of a prompt, the more likely the model is to ignore them. That finding justifies both dynamic narrative injection and decoupling activation from injection—while reminding us why hard safety can never live in a prompt.
+- **AGENTS.md**: Separating conventions from enforcement. `AGENTS.md` remains the front door for project context, while its constraints section becomes an automated, advisory projection of the Amos rule table.
 
-## Quick start
+## Quick Start
 
-Requirements: Node.js 26, npm; OpenCode V2 and Pi are needed only to run their respective adapters.
+Requirements: Node.js 26 and npm. (You only need OpenCode V2 or Pi installed if you want to run their live adapters.)
 
 ```bash
 npm ci
@@ -222,19 +225,19 @@ npm test
 npm run typecheck
 ```
 
-`npm test` builds first, then runs the compiled JavaScript tests.
+Note: `npm test` compiles the TypeScript project first, then runs the test suite against the compiled JS output.
 
-### Integrate with OpenCode V2 in log-only mode
+### Try the OpenCode V2 Adapter (log-only)
 
 ```bash
 npm run build
 ```
 
-The root `opencode.jsonc` loads the plugin from `dist/adapters/opencode-v2/`, passing the rules, schema, log path, and `log-only` mode explicitly. Start OpenCode V2 from this directory afterward. The plugin only records hypothetical verdicts and does not block real tool calls; the live log is written to `spike/logs/opencode.jsonl` (git-ignored).
+The root `opencode.jsonc` is pre-configured to load the compiled plugin from `dist/adapters/opencode-v2/`, passing the rules file, schema, log path, and `log-only` mode explicitly. Once built, simply launch OpenCode V2 from this repository root. The plugin quietly records hypothetical verdicts without interrupting any tool calls, writing live audit entries to `spike/logs/opencode.jsonl` (git-ignored).
 
-The Pi adapter lives in `adapters/pi/` and is also log-only.
+The Pi adapter lives under `adapters/pi/` and likewise runs strictly in `log-only` mode.
 
-### Generate a review worksheet
+### Generate a Human Review Worksheet
 
 ```bash
 npm run audit:review -- \
@@ -243,48 +246,48 @@ npm run audit:review -- \
   --output spike/review/new-review.md
 ```
 
-Output must be a new file that does not exist, so human conclusions are never overwritten. Historical archives can be passed with repeated `--log` flags.
+The `--output` path must point to a new, non-existent file so the CLI never overwrites existing human review notes. You can pass `--log` multiple times to aggregate historical log archives into a single review queue.
 
-## Repository layout
+## Repository Layout
 
 ```text
-constraints/       rules, JSON Schema, closed vocabulary
-engine/            pure-function engine and tests
-fixtures/          language-neutral verdict fixtures
-adapters/          OpenCode V2 and Pi normalization and hooks
-storage/           snapshot, JSONL, review queue
-spike/             seam notes, real log samples, human review material
-docs/              decisions, gates, and coverage notes
+constraints/       Rule table, JSON Schema, and closed operator vocabulary
+engine/            Pure-function policy engine and unit tests
+fixtures/          Language-neutral adjudication test fixtures
+adapters/          Normalization layers and log-only hooks for OpenCode V2 and Pi
+storage/           In-memory snapshots, JSONL logger, and review queue generator
+spike/             Harness seam notes, real session logs, and human review worksheets
+docs/              Architecture decisions, G0 gate criteria, and coverage notes
 ```
 
 ## Documentation
 
-The documents below are currently in Chinese.
+*(Note: Internal engineering docs below are currently written in Chinese.)*
 
-- [Product and engineering decisions](docs/decisions.md)
-- [G0 go/no-go](docs/go-no-go.md)
-- [Fixture coverage](docs/fixture-coverage.md)
-- [Advisory-only translation gaps](docs/translation-notes.md)
-- [OpenCode V2 log-only seam](spike/README.md)
-- [Pi log-only adapter](docs/pi-adapter.md)
-- [Design document (Notion)](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
+- [Product and Engineering Decisions](docs/decisions.md)
+- [G0 Go/No-Go Checklist](docs/go-no-go.md)
+- [Fixture Coverage Notes](docs/fixture-coverage.md)
+- [Advisory-Only Translation Gaps](docs/translation-notes.md)
+- [OpenCode V2 Log-Only Seam Notes](spike/README.md)
+- [Pi Log-Only Adapter Guide](docs/pi-adapter.md)
+- [Architecture Design Doc (Notion)](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
 - [中文 README](README.zh-CN.md)
 
-## Boundaries
+## Scope & Boundaries
 
-The current focus is a single-machine, single-trust-root governance loop for individuals and closed fleets. Multi-device collaboration and team features — including hosted or cloud-assisted options — are a later direction, not a current deliverable.
+Our current focus is a rock-solid, **single-machine, single-trust-root** governance loop built for individual developers and tightly controlled agent fleets. Multi-device sync and team workflows (including hosted or cloud-assisted setups) belong to future milestones, not the current deliverable.
 
-Stage gates:
+Milestone gates:
 
-- **Stage A** (current): log-only, real logs, and false-positive review.
-- **Stage B**: selective level-0 enforcement, then confirm.
-- **Stage C**: proposals, human approval, git governance, and TTL.
-- **Stage D**: SQLite derived read model and a local web governance console.
+- **Stage A (Current)**: `log-only` observation, real session traces, and false-positive human review.
+- **Stage B**: Selective Level-0 hard blocking (`deny`), followed by interactive human confirmation (`confirm`).
+- **Stage C**: Rule proposal queue, human sign-off workflow, Git-backed audit trails, and automatic TTL expiration.
+- **Stage D**: Rebuildable SQLite read model and a lightweight local web governance console.
 
-Currently the delivered adapters are OpenCode V2 and Pi, both log-only. No prompt-engineering soft constraints, additional harnesses beyond those two, LLM adjudication, custom match-condition DSL, regex routing, or rule marketplace. Do not change `deny > confirm > log > allow`, same-level deny, or fail-closed semantics for architectural aesthetics.
+Right now, we ship `log-only` adapters exclusively for OpenCode V2 and Pi. We explicitly **do not** build prompt-engineering tricks for soft constraints, third-party harness adapters beyond those two, LLM-based judges on the hot path, custom match-condition DSLs, regex routers, or a "rule marketplace." Above all, we never compromise `deny > confirm > log > allow` precedence, same-level deny tie-breaking, or fail-closed semantics for the sake of architectural aesthetics.
 
 ---
 
 <p align="center">
-  <sub>Constraints should not be wishes written in a prompt; they should be a deterministic check before an action happens.</sub>
+  <sub>Constraints shouldn't be wishes written in a prompt; they should be a deterministic gate before an action happens.</sub>
 </p>
