@@ -1,0 +1,6 @@
+{
+  "mode": "log-only",
+  "rulesPath": "./constraints/rules.yaml",
+  "schemaPath": "./constraints/schema.json",
+  "logPath": "./spike/logs/pi.jsonl"
+}

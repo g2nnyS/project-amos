@@ -1,19 +1,9 @@
 import { resolve } from 'node:path';
+import type { ActionNormalization, NormalizedAction } from '../shared/types.ts';
 
-export interface NormalizedAction {
-  tool: string;
-  operation: string;
-  target: string;
-}
+export type { NormalizedAction };
 
-export type OpenCodeNormalization =
-  | { kind: 'action'; action: NormalizedAction }
-  | { kind: 'skip' }
-  | {
-      kind: 'error';
-      error: 'parse_error' | 'unknown_payload';
-      action: NormalizedAction;
-    };
+export type OpenCodeNormalization = ActionNormalization;
 
 type NormalizeError = Extract<OpenCodeNormalization, { kind: 'error' }>;
 

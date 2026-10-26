@@ -5,7 +5,7 @@
 ## 0 层命中（1/1）
 
 - `opencode-field-mismatch.jsonl:31`：`grep` 目标为 `/home/ganyu/.cache/opencode`，命中 `filesystem-0-2` 与 `side_effect-1-3`，最终假设 verdict 为 `deny`。
-- 谓词层面，目标确实位于规则给出的 `/home/ganyu/projects/**` 之外，匹配没有错误。
+- 命中条件层面，目标确实位于规则给出的 `/home/ganyu/projects/**` 之外，匹配没有错误。
 - 需要人判断的是规则适用性：该 OpenCode session 是否应启用这条 session-scoped paths 白名单。未确认这一点前，不能把该记录认定为合理拒绝或误拒。
 
 ## 非 0 层规则 deny（0/0）
