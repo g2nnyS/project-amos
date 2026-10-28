@@ -16,7 +16,7 @@ import {
 } from './jsonl.ts';
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'atmos-jsonl-'));
+  return mkdtempSync(join(tmpdir(), 'amos-jsonl-'));
 }
 
 const MATCHED_RULE = {

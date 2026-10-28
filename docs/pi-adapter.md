@@ -1,12 +1,12 @@
 # Pi Coding Agent 适配器
 
-当前状态：**Pi 1.4.0 log-only 适配、单测与真实 CLI 验证均已完成；真实 deny/confirm 尚未启用。** 真实会话样本见 `spike/examples/real-pi.jsonl`。
+当前状态：**Pi 1.4.0 安全适配仍为 log-only；真实安全 deny/confirm 尚未启用。** 另有独立的工程工作流硬门，可在启用后阻断危险 Shell，详见 [工作流硬门](workflow-gate.md)。真实会话样本见 `spike/examples/real-pi.jsonl`。
 
 OpenCode V2 保留为参考适配器。Pi 因用户确认日常主用而解锁为第二适配器；两者只共享结构化归一化结果、快照评估和 JSONL 记录，不共享模型 provider，也不建立通用 harness 框架。
 
 ## 配置
 
-Pi 扩展通过当次事件的 `ctx.cwd` 读取 `.pi/atmos.json`，不依赖进程 cwd：
+`.pi/` 是本地配置目录，已由 `.gitignore` 忽略，不属于仓库内容；新环境需要自行创建。Pi 扩展通过当次事件的 `ctx.cwd` 读取 `.pi/amos.json`，不依赖进程 cwd：
 
 ```json
 {
@@ -33,29 +33,36 @@ pi --provider <provider> --model <model> \
   -p "在这里填写真实任务"
 ```
 
-`--no-extensions` 不禁止显式 `-e`，用于隔离其他扩展对事件参数的后续修改。正式启用其他扩展前，需要单独评估 hook 顺序和同名工具覆盖。`--approve` 信任项目内的 `.pi/atmos.json`，否则项目级配置不会加载，适配器会退化成空操作。
+`--no-extensions` 不禁止显式 `-e`，用于隔离其他扩展对事件参数的后续修改。正式启用其他扩展前，需要单独评估 hook 顺序和同名工具覆盖。`--approve` 信任项目内的 `.pi/amos.json`，否则项目级配置不会加载，适配器会退化成空操作。
 
 ## 日常使用：边用边看裁决
 
-项目内 `.pi/extensions/atmos.js` 只转发到编译后的 `dist/adapters/pi/index.js`，因此无需每次传 `-e`。修改 TypeScript 后先运行 `npm run build`。
+可以创建本地 `.pi/extensions/amos.js`，只转发到编译后的 `dist/adapters/pi/index.js`，因此日常无需每次传 `-e`：
+
+```bash
+mkdir -p .pi/extensions
+printf 'export { default } from "../../dist/adapters/pi/index.js";\n' > .pi/extensions/amos.js
+```
+
+`.pi/` 被 Git 忽略，不要提交。修改 TypeScript 后先运行 `npm run build`。
 
 终端一：持续查看原始审计记录。
 
 ```bash
-cd /home/ganyu/projects/project-atmos
+cd /home/ganyu/projects/project-amos
 tail -F spike/logs/pi.jsonl
 ```
 
 终端二：从项目目录进入日常 Pi TUI。
 
 ```bash
-cd /home/ganyu/projects/project-atmos
+cd /home/ganyu/projects/project-amos
 pi --provider kimi-coding --model kimi-for-coding-highspeed --approve
 ```
 
-若已设默认模型，可直接运行 `pi --approve`。`--approve` 用于信任项目级 `.pi/atmos.json` 和 `.pi/extensions/`，不要为了日常使用再加 `--no-extensions`。
+若已设默认模型，可直接运行 `pi --approve`。`--approve` 用于信任项目级 `.pi/amos.json` 和 `.pi/extensions/`，不要为了日常使用再加 `--no-extensions`。
 
-建议依次体验：读取项目文件、创建一份使用笔记、运行 `git diff --check`、读取一个不存在的 `/tmp/atmos-not-present.txt`。读取可观察 `log`，写入可观察 `confirm`，shell 只会产生 `not_evaluated` 覆盖记录（不可作为确认依据），白名单外读取可观察假设 `deny`。不要使用真实私钥或生产文件。当前所有结果都只进入日志，不会阻断工具或弹出确认。
+建议依次体验：读取项目文件、创建一份使用笔记、运行 `git diff --check`、读取一个不存在的 `/tmp/amos-not-present.txt`。安全日志中读取可观察 `log`，写入可观察 `confirm`，白名单外读取可观察假设 `deny`。工程硬门未启用时 shell 只产生 `not_evaluated` 覆盖记录；启用后危险命令会被阻断或要求 UI 确认。不要使用真实私钥或生产文件。
 
 ## 事件与归一化
 
@@ -80,7 +87,7 @@ pi --provider kimi-coding --model kimi-for-coding-highspeed --approve
 
 ### oh-my-pi（`omp`）验证（2026-10-27）
 
-oh-my-pi 18.12.6 是 Pi 的分支，扩展 API 兼容。用同一份 `.pi/atmos.json` 和同一份编译产物，扩展在 `omp` 下同样加载成功，`read` 与 `write` 分别记为 `file_read` / `file_write`，命中规则与 Pi 下一致。
+oh-my-pi 18.12.6 是 Pi 的分支，扩展 API 兼容。用同一份 `.pi/amos.json` 和同一份编译产物，扩展在 `omp` 下同样加载成功，`read` 与 `write` 分别记为 `file_read` / `file_write`，命中规则与 Pi 下一致。
 
 `omp` 的命令行与 Pi 略有差异：它没有 `--no-mcp`，其余参数一致。
 
@@ -93,7 +100,7 @@ omp --print --no-session --no-extensions \
 
 ### 真实 CLI 验证（2026-10-27）
 
-用真实 `pi` 1.4.0、真实 provider、真实文档任务跑通，扩展按 `.pi/atmos.json` 定位配置并写入 `spike/logs/pi.jsonl`：
+用真实 `pi` 1.4.0、真实 provider、真实文档任务跑通，扩展按 `.pi/amos.json` 定位配置并写入 `spike/logs/pi.jsonl`：
 
 | Pi 动作 | 归一化 operation | 假设 verdict | 命中规则 |
 | --- | --- | --- | --- |

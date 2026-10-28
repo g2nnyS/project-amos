@@ -24,6 +24,8 @@ Jev facts ──> trusted mapping ─────┘
 
 ## Configuration and data egress
 
+Direct construction remains available:
+
 ```ts
 import { createJevAssessmentProvider } from './decision/jev.ts';
 import { combineWithAssessment } from './decision/combine.ts';
@@ -43,6 +45,42 @@ const result = await combineWithAssessment({
   assessmentRequired: true,
 });
 ```
+
+For file configuration, TypeSafe direct and OpenRouter System One are supported. Both
+use `state + questions`; OpenRouter is **not** the chat-completions endpoint.
+
+```json
+{
+  "schema_version": 1,
+  "provider": "openrouter",
+  "baseUrl": "https://openrouter.ai/api",
+  "apiKey": { "env": "OPENROUTER_API_KEY" },
+  "defaultModel": "typesafe/jev-1.14",
+  "models": ["typesafe/jev-1.14", "typesafe/jev-1.13"],
+  "timeoutMs": 8000,
+  "assessmentRequired": true,
+  "policy": { "reviewRisk": 0.6, "denyRisk": 0.9, "minConfidence": 0.6 }
+}
+```
+
+Path resolution:
+
+- OpenRouter: `baseUrl` + `/v1/systemone` (an API root ending in `/v1` appends only
+  `/systemone`).
+- TypeSafe direct: `baseUrl` default `https://api.typesafe.ai` plus `/v1/systemone`.
+- `defaultModel` must be in the explicit model allowlist. There is no automatic fallback;
+  changing models requires recalibrating thresholds.
+- A shared/example file may only use `{ "env": "OPENROUTER_API_KEY" }` or
+  `{ "env": "TYPESAFE_API_KEY" }`. A literal credential is accepted only from an explicit
+  local file such as `decision/jev.local.json`; on POSIX it must be owned by the current
+  user with mode `0600`.
+- Remote plaintext HTTP, URL userinfo, queries, and fragments are rejected. A non-official
+  HTTPS host requires `allowCredentialEgress: true` in the protected local configuration.
+  This is deliberate credential egress, not a trust boundary.
+
+`loadJevConfig()` and `parseJevConfig()` return an `assessmentProvider`, a generic
+`systemOneClient` for typed engineering reviews, and a public config that never contains
+the credential.
 
 **Data egress warning:** `state` is `{ action, context }`. The adapter applies the
 same safe action projection as the audit sink before egress: URL userinfo, paths,

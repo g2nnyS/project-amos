@@ -1,12 +1,17 @@
 <h1 align="center">Project-Amos</h1>
 
 <p align="center">
-  <strong>Agent 策略匹配与审计原型</strong>
+  <strong>Agent Mandate &amp; Oversight System</strong><br>
+  Agent 策略匹配与审计原型
+</p>
+
+<p align="center">
+  把 Agent 的行为约束从提示词移入确定性策略引擎，留下可溯源、可复核的裁决轨迹。
 </p>
 
 <p align="center">
   <code>阶段 A</code> · log-only · OpenCode V2 + Pi<br>
-  <strong>当前状态：运行期强制执行 NO-GO</strong>
+  <strong>当前状态：观察与审计原型（运行期强制执行 NO-GO）</strong>
 </p>
 
 <p align="center">
@@ -15,74 +20,66 @@
 
 ---
 
-## 这是什么
+## 这是什么？
 
-Amos 在尝试把 Agent 约束从提示词移入确定性策略引擎，并留下可审计的裁决记录。
-它目前**不是硬安全边界**。
+把安全规矩写在 `AGENTS.md` 或系统提示词里，本质上是在赌模型的自觉。**Amos 的思路很简单：模型只管提议动作，确定性的策略引擎负责按规则算账，并留下一条干净的审计链。**
 
-现有适配器只观察部分文件工具动作，并把假设裁决写入 JSONL；它们不会阻断、确认、
-沙箱隔离或代理执行工具。所谓“物理锁定”“全局默认拒绝”“不可篡改审计”都需要
-受信任监督进程、完整动作覆盖和 OS 级执行边界，这些尚未实现。
+> **安全边界声明**：安全策略层目前处于 **阶段 A（`log-only` 旁路观察）**，还**不是硬安全边界**。
+> 安全适配器只观察部分文件工具调用，把假设裁决写进 JSONL。另有独立的、显式启用的**工程工作流硬门**，可阻断危险 Shell 命令、注入工程规范并暂缓有问题的变更；它是工作流护栏，不等于全通道中介或 OS 安全边界。“物理锁定”“全局默认拒绝”或“防篡改审计”仍需受信任监督进程、完整动作覆盖与 OS 级执行隔离（详见 [安全模型](docs/security-model.md) 与 [工作流硬门](docs/workflow-gate.md)）。
 
-## 已实现
+---
 
-- 纯 TypeScript 策略引擎、严格规则 Schema 与按 digest 定位的规则快照。
-- 纯 Supervisor 核心，提供已注册 session 上下文、假设裁决与进程内停止栅栏；
-  尚未接入工具执行。
-- 明确区分规则命中、未命中、引擎错误和未评估。
-- OpenCode V2 与 Pi 的 `log-only` 文件通道适配器。
-- 已知但不支持的工具和不可解释的 shell 动作会生成覆盖记录，不再静默消失。
-- 审计记录包含规则快照摘要、命中规则元数据、裁决类型、格式版本和覆盖状态。
-- 日志目录下按 digest 保存内容寻址快照，包含当时的规则原文、Schema、Schema digest
-  与有效 session workspace。
-- URL 查询值、userinfo、fragment 和路径在落盘前脱敏；shell 文本与文件内容不记录。
-- 人审工作表使用裁决时固化的规则元数据，并对不可信字段做不可注入的编码。
-- 与 provider 解耦的 Jev 语义评估接入。Jev 只提供事实，确定性策略仍是权威，
-  模型输出只能收紧、不能放宽裁决。
-
-## 尚未实现
-
-- 对 shell、patch、网络、未知工具、被禁用扩展及 harness 其他入口的完整接管。
-- 与 Agent 可写域分离的受信任监督进程。
-- Agent 无法修改的策略与审计存储。
-- `scope`、`owner`、`level`、`policy_class` 的运行期语义；它们目前只是经过校验的
-  审计元数据，不是权限或规则选择机制。
-- 对 symlink、hard link、bind mount 和 TOCTOU 安全的文件执行。
-- 与动作及策略快照绑定、可认证且一次性的审批。
-- 防篡改的远程审计留存。
-- 任一适配器中的真实 `deny`/`confirm` 强制执行。
-
-威胁模型和强制架构见 [安全模型与当前保证](docs/security-model.md)。在这些能力实现并通过
-对抗测试之前，产品只能被称为策略匹配与观察原型。
-
-## 当前工作方式
+## 它是怎么工作的？
 
 ```text
-工具事件
+工具调用事件 (Tool Event)
    │
    ▼
-适配器归一化 ── 不支持/不可解释 ──► 覆盖记录（未评估）
+适配器归一化 ── 不支持的工具 / 不可解析的 Shell ──► 写入覆盖缺口记录（不静默丢弃）
    │
    ▼
-严格规则快照
+加载严格策略快照（按内容 Digest 寻址）
    │
    ▼
-确定性求值
+确定性策略求值
    │
-   ├─ 命中规则       → 假设裁决 + 规则元数据
-   ├─ 未命中         → 显式 no_match（记录器使用假设 deny）
+   ├─ 命中规则       → 生成假设裁决 + 固化当时的规则元数据
+   ├─ 未命中         → 显式标记 no_match（记录器按假设 deny 留痕）
    ├─ 校验错误       → deny + engine_error
    └─ 快照加载失败   → deny + snapshot_error
    │
    ▼
-脱敏 JSONL 审计 ──► 人审工作表
+脱敏写入 JSONL 审计日志 & 快照归档 ──► 生成防注入的人工审核表
 ```
 
-唯一副作用是写审计记录及其内容寻址快照；工具调用本身不会被修改。
+在安全 `log-only` 模式下，唯一副作用是写审计日志与快照归档。单独启用的工程工作流硬门可以阻断危险 Shell 命令或暂缓工作，但不会把安全策略层变成硬边界。
 
-## 快速开始
+---
 
-需要 Node.js 26 与 npm：
+## 目前做到了哪一步？
+
+### 已实现（Stage A 基础能力）
+
+- **纯函数策略引擎与快照归档**：基于严格 Schema 校验的 TypeScript 引擎，清晰区分“命中、未命中、引擎错误、未评估”。每次策略变更按内容摘要（Digest）归档完整快照（含规则原文、Schema 与有效工作区）。
+- **Supervisor 会话与停止栅栏核心**：提供进程内的已注册会话上下文、假设裁决与停止栅栏（Stop Fencing）核心逻辑（目前仅在内存中运行，尚未接入真实工具拦截）。
+- **双端安全 `log-only` 适配器**：支持 **OpenCode V2** 与 **Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
+- **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
+- **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
+- **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
+
+### 尚未实现（进入强制执行前必须补齐的拼图）
+
+- 对 Shell、Patch、网络请求、未知工具及扩展入口的**全通道无死角接管**。
+- 与 Agent 可写目录隔离的**受信任监督进程（Trusted Supervisor）**及防篡改存储。
+- 抗符号链接（Symlink）、硬链接、Bind Mount 及 TOCTOU 竞争的文件系统安全执行。
+- 绑定具体动作与策略快照的**一次性认证审批**，以及 `scope` / `owner` / `level` 等元数据的运行期权限语义。
+- 安全策略层在任一适配器中的真实 `deny` / `confirm` 拦截。独立的工程工作流硬门不满足这一要求。
+
+---
+
+## 快速上手
+
+环境要求：Node.js 26 与 npm。
 
 ```bash
 npm ci
@@ -90,10 +87,11 @@ npm run typecheck
 npm test
 ```
 
-OpenCode 与 Pi 仍仅以 log-only 方式接入。参见 [Pi 接入说明](docs/pi-adapter.md)
-与根目录 `opencode.jsonc`。
+### 1. 接入 OpenCode V2 / Pi
 
-生成人审工作表：
+根目录的 `opencode.jsonc` 已配置好插件。执行 `npm run build` 后，在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。Pi 的接入方式参见 [Pi 适配器说明](docs/pi-adapter.md)。工程硬门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
+
+### 2. 生成人工审核工作表
 
 ```bash
 npm run audit:review -- \
@@ -102,27 +100,22 @@ npm run audit:review -- \
   --output spike/review/new-review.md
 ```
 
-## 交付规范
+*(注：`--output` 必须指向尚不存在的新文件，防止覆盖已有的人工审核结论。)*
 
-- 新工作使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。
-- 受保护分支、禁止 force push、secret 扫描和发布权限必须由 Git 服务端执行。
-  本地 hook 和分支名都不是授权依据。
-- 安全敏感变更必须由人审查。Agent 不得自我批准、合并、force push、打 tag 或发布。
-- 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+---
 
-## 文档
+## 协作规范与延伸文档
 
-- [安全模型](docs/security-model.md)
-- [Supervisor 核心](docs/supervisor-core.md)
-- [Jev 接入](docs/jev-integration.md)
-- [产品与工程决策](docs/decisions.md)
-- [G0 门禁标准](docs/go-no-go.md)
-- [测试覆盖说明](docs/fixture-coverage.md)
-- [OpenCode V2 接入笔记](spike/README.md)
-- [Pi 适配器说明](docs/pi-adapter.md)
+- **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+
+**核心文档索引**：
+- [安全模型与当前保证](docs/security-model.md) · [G0 门禁核验标准](docs/go-no-go.md)
+- [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
+- [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
+- [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
 
 ---
 
 <p align="center">
-  <sub>策略引擎的价值，不只在于会说什么 verdict，更在于它的信任边界、覆盖范围和审计链同样明确。</sub>
+  <sub>一个策略引擎真正的价值，不只在于它会给出什么裁决，更在于它的信任边界、覆盖死角和审计链同样坦诚透明。</sub>
 </p>

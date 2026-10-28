@@ -10,7 +10,7 @@ import { createLogOnlyRecorder } from './log-only.ts';
 const ROOT = process.cwd();
 const RULES = join(ROOT, 'constraints', 'rules.yaml');
 const SCHEMA = join(ROOT, 'constraints', 'schema.json');
-const WORKSPACE = '/home/test-user/projects/project-atmos';
+const WORKSPACE = '/home/test-user/projects/project-amos';
 const RULES_DIGEST = createHash('sha256')
   .update(
     readFileSync(RULES, 'utf8') +
@@ -31,7 +31,7 @@ function entries(logPath: string): any[] {
 }
 
 function temporaryDirectory(t: any): string {
-  const directory = mkdtempSync(join(tmpdir(), 'atmos-shared-'));
+  const directory = mkdtempSync(join(tmpdir(), 'amos-shared-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

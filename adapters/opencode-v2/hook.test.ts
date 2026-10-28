@@ -18,12 +18,12 @@ const SCHEMA = join(ROOT, "constraints", "schema.json");
 // Logical session workspace supplied via the harness location. Rule evaluation
 // uses this instead of process.cwd() so the assertions describe the explicit
 // ${SESSION_WORKSPACE} boundary rather than the clone location.
-const WORKSPACE = "/home/test-user/projects/project-atmos";
+const WORKSPACE = "/home/test-user/projects/project-amos";
 type Event = { tool?: unknown; input?: unknown };
 type Context = Parameters<typeof plugin.setup>[0];
 
 async function setupHook(t: any, optionOverrides: Record<string, unknown> = {}) {
-  const temporary = mkdtempSync(join(tmpdir(), "atmos-hook-"));
+  const temporary = mkdtempSync(join(tmpdir(), "amos-hook-"));
   const logPath =
     typeof optionOverrides.logPath === "string"
       ? optionOverrides.logPath
@@ -205,7 +205,7 @@ test("audit write failure is visible once without leaking path or payload", asyn
     console.error = originalError;
   });
 
-  const root = mkdtempSync(join(tmpdir(), "atmos-hook-failure-"));
+  const root = mkdtempSync(join(tmpdir(), "amos-hook-failure-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const blocker = join(root, "blocker");
   writeFileSync(blocker, "not a directory", "utf8");
