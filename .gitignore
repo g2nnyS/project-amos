@@ -1,3 +1,5 @@
 node_modules/
 dist/
 spike/logs/
+decision/jev.local.json
+.slim/deepwork/
