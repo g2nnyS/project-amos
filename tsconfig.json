@@ -10,6 +10,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["engine/**/*.ts", "adapters/**/*.ts", "storage/**/*.ts", "decision/**/*.ts", "supervisor/**/*.ts"],
+  "include": ["engine/**/*.ts", "adapters/**/*.ts", "storage/**/*.ts", "decision/**/*.ts", "supervisor/**/*.ts", "guidance/**/*.ts", "workflow/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

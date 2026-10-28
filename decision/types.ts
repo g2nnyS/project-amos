@@ -63,7 +63,10 @@ export interface AssessmentThresholds {
 export interface JevConfig {
   apiKey: string;
   model?: string;
+  /** Full System One endpoint. Mutually exclusive with baseUrl. */
   endpoint?: string;
+  /** API root resolved to `<base>/v1/systemone` (or `<base>/systemone` for /v1). */
+  baseUrl?: string;
   timeoutMs?: number;
   thresholds?: Partial<AssessmentThresholds>;
   /** Injectable fetch implementation; defaults to the runtime global fetch. */

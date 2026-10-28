@@ -89,9 +89,15 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
   }
 
   const model = optionalNonEmptyString(config.model) ?? DEFAULT_MODEL;
-  const endpoint = validateEndpoint(
-    optionalNonEmptyString(config.endpoint) ?? DEFAULT_ENDPOINT,
-  );
+  const configuredEndpoint = optionalNonEmptyString(config.endpoint);
+  const baseUrl = optionalNonEmptyString(config.baseUrl);
+  if (configuredEndpoint !== undefined && baseUrl !== undefined) {
+    throw new JevAssessmentError('config');
+  }
+  const endpoint =
+    baseUrl !== undefined
+      ? systemOneEndpoint(baseUrl)
+      : validateEndpoint(configuredEndpoint ?? DEFAULT_ENDPOINT);
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new JevAssessmentError('config');
@@ -446,6 +452,21 @@ function optionalNonEmptyString(value: unknown): string | undefined {
   return value;
 }
 
+export function systemOneEndpoint(baseUrl: string): string {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(baseUrl);
+  } catch {
+    throw new JevAssessmentError('config');
+  }
+
+  const root = endpoint.pathname.replace(/\/+$/, '');
+  endpoint.pathname = root.endsWith('/v1')
+    ? `${root}/systemone`
+    : `${root}/v1/systemone`;
+  return validateEndpoint(endpoint.href);
+}
+
 function validateEndpoint(value: string): string {
   let endpoint: URL;
   try {
@@ -463,7 +484,12 @@ function validateEndpoint(value: string): string {
     // a remote host.
     throw new JevAssessmentError('config');
   }
-  if (endpoint.username.length > 0 || endpoint.password.length > 0) {
+  if (
+    endpoint.username.length > 0 ||
+    endpoint.password.length > 0 ||
+    endpoint.search.length > 0 ||
+    endpoint.hash.length > 0
+  ) {
     throw new JevAssessmentError('config');
   }
   return endpoint.href;

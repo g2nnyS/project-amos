@@ -130,6 +130,30 @@ CI. Protected branches, force-push prevention, secret scanning, and signed relea
 belong to security and must be enforced by the Git host or another authority outside
 the agent. A branch name is metadata, never an authorization decision.
 
+## Engineering workflow gate
+
+The opt-in `workflowGate` is a separate engineering guardrail, not part of the guarantees
+above. It can select versioned guidance, block a closed subset of dangerous shell
+commands before execution where the harness exposes a blocking seam, run fixed local
+change checks, and send an eligible filtered diff to Jev for advisory engineering review.
+
+- Unknown shell syntax, custom shells/prefixes, PowerShell, and analysis failures remain
+  confirmation-required or denied. Confirm-class decisions fail closed without a safe
+  approval path.
+- Pi can block `tool_call` and stop `user_bash` by throwing. OpenCode `execute.before`
+  cannot block by contract; it uses `shell.create.before` plus permission tightening and
+  fails a parseable confirm-classified command in the shell hook rather than relying on
+  uncertain event ordering.
+- Pi allows at most one repair continuation per session. OpenCode V2 exposes no true
+  settle/merge block, so its completion feedback is advisory only.
+- The gate does not provide complete mediation. Disabled extensions, alternate entry
+  points, `pi.exec`, MCP/extension code, repository scripts, and safe-command trust in git
+  or npm configuration remain outside it.
+- A passing Jev engineering review is not proof of correctness, safety, or merge
+  authorization.
+
+See `docs/workflow-gate.md` for configuration and exact limits.
+
 ## Decision-model integration
 
 A probabilistic decision model such as Jev may supply typed semantic facts (intent,

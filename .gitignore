@@ -3,3 +3,4 @@ dist/
 spike/logs/
 decision/jev.local.json
 .slim/deepwork/
+./pi
