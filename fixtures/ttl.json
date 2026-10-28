@@ -7,6 +7,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -19,7 +21,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T23:59:59.999Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["expiring-rule"] }
   },
@@ -31,6 +33,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -43,7 +47,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-25T00:00:00.000Z",
     "expect": { "verdict": "allow", "matched_rule_ids": [] }
   },
@@ -55,6 +59,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -67,7 +73,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-25T00:00:00.001Z",
     "expect": { "verdict": "allow", "matched_rule_ids": [] }
   },
@@ -79,6 +85,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -91,7 +99,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-25T00:00:10.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["permanent-rule"] }
   },
@@ -103,6 +111,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -115,7 +125,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T23:59:59.999Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["date-rule"] }
   },
@@ -127,6 +137,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -139,7 +151,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-25T00:00:00.000Z",
     "expect": { "verdict": "allow", "matched_rule_ids": [] }
   }

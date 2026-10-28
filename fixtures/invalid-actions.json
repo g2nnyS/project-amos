@@ -16,14 +16,14 @@
   {
     "name": "action missing its operation fails closed",
     "table": [],
-    "action": { "tool": "fs", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
   {
     "name": "action with a non-string tool fails closed",
     "table": [],
-    "action": { "tool": 7, "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": 7, "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -42,6 +42,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "url_query_key_in", "args": { "keys": ["token"] } }],
         "narrative": "secret query parameter",
         "on_hit": "deny",
@@ -64,6 +66,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*"] } }],
         "narrative": "secret path pattern",
         "on_hit": "deny",
@@ -86,6 +90,8 @@
         "dimension": "network",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }],
         "narrative": "forward binds every interface",
         "on_hit": "confirm",
@@ -97,6 +103,30 @@
       }
     ],
     "action": { "tool": "forward", "operation": "forward_open", "target": "local:///0.0.0.0:8080" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "action with an unknown top-level field fails closed",
+    "table": [
+      {
+        "id": "action-field-rule",
+        "dimension": "credential",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*"] } }],
+        "narrative": "secret path pattern",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a private key with an extra action field"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/alice/.ssh/id_ed25519", "request_id": "abc" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   }

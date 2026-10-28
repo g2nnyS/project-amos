@@ -2,21 +2,21 @@
   {
     "name": "rule table that is not an array fails closed",
     "table": {},
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
   {
     "name": "null rule table fails closed",
     "table": null,
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
   {
     "name": "rule entry that is not an object fails closed",
     "table": ["not a rule"],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -28,6 +28,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "missing probe",
         "on_hit": "deny",
@@ -37,7 +39,7 @@
         "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" }
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -49,6 +51,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "blank probe",
         "on_hit": "deny",
@@ -59,7 +63,7 @@
         "probe": "   "
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -71,6 +75,8 @@
         "dimension": "filesystem",
         "level": -1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "negative level",
         "on_hit": "deny",
@@ -81,7 +87,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -93,6 +99,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "bad scope",
         "on_hit": "deny",
@@ -103,7 +111,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -115,6 +123,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "bad owner",
         "on_hit": "deny",
@@ -125,7 +135,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -147,7 +157,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -159,6 +169,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "bad source",
         "on_hit": "deny",
@@ -169,7 +181,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -181,6 +193,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [],
         "narrative": "empty predicate",
         "on_hit": "deny",
@@ -191,7 +205,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -203,6 +217,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "advisory_only",
+        "policy_class": "security",
+        "enforcement": "advisory",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "advisory with predicate",
         "on_hit": "deny",
@@ -213,7 +229,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -225,6 +241,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "rate_exceeds", "args": { "limit": ["1"] } }],
         "narrative": "unknown predicate",
         "on_hit": "deny",
@@ -235,7 +253,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -247,6 +265,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "unknown on_hit",
         "on_hit": "allow",
@@ -257,7 +277,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -269,6 +289,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "bad ttl",
         "on_hit": "deny",
@@ -279,7 +301,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -291,6 +313,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": [] } }],
         "narrative": "empty operations",
         "on_hit": "deny",
@@ -301,7 +325,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -313,6 +337,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "target_glob", "args": { "patterns": [1] } }],
         "narrative": "non-string pattern",
         "on_hit": "deny",
@@ -323,7 +349,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -335,6 +361,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "target_glob", "args": { "patterns": [""] } }],
         "narrative": "empty pattern item",
         "on_hit": "deny",
@@ -345,7 +373,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   },
@@ -357,6 +385,8 @@
         "dimension": "filesystem",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
         "narrative": "first duplicate id",
         "on_hit": "log",
@@ -371,6 +401,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [{ "op": "op_in", "args": { "operations": ["file_write"] } }],
         "narrative": "second duplicate id",
         "on_hit": "deny",
@@ -381,7 +413,253 @@
         "probe": "write a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "empty rule table fails closed",
+    "table": [],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown top-level field fails closed",
+    "table": [
+      {
+        "id": "unknown-field-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "unexpected_rule_field": { "anything": true },
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "unknown rule field",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "source with an unknown field fails closed",
+    "table": [
+      {
+        "id": "unknown-source-field-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "unknown source field",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote", "extra_source_field": 1 },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "predicate call with an unknown field fails closed",
+    "table": [
+      {
+        "id": "unknown-call-field-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] }, "extra_call_field": "ignored" }],
+        "narrative": "unknown predicate call field",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "predicate args with an unknown field fails closed",
+    "table": [
+      {
+        "id": "unknown-args-field-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"], "ignored_arg": 123 } }],
+        "narrative": "unknown predicate args field",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule missing policy_class fails closed",
+    "table": [
+      {
+        "id": "missing-policy-class-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "missing policy_class",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown policy_class fails closed",
+    "table": [
+      {
+        "id": "bad-policy-class-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "compliance",
+        "enforcement": "runtime",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad policy_class",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule missing enforcement fails closed",
+    "table": [
+      {
+        "id": "missing-enforcement-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "missing enforcement",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "rule with an unknown enforcement fails closed",
+    "table": [
+      {
+        "id": "bad-enforcement-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "always",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "bad enforcement",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "deterministic rule with advisory enforcement fails closed",
+    "table": [
+      {
+        "id": "deterministic-advisory-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "advisory",
+        "predicate": [{ "op": "op_in", "args": { "operations": ["file_read"] } }],
+        "narrative": "deterministic rules cannot be advisory-only",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
+    "now": "2026-10-24T12:00:00.000Z",
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
+  },
+  {
+    "name": "advisory-only rule with non-advisory enforcement fails closed",
+    "table": [
+      {
+        "id": "advisory-runtime-rule",
+        "dimension": "filesystem",
+        "level": 0,
+        "expressivity": "advisory_only",
+        "policy_class": "security",
+        "enforcement": "runtime",
+        "predicate": null,
+        "narrative": "advisory rules require advisory enforcement",
+        "on_hit": "deny",
+        "scope": "project",
+        "ttl": null,
+        "owner": "human",
+        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "probe": "read a file"
+      }
+    ],
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   }

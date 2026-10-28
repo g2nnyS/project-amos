@@ -2,6 +2,8 @@
   dimension: credential
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -32,6 +34,8 @@
   dimension: credential
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -39,7 +43,7 @@
     - op: url_query_key_in
       args:
         keys: [token, auth, auth_token, access_token, password, x-termcp-password]
-  narrative: "禁止把 token、认证 hash 或导出密码放进 URL 查询串；秘密只能走认证 header。"
+  narrative: "禁止把常见命名（token、auth、password 等）的认证材料放进 URL 查询串；秘密只能走认证 header。这是窄黑名单命中条件，不声称覆盖所有凭据参数名，审计侧仍对所有 URL 查询值统一脱敏。"
   on_hit: deny
   scope: project
   ttl: null
@@ -57,6 +61,8 @@
   dimension: credential
   level: 0
   expressivity: advisory_only
+  policy_class: security
+  enforcement: advisory
   predicate: null
   narrative: "禁止把 token 或认证 hash 写入任何日志；日志动作也不能靠脱敏承诺替代不记录秘密。"
   on_hit: deny
@@ -76,6 +82,8 @@
   dimension: credential
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -98,6 +106,8 @@
   dimension: filesystem
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -128,6 +138,8 @@
   dimension: filesystem
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -135,8 +147,8 @@
     - op: target_outside_glob
       args:
         patterns:
-          - /home/ganyu/projects/**
-  narrative: "在 paths 能力白名单仅含 /home/ganyu/projects/** 的 session 中，文件动作越出该路径即拒绝；换传输入口或重试不改变裁决。"
+          - "${SESSION_WORKSPACE}/**"
+  narrative: "在适配器提供的显式 session workspace（规范化绝对路径）中，文件动作越出 `${SESSION_WORKSPACE}/**` 即拒绝；换传输入口或重试不改变裁决。"
   on_hit: deny
   scope: session
   ttl: null
@@ -154,6 +166,8 @@
   dimension: filesystem
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -180,6 +194,8 @@
   dimension: network
   level: 0
   expressivity: advisory_only
+  policy_class: security
+  enforcement: advisory
   predicate: null
   narrative: "非 loopback 绑定必须配置认证；--disable-auth 只能用于无认证的 loopback 场景，不能与 token 或 hash 组合。"
   on_hit: deny
@@ -199,6 +215,8 @@
   dimension: network
   level: 0
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -227,6 +245,8 @@
   dimension: network
   level: 1
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -252,6 +272,8 @@
   dimension: side_effect
   level: 0
   expressivity: advisory_only
+  policy_class: security
+  enforcement: advisory
   predicate: null
   narrative: "审批到期、已拒绝或关联 session 已消亡时不得执行；过期永远不能转成批准。"
   on_hit: deny
@@ -271,6 +293,8 @@
   dimension: side_effect
   level: 1
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -293,6 +317,8 @@
   dimension: side_effect
   level: 1
   expressivity: deterministic
+  policy_class: security
+  enforcement: runtime
   predicate:
     - op: op_in
       args:
@@ -315,6 +341,8 @@
   dimension: side_effect
   level: 0
   expressivity: advisory_only
+  policy_class: security
+  enforcement: advisory
   predicate: null
   narrative: "不得让 Agent 无人值守操作生产主机；确实必须如此时，所有 MCP 写入打开审阅，且不能把审阅当作安全保证。"
   on_hit: confirm
@@ -334,6 +362,8 @@
   dimension: resource
   level: 1
   expressivity: advisory_only
+  policy_class: security
+  enforcement: advisory
   predicate: null
   narrative: "批量导入不得超过 16 MiB；超限请求必须在写入任何 profile 前拒绝。"
   on_hit: deny

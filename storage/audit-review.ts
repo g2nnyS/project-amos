@@ -24,9 +24,12 @@ export type ReviewReason =
   | 'malformed_json'
   | 'parse_error'
   | 'unknown_payload'
+  | 'not_evaluated'
   | 'engine_error'
   | 'snapshot_error'
   | 'unknown_rule_id'
+  | 'rule_metadata_missing'
+  | 'no_match_default_deny'
   | 'legacy_fail_closed_no_ids'
   | 'action_invalid';
 
@@ -38,9 +41,22 @@ export interface ActionView {
 
 export interface MatchedRuleRef {
   readonly id: string;
+  /** Level recorded in the entry's snapshot metadata (or current rules for
+   * legacy entries); never re-derived from the live rule table when the entry
+   * carries its own metadata. */
   readonly level: number | null;
   readonly onHit: string | null;
   readonly known: boolean;
+}
+
+export type CoverageReason =
+  | 'unsupported_tool'
+  | 'opaque_action'
+  | 'unstructured_tool';
+
+export interface ReviewCoverage {
+  readonly reason: CoverageReason | null;
+  readonly confirmationEligible: boolean | null;
 }
 
 export interface ReviewRecord {
@@ -52,6 +68,9 @@ export interface ReviewRecord {
   readonly matchedRuleIds: readonly string[];
   readonly matchedRules: readonly MatchedRuleRef[];
   readonly verdict: string | null;
+  readonly decision: string | null;
+  readonly snapshotDigest: string | null;
+  readonly coverage: ReviewCoverage | null;
   readonly error: string | null;
   readonly reasons: readonly ReviewReason[];
   /** True only when the raw line was not valid JSON. */
@@ -81,9 +100,12 @@ const REASON_ORDER: readonly ReviewReason[] = [
   'malformed_json',
   'parse_error',
   'unknown_payload',
+  'not_evaluated',
   'engine_error',
   'snapshot_error',
   'unknown_rule_id',
+  'rule_metadata_missing',
+  'no_match_default_deny',
   'legacy_fail_closed_no_ids',
   'action_invalid',
 ];
@@ -91,10 +113,13 @@ const REASON_ORDER: readonly ReviewReason[] = [
 const GAP_REASON_ORDER: readonly ReviewReason[] = [
   'parse_error',
   'unknown_payload',
+  'not_evaluated',
   'engine_error',
   'snapshot_error',
   'malformed_json',
   'unknown_rule_id',
+  'rule_metadata_missing',
+  'no_match_default_deny',
   'legacy_fail_closed_no_ids',
   'action_invalid',
 ];
@@ -102,10 +127,13 @@ const GAP_REASON_ORDER: readonly ReviewReason[] = [
 const GAP_REASONS = new Set<ReviewReason>([
   'parse_error',
   'unknown_payload',
+  'not_evaluated',
   'engine_error',
   'snapshot_error',
   'malformed_json',
   'unknown_rule_id',
+  'rule_metadata_missing',
+  'no_match_default_deny',
   'legacy_fail_closed_no_ids',
   'action_invalid',
 ]);
@@ -118,6 +146,19 @@ const AUDIT_ERROR_REASONS = new Set<ReviewReason>([
 ]);
 
 const KNOWN_VERDICTS = new Set<string>(['allow', 'deny', 'confirm', 'log']);
+
+const KNOWN_DECISIONS = new Set<string>([
+  'matched',
+  'no_match',
+  'error',
+  'not_evaluated',
+]);
+
+const KNOWN_COVERAGE_REASONS = new Set<string>([
+  'unsupported_tool',
+  'opaque_action',
+  'unstructured_tool',
+]);
 
 export function buildReviewQueue(
   sources: readonly ReviewSource[],
@@ -251,7 +292,34 @@ function parseRecord(
       )
     : [];
 
+  // Rule provenance comes from the metadata embedded in the log entry. The
+  // live rule table is only a fallback for legacy entries that predate it, and
+  // those entries are recorded as a coverage gap rather than silently trusting
+  // today's rules.
+  const metadata = parseMatchedRuleMetadata(parsed.matched_rules);
+  if (metadata.malformed) {
+    reasons.add('unknown_payload');
+  }
+  if (!metadata.present) {
+    reasons.add('rule_metadata_missing');
+  }
+
   const matchedRules = matchedRuleIds.map((id): MatchedRuleRef => {
+    if (metadata.present) {
+      const rule = metadata.byId.get(id);
+      if (rule === undefined) {
+        // The entry carries snapshot metadata but it does not describe this
+        // id: do not borrow level/on_hit from the current rule table.
+        return { id, level: null, onHit: null, known: false };
+      }
+      return {
+        id,
+        level: rule.level,
+        onHit: rule.onHit,
+        known: true,
+      };
+    }
+
     const rule = ruleMap.get(id);
     if (rule === undefined) {
       return { id, level: null, onHit: null, known: false };
@@ -275,8 +343,66 @@ function parseRecord(
     reasons.add('zero_level_hit');
   }
 
+  const hasCoverage =
+    Object.prototype.hasOwnProperty.call(parsed, 'coverage') &&
+    parsed.coverage !== null;
+  const coverage = parseCoverage(parsed.coverage);
+  if (hasCoverage && !coverage.valid) {
+    reasons.add('unknown_payload');
+  }
+
+  const decision =
+    typeof parsed.decision === 'string' ? parsed.decision : null;
+  const hasDecision = Object.prototype.hasOwnProperty.call(
+    parsed,
+    'decision',
+  );
+  if (hasDecision && (decision === null || !KNOWN_DECISIONS.has(decision))) {
+    reasons.add('unknown_payload');
+  }
+
+  const hasSchemaVersion = Object.prototype.hasOwnProperty.call(
+    parsed,
+    'schema_version',
+  );
+  if (
+    hasSchemaVersion &&
+    parsed.schema_version !== 1 &&
+    parsed.schema_version !== 2
+  ) {
+    reasons.add('unknown_payload');
+  }
+
+  const hasSnapshotDigest = Object.prototype.hasOwnProperty.call(
+    parsed,
+    'snapshot_digest',
+  );
+  if (
+    hasSnapshotDigest &&
+    parsed.snapshot_digest !== null &&
+    typeof parsed.snapshot_digest !== 'string'
+  ) {
+    reasons.add('unknown_payload');
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(parsed, 'mode') &&
+    parsed.mode !== 'log-only'
+  ) {
+    reasons.add('unknown_payload');
+  }
+
   const verdict = typeof parsed.verdict === 'string' ? parsed.verdict : null;
-  if (verdict === null || !KNOWN_VERDICTS.has(verdict)) {
+  if (decision === 'not_evaluated') {
+    // A not-evaluated record is identifiable by `verdict: null` plus a valid
+    // coverage annotation. It is a coverage gap in its own right, not a
+    // malformed payload.
+    if (verdict === null && coverage.valid) {
+      reasons.add('not_evaluated');
+    } else {
+      reasons.add('unknown_payload');
+    }
+  } else if (verdict === null || !KNOWN_VERDICTS.has(verdict)) {
     reasons.add('unknown_payload');
   }
   if (verdict === 'confirm') {
@@ -298,6 +424,16 @@ function parseRecord(
   }
 
   if (
+    hasDecision &&
+    ((decision === 'matched' && matchedRuleIds.length === 0) ||
+      (decision === 'no_match' && matchedRuleIds.length > 0) ||
+      (decision === 'error' && !hasOwnError) ||
+      (decision !== 'error' && hasOwnError))
+  ) {
+    reasons.add('unknown_payload');
+  }
+
+  if (
     !hasOwnError &&
     (verdict === 'confirm' || verdict === 'log') &&
     matchedRuleIds.length === 0
@@ -305,10 +441,23 @@ function parseRecord(
     reasons.add('unknown_payload');
   }
 
-  // A legacy record has no `error` field at all. Records that explicitly say
-  // `engine_error` (or any other error) must not be relabelled as legacy.
+  // A new no_match record uses the recorder's explicit default-deny policy.
+  // It is a coverage gap, not the legacy shape that predates decision kinds.
+  if (
+    hasDecision &&
+    decision === 'no_match' &&
+    verdict === 'deny' &&
+    matchedRuleIds.length === 0
+  ) {
+    reasons.add('no_match_default_deny');
+  }
+
+  // A legacy record has no `error` field or decision kind at all. Records that
+  // explicitly say `engine_error` (or any other error) must not be relabelled
+  // as legacy.
   if (
     !hasOwnError &&
+    !hasDecision &&
     verdict === 'deny' &&
     matchedRuleIds.length === 0
   ) {
@@ -335,9 +484,103 @@ function parseRecord(
     matchedRuleIds,
     matchedRules,
     verdict,
+    decision,
+    snapshotDigest:
+      typeof parsed.snapshot_digest === 'string'
+        ? parsed.snapshot_digest
+        : null,
+    coverage: coverage.view,
     error,
     reasons: orderReasons(reasons),
     malformed: false,
+  };
+}
+
+interface ParsedRuleMetadata {
+  readonly id: string;
+  readonly level: number;
+  readonly onHit: string | null;
+}
+
+interface MatchedRuleMetadata {
+  /** True when the entry has a `matched_rules` field at all. */
+  readonly present: boolean;
+  /** True when `matched_rules` is present but is not a valid metadata array. */
+  readonly malformed: boolean;
+  readonly byId: ReadonlyMap<string, ParsedRuleMetadata>;
+}
+
+function parseMatchedRuleMetadata(raw: unknown): MatchedRuleMetadata {
+  if (raw === undefined || raw === null) {
+    return { present: false, malformed: false, byId: new Map() };
+  }
+  if (!Array.isArray(raw)) {
+    return { present: true, malformed: true, byId: new Map() };
+  }
+
+  const byId = new Map<string, ParsedRuleMetadata>();
+  let malformed = false;
+  for (const entry of raw) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== 'string' ||
+      entry.id.trim().length === 0 ||
+      typeof entry.dimension !== 'string' ||
+      entry.dimension.trim().length === 0 ||
+      typeof entry.level !== 'number' ||
+      !Number.isInteger(entry.level) ||
+      entry.level < 0 ||
+      (entry.policy_class !== 'security' &&
+        entry.policy_class !== 'engineering') ||
+      (entry.enforcement !== 'runtime' &&
+        entry.enforcement !== 'ci' &&
+        entry.enforcement !== 'server' &&
+        entry.enforcement !== 'advisory')
+    ) {
+      malformed = true;
+      continue;
+    }
+    if (!byId.has(entry.id)) {
+      byId.set(entry.id, {
+        id: entry.id,
+        level: entry.level,
+        onHit: typeof entry.on_hit === 'string' ? entry.on_hit : null,
+      });
+    }
+  }
+
+  return { present: true, malformed, byId };
+}
+
+interface ParsedCoverage {
+  /** True only when the reason and confirmation_eligible are both valid. */
+  readonly valid: boolean;
+  readonly view: ReviewCoverage | null;
+}
+
+function parseCoverage(raw: unknown): ParsedCoverage {
+  if (raw === undefined || raw === null) {
+    return { valid: false, view: null };
+  }
+  if (!isRecord(raw)) {
+    return {
+      valid: false,
+      view: { reason: null, confirmationEligible: null },
+    };
+  }
+
+  const reason =
+    typeof raw.reason === 'string' && KNOWN_COVERAGE_REASONS.has(raw.reason)
+      ? (raw.reason as CoverageReason)
+      : null;
+  const confirmationEligible =
+    typeof raw.confirmation_eligible === 'boolean'
+      ? raw.confirmation_eligible
+      : null;
+
+  return {
+    valid: reason !== null && confirmationEligible !== null,
+    view: { reason, confirmationEligible },
   };
 }
 
@@ -355,6 +598,9 @@ function makeRecord(
     matchedRuleIds: [],
     matchedRules: [],
     verdict: null,
+    decision: null,
+    snapshotDigest: null,
+    coverage: null,
     error: null,
     reasons: orderReasons(reasons),
     malformed,
@@ -473,7 +719,7 @@ export function renderReviewMarkdown(queue: ReviewQueue): string {
 function renderConfirmSection(queue: ReviewQueue): string {
   const note =
     queue.confirm.total > queue.confirm.selected.length
-      ? '> confirm 超过 20 条：按不同 action.tool 与 matched rule id 做确定性覆盖优先选择，等覆盖增益时取原始行更早者，最终按 source+line 排序。\n\n'
+      ? '> confirm 超过 20 条：采用“确定性覆盖选择”，按不同 action.tool 与 matched rule id 优先覆盖，等覆盖增益时取原始行更早者，最终按 source+line 排序；这不是随机或统计抽样，也不构成任何统计推断。\n\n'
       : '';
   return `${note}${renderSection(
     `confirm（共 ${queue.confirm.total} 条，选中 ${queue.confirm.selected.length} 条）`,
@@ -502,6 +748,11 @@ function renderRecord(record: ReviewRecord): string {
     `- action: ${renderAction(record.action)}`,
     `- matched: ${renderMatched(record.matchedRules)}`,
     `- verdict: ${record.verdict === null ? '—' : code(record.verdict)}`,
+    `- decision: ${record.decision === null ? '—' : code(record.decision)}`,
+    `- snapshot: ${
+      record.snapshotDigest === null ? '—' : code(record.snapshotDigest)
+    }`,
+    `- coverage: ${renderCoverage(record.coverage)}`,
     `- error: ${record.error === null ? '—' : code(record.error)}`,
     `- 原因: ${
       record.reasons.length === 0
@@ -545,6 +796,21 @@ function renderActionField(value: string | null): string {
   return code(value);
 }
 
+function renderCoverage(coverage: ReviewCoverage | null): string {
+  if (coverage === null) {
+    return '—';
+  }
+  const reason =
+    coverage.reason === null ? '（缺失/无效）' : code(coverage.reason);
+  const eligible =
+    coverage.confirmationEligible === null
+      ? '（缺失/无效）'
+      : coverage.confirmationEligible
+        ? 'true'
+        : 'false';
+  return `${reason}（confirmation_eligible ${eligible}）`;
+}
+
 function renderMatched(rules: readonly MatchedRuleRef[]): string {
   if (rules.length === 0) {
     return '（无命中规则）';
@@ -561,7 +827,30 @@ function renderMatched(rules: readonly MatchedRuleRef[]): string {
     .join('、');
 }
 
+/**
+ * Encode an untrusted value so it is inert inside a single-backtick Markdown
+ * code span.
+ *
+ * `JSON.stringify` handles quotes, backslashes, and every control character
+ * (newline, CR, NUL, ...), which keeps the value on one line. We then
+ * Unicode-escape the characters that could terminate the code span or open
+ * raw HTML/Markdown: backtick, `<`, `>`, and `&`.
+ */
 function code(value: string): string {
-  const singleLine = value.replace(/\r?\n/g, '\\n').replace(/`/g, '\\`');
-  return `\`${singleLine}\``;
+  const json = JSON.stringify(value);
+  const inner = json.slice(1, -1);
+  const encoded = inner
+    // JSON.stringify escapes C0 controls but not DEL, C1 controls, or the
+    // Unicode line/paragraph separators; flatten those too so a value can
+    // never introduce a line break.
+    .replace(
+      /[\u007f-\u009f\u2028\u2029]/g,
+      (character) =>
+        `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    )
+    .replace(/`/g, '\\u0060')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+  return `\`${encoded}\``;
 }

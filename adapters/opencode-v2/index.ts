@@ -61,10 +61,19 @@ export default {
   id: "atmos-opencode-v2-log-only",
   async setup(ctx: PluginContext) {
     const config = readConfig(ctx.options ?? {}, ctx.location.directory);
+    let auditErrorLogged = false;
     const recorder = createLogOnlyRecorder({
       rulesPath: config.rulesPath,
       schemaPath: config.schemaPath,
       logPath: config.logPath,
+      sessionWorkspace: config.directory,
+      onDiagnostic: () => {
+        if (auditErrorLogged) return;
+        auditErrorLogged = true;
+        console.error(
+          "Atmos OpenCode adapter: audit write failed; the tool call was not blocked.",
+        );
+      },
     });
 
     const registration = await ctx.tool.hook("execute.before", (event) => {

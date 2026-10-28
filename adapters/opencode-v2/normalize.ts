@@ -37,7 +37,8 @@ const OPTIONAL_PATH_TOOLS: ReadonlySet<string> = new Set([
 
 /**
  * Tools that are known to the V2 harness but do not travel through the file
- * channel. These are skipped explicitly rather than treated as unknown.
+ * channel. They are recorded as explicit coverage gaps rather than silently
+ * skipped or mistaken for unknown tools.
  */
 const KNOWN_NON_FILE_TOOLS: ReadonlySet<string> = new Set([
   'shell',
@@ -108,8 +109,24 @@ function error(
 }
 
 /**
+ * A known tool that cannot be represented on the file channel. The action is
+ * deliberately structural: raw input, commands and free text are never copied
+ * into it.
+ */
+function coverage(tool: string): OpenCodeNormalization {
+  return {
+    kind: 'coverage',
+    action: { tool, operation: 'tool_input', target: 'unknown' },
+    coverage: { reason: 'unsupported_tool', confirmation_eligible: false },
+  };
+}
+
+/**
  * Normalize one OpenCode V2 `execute.before` event into the engine's file
  * action envelope. Pure: only `node:path` is used, no filesystem or SDK access.
+ *
+ * Known non-file tools are returned as coverage gaps so the audit log records
+ * that they were seen but not evaluated. Unknown tools stay explicit errors.
  */
 export function normalizeOpenCodeAction(
   event: { tool?: unknown; input?: unknown },
@@ -125,7 +142,7 @@ export function normalizeOpenCodeAction(
   }
 
   if (KNOWN_NON_FILE_TOOLS.has(tool)) {
-    return { kind: 'skip' };
+    return coverage(tool);
   }
 
   if (UNSTRUCTURED_TOOLS.has(tool)) {
