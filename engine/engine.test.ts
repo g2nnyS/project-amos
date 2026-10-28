@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
 
-import { evaluate, evaluateWithMatches, assertValidTable } from './engine.ts';
+import { evaluate, evaluateWithMatches, evaluatePolicy, assertValidTable } from './engine.ts';
+import { createSnapshotStore } from '../storage/snapshot.ts';
 
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
+const SESSION_WORKSPACE = '/home/test-user/projects/project-atmos';
 
 const ENGINE_ERROR = {
   verdict: 'deny',
@@ -29,6 +29,8 @@ function baseRule(overrides: Record<string, unknown> = {}): Record<string, unkno
     dimension: 'filesystem',
     level: 0,
     expressivity: 'deterministic',
+    policy_class: 'security',
+    enforcement: 'runtime',
     predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
     narrative: 'test narrative',
     on_hit: 'deny',
@@ -45,7 +47,7 @@ function action(overrides: Record<string, unknown> = {}): Record<string, unknown
   return {
     tool: 'fs',
     operation: 'file_read',
-    target: '/home/ganyu/projects/a.ts',
+    target: '/home/test-user/projects/a.ts',
     ...overrides,
   };
 }
@@ -83,10 +85,7 @@ test('multi-hit priority is deny > confirm > log > allow and includes overridden
     verdict: 'log',
     matched_rule_ids: ['log-rule'],
   });
-  assert.deepEqual(evaluateWithMatches(action(), [], NOW), {
-    verdict: 'allow',
-    matched_rule_ids: [],
-  });
+  assert.deepEqual(evaluateWithMatches(action(), [], NOW), ENGINE_ERROR);
 });
 
 test('same-level deny conflicts stay deny and keep every deny id', () => {
@@ -100,29 +99,48 @@ test('same-level deny conflicts stay deny and keep every deny id', () => {
   });
 });
 
-test('unknown extra fields on action, rule, predicate and args are ignored', () => {
-  const table = [
+test('unknown extra fields on action, rule, source, predicate and args are rejected', () => {
+  const extraRuleField = [baseRule({ unexpected_rule_field: { anything: true } })];
+  const extraSourceField = [
+    baseRule({ source: { ...SOURCE, extra_source_field: 1 } }),
+  ];
+  const extraCallField = [
     baseRule({
-      id: 'extra-rule',
-      unexpected_rule_field: { anything: true },
       predicate: [
         {
-          ...call('op_in', { operations: ['file_read'], ignored_arg: 123 }),
+          ...call('op_in', { operations: ['file_read'] }),
           extra_call_field: 'ignored',
         },
       ],
     }),
   ];
-  const actionValue = action({
+  const extraArgsField = [
+    baseRule({ predicate: [call('op_in', { operations: ['file_read'], ignored_arg: 123 })] }),
+  ];
+  const extraActionFields = action({
     request_id: 'abc',
     metadata: { nested: true },
     extra: [1, 2, 3],
   });
 
-  assert.deepEqual(evaluateWithMatches(actionValue, table, NOW), {
-    verdict: 'deny',
-    matched_rule_ids: ['extra-rule'],
-  });
+  for (const [label, table] of Object.entries({
+    'unknown rule field': extraRuleField,
+    'unknown source field': extraSourceField,
+    'unknown predicate call field': extraCallField,
+    'unknown args field': extraArgsField,
+  })) {
+    assert.deepEqual(evaluateWithMatches(action(), table, NOW), ENGINE_ERROR, label);
+    assert.throws(() => assertValidTable(table), Error, label);
+  }
+
+  assert.deepEqual(
+    evaluateWithMatches(extraActionFields, [baseRule()], NOW),
+    ENGINE_ERROR,
+  );
+  assert.deepEqual(
+    evaluateWithMatches(extraActionFields, extraRuleField, NOW),
+    ENGINE_ERROR,
+  );
 });
 
 test('unknown predicate op or on_hit fails closed with empty matches', () => {
@@ -149,6 +167,7 @@ test('unknown predicate op or on_hit fails closed with empty matches', () => {
 test('invalid tables fail closed as a whole', () => {
   const invalidTables: Record<string, unknown> = {
     'not an array': {},
+    'empty table': [],
     'null table': null,
     'rule not an object': ['not a rule'],
     'missing probe': [baseRule({ probe: undefined })],
@@ -165,6 +184,31 @@ test('invalid tables fail closed as a whole', () => {
     'bad scope': [baseRule({ scope: 'global' })],
     'bad owner': [baseRule({ owner: 'robot' })],
     'bad expressivity': [baseRule({ expressivity: 'sometimes' })],
+    'missing policy_class': [baseRule({ policy_class: undefined })],
+    'unknown policy_class': [baseRule({ policy_class: 'compliance' })],
+    'missing enforcement': [baseRule({ enforcement: undefined })],
+    'unknown enforcement': [baseRule({ enforcement: 'always' })],
+    'deterministic advisory enforcement': [baseRule({ enforcement: 'advisory' })],
+    'advisory with non-advisory enforcement': [
+      baseRule({ expressivity: 'advisory_only', predicate: null }),
+    ],
+    'unknown rule field': [baseRule({ unexpected_rule_field: { anything: true } })],
+    'unknown source field': [
+      baseRule({ source: { ...SOURCE, extra_source_field: 1 } }),
+    ],
+    'unknown predicate call field': [
+      baseRule({
+        predicate: [
+          {
+            ...call('op_in', { operations: ['file_read'] }),
+            extra_call_field: 'ignored',
+          },
+        ],
+      }),
+    ],
+    'unknown args field': [
+      baseRule({ predicate: [call('op_in', { operations: ['file_read'], ignored_arg: 123 })] }),
+    ],
     'missing source field': [
       baseRule({ source: { repo: 'r', rev: 'v', path: 'p', section: 's', lines: '1' } }),
     ],
@@ -215,27 +259,32 @@ test('invalid tables fail closed as a whole', () => {
 });
 
 test('assertValidTable accepts valid rule tables and rejects invalid ones', () => {
-  assert.doesNotThrow(() => assertValidTable([]));
   assert.doesNotThrow(() => assertValidTable([baseRule()]));
   assert.doesNotThrow(() =>
     assertValidTable([
       baseRule({
         id: 'advisory',
         expressivity: 'advisory_only',
+        enforcement: 'advisory',
         predicate: null,
         on_hit: 'confirm',
       }),
     ]),
   );
+  assert.throws(() => assertValidTable([]), Error);
   assert.throws(() => assertValidTable(null), Error);
   assert.throws(() => assertValidTable([baseRule({ id: '' })]), Error);
+  assert.throws(
+    () => assertValidTable([baseRule({ unexpected_rule_field: true })]),
+    Error,
+  );
 });
 
 test('invalid actions and clock values fail closed', () => {
   const invalidActions: Array<[string, unknown]> = [
     ['null action', null],
     ['array action', []],
-    ['missing operation', { tool: 'fs', target: '/home/ganyu/projects/a.ts' }],
+    ['missing operation', { tool: 'fs', target: '/home/test-user/projects/a.ts' }],
     ['non-string operation', { tool: 'fs', operation: 7, target: '/x' }],
     ['non-string tool', { tool: 7, operation: 'file_read', target: '/x' }],
     ['non-string target', { tool: 'fs', operation: 'file_read', target: null }],
@@ -245,6 +294,7 @@ test('invalid actions and clock values fail closed', () => {
     ['blank tool', { tool: ' \t ', operation: 'file_read', target: '/x' }],
     ['blank operation', { tool: 'fs', operation: '\n ', target: '/x' }],
     ['blank target', { tool: 'fs', operation: 'file_read', target: '   ' }],
+    ['unknown action field', { tool: 'fs', operation: 'file_read', target: '/x', request_id: 'abc' }],
   ];
 
   for (const [label, invalidAction] of invalidActions) {
@@ -304,7 +354,7 @@ test('source required fields must be non-blank strings', () => {
 test('internal exceptions from getters and proxies fail closed', () => {
   const actionWithThrowingGetter = {
     tool: 'fs',
-    target: '/home/ganyu/projects/a.ts',
+    target: '/home/test-user/projects/a.ts',
     get operation(): string {
       throw new Error('action getter boom');
     },
@@ -406,6 +456,7 @@ test('advisory_only rules never match', () => {
   const advisory = baseRule({
     id: 'advisory',
     expressivity: 'advisory_only',
+    enforcement: 'advisory',
     predicate: null,
     on_hit: 'deny',
   });
@@ -453,14 +504,14 @@ test('target_glob matches absolute file paths with the frozen glob options', () 
 });
 
 test('target_outside_glob matches only paths outside every pattern', () => {
-  const predicate = [call('target_outside_glob', { patterns: ['/home/ganyu/projects/**'] })];
+  const predicate = [call('target_outside_glob', { patterns: ['/home/test-user/projects/**'] })];
 
   assert.equal(
     verdictFor(predicate, action({ target: '/tmp/opencode/incoming.patch' })),
     'deny',
   );
   assert.equal(
-    verdictFor(predicate, action({ target: '/home/ganyu/projects/nested/a.ts' })),
+    verdictFor(predicate, action({ target: '/home/test-user/projects/nested/a.ts' })),
     'allow',
   );
 });
@@ -624,7 +675,14 @@ test('non-canonical file targets fail closed instead of bypassing target_glob', 
 
 test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke results', () => {
   const rulesPath = join(process.cwd(), 'constraints', 'rules.yaml');
-  const rules = parseYaml(readFileSync(rulesPath, 'utf8')) as Array<Record<string, unknown>>;
+  const schemaPath = join(process.cwd(), 'constraints', 'schema.json');
+  const store = createSnapshotStore();
+  const loaded = store.load(rulesPath, schemaPath, {
+    sessionWorkspace: SESSION_WORKSPACE,
+  });
+  assert.equal(loaded.error, null);
+  assert.ok(loaded.snapshot);
+  const rules = loaded.snapshot.table as unknown as Array<Record<string, unknown>>;
 
   assert.ok(Array.isArray(rules));
   assert.equal(rules.length, 15);
@@ -643,6 +701,8 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
       'owner',
       'source',
       'probe',
+      'policy_class',
+      'enforcement',
     ]) {
       assert.ok(field in rule, `${String(rule.id)} is missing ${field}`);
     }
@@ -665,9 +725,13 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   for (const rule of deterministic) {
     assert.ok(Array.isArray(rule.predicate));
     assert.ok((rule.predicate as unknown[]).length > 0);
+    assert.equal(rule.policy_class, 'security');
+    assert.equal(rule.enforcement, 'runtime');
   }
   for (const rule of advisory) {
     assert.equal(rule.predicate, null);
+    assert.equal(rule.policy_class, 'security');
+    assert.equal(rule.enforcement, 'advisory');
   }
 
   const actualOps = new Set<string>();
@@ -695,7 +759,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'credential secret path search via grep',
-      action({ tool: 'grep', operation: 'file_search', target: '/home/ganyu/projects/app/server.key' }),
+      action({ tool: 'grep', operation: 'file_search', target: '/home/test-user/projects/app/server.key' }),
       'deny',
     ],
     [
@@ -748,12 +812,12 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'side effect project write',
-      action({ tool: 'fs', operation: 'file_write', target: '/home/ganyu/projects/a.ts' }),
+      action({ tool: 'fs', operation: 'file_write', target: '/home/test-user/projects/project-atmos/a.ts' }),
       'confirm',
     ],
     [
       'side effect project read is log only',
-      action({ tool: 'fs', operation: 'file_read', target: '/home/ganyu/projects/a.ts' }),
+      action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
       'log',
     ],
     [
@@ -782,7 +846,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   assert.ok(secretRead.matched_rule_ids.includes('side_effect-1-3'));
 
   const whitelistedRead = evaluateWithMatches(
-    action({ tool: 'fs', operation: 'file_read', target: '/home/ganyu/projects/a.ts' }),
+    action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
     rules,
     NOW,
   );
@@ -790,4 +854,152 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     verdict: 'log',
     matched_rule_ids: ['side_effect-1-3'],
   });
+});
+
+test('evaluatePolicy reports no_match and applies the default verdict', () => {
+  const table = [
+    baseRule({ predicate: [call('op_in', { operations: ['file_write'] })] }),
+  ];
+
+  assert.deepEqual(evaluatePolicy(action(), table, NOW), {
+    verdict: 'allow',
+    matched_rule_ids: [],
+    matched_rules: [],
+    decision: 'no_match',
+  });
+  assert.deepEqual(evaluatePolicy(action(), table, NOW, { defaultVerdict: 'allow' }), {
+    verdict: 'allow',
+    matched_rule_ids: [],
+    matched_rules: [],
+    decision: 'no_match',
+  });
+  assert.deepEqual(evaluatePolicy(action(), table, NOW, { defaultVerdict: 'deny' }), {
+    verdict: 'deny',
+    matched_rule_ids: [],
+    matched_rules: [],
+    decision: 'no_match',
+  });
+});
+
+test('evaluatePolicy returns matched rule metadata in table order', () => {
+  const table = [
+    baseRule({
+      id: 'security-log',
+      dimension: 'side_effect',
+      level: 1,
+      policy_class: 'security',
+      enforcement: 'runtime',
+      on_hit: 'log',
+    }),
+    baseRule({
+      id: 'engineering-deny',
+      dimension: 'quality',
+      level: 2,
+      policy_class: 'engineering',
+      enforcement: 'ci',
+      on_hit: 'deny',
+    }),
+    baseRule({
+      id: 'unmatched',
+      predicate: [call('op_in', { operations: ['file_write'] })],
+    }),
+  ];
+
+  assert.deepEqual(evaluatePolicy(action(), table, NOW), {
+    verdict: 'deny',
+    matched_rule_ids: ['security-log', 'engineering-deny'],
+    matched_rules: [
+      {
+        id: 'security-log',
+        dimension: 'side_effect',
+        level: 1,
+        policy_class: 'security',
+        enforcement: 'runtime',
+        on_hit: 'log',
+      },
+      {
+        id: 'engineering-deny',
+        dimension: 'quality',
+        level: 2,
+        policy_class: 'engineering',
+        enforcement: 'ci',
+        on_hit: 'deny',
+      },
+    ],
+    decision: 'matched',
+  });
+});
+
+test('evaluatePolicy never includes expired or advisory rules in matches', () => {
+  const table = [
+    baseRule({
+      id: 'expired',
+      ttl: '2026-10-24T11:59:59.000Z',
+      on_hit: 'deny',
+    }),
+    baseRule({
+      id: 'advisory',
+      expressivity: 'advisory_only',
+      enforcement: 'advisory',
+      predicate: null,
+      on_hit: 'deny',
+    }),
+    baseRule({ id: 'live', on_hit: 'confirm' }),
+  ];
+
+  assert.deepEqual(evaluatePolicy(action(), table, NOW), {
+    verdict: 'confirm',
+    matched_rule_ids: ['live'],
+    matched_rules: [
+      {
+        id: 'live',
+        dimension: 'filesystem',
+        level: 0,
+        policy_class: 'security',
+        enforcement: 'runtime',
+        on_hit: 'confirm',
+      },
+    ],
+    decision: 'matched',
+  });
+});
+
+test('evaluatePolicy fails closed for empty tables, invalid tables and invalid options', () => {
+  const errorDecision = {
+    verdict: 'deny',
+    matched_rule_ids: [],
+    matched_rules: [],
+    decision: 'error',
+    error: 'engine_error',
+  } as const;
+
+  assert.deepEqual(evaluatePolicy(action(), [], NOW), errorDecision);
+  assert.deepEqual(
+    evaluatePolicy(action(), [baseRule({ enforcement: 'advisory' })], NOW),
+    errorDecision,
+  );
+  assert.deepEqual(
+    evaluatePolicy(action(), [baseRule()], NOW, {
+      defaultVerdict: 'deny',
+      extra: true,
+    } as never),
+    errorDecision,
+  );
+  assert.deepEqual(
+    evaluatePolicy(action(), [baseRule()], NOW, {
+      defaultVerdict: 'maybe',
+    } as never),
+    errorDecision,
+  );
+});
+
+test('legacy evaluateWithMatches output never exposes policy decision fields', () => {
+  const result = evaluateWithMatches(action(), [baseRule()], NOW);
+
+  assert.deepEqual(result, {
+    verdict: 'deny',
+    matched_rule_ids: ['rule-1'],
+  });
+  assert.deepEqual(Object.keys(result).sort(), ['matched_rule_ids', 'verdict']);
+  assert.equal(evaluate(action(), [baseRule()], NOW), 'deny');
 });

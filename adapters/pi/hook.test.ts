@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -17,6 +18,12 @@ import atmosPiLogOnly, { readPiConfig } from './index.ts';
 const ROOT = process.cwd();
 const RULES = join(ROOT, 'constraints', 'rules.yaml');
 const SCHEMA = join(ROOT, 'constraints', 'schema.json');
+
+// The Pi adapter derives the session workspace from the explicit `ctx.cwd`
+// supplied by the harness, so rule evaluation never depends on the clone
+// location. This logical path is outside that workspace and exercises the
+// ${SESSION_WORKSPACE} boundary without touching the host filesystem.
+const OUTSIDE_WORKSPACE = '/home/test-user/projects/other-project';
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
@@ -33,7 +40,13 @@ function setup(
   t: { after(callback: () => void): void },
   options: { config?: unknown } = {},
 ) {
-  const directory = mkdtempSync(join('/tmp/opencode', 'atmos-pi-hook-'));
+  const root = mkdtempSync(join(tmpdir(), 'atmos-pi-hook-'));
+  // The explicit session directory is what Pi supplies as ctx.cwd. Keep it
+  // separate from the temporary root so configuration and audit output stay
+  // inside a workspace that the rule table can describe with
+  // ${SESSION_WORKSPACE}.
+  const directory = join(root, 'workspace');
+  mkdirSync(directory, { recursive: true });
   const config = 'config' in options ? options.config : validConfig();
   if (config !== null) {
     mkdirSync(join(directory, '.pi'), { recursive: true });
@@ -53,7 +66,7 @@ function setup(
   } as unknown as ExtensionAPI;
   atmosPiLogOnly(pi);
 
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const ctx = { cwd: directory };
 
@@ -120,34 +133,36 @@ test('read, write, bash, unknown and user_bash are logged without blocking', asy
   const hook = setup(t);
   assert.equal(await hook.sessionStart(), undefined);
 
-  // Targets live inside the real rule table's /home/<user>/projects/** path
-  // whitelist; only the configuration and log live in the temporary folder.
-  const readInput = { path: join(ROOT, 'src/example.ts') };
+  // Targets live inside the explicit session workspace; only the session
+  // directory and temporary audit output are touched.
+  const readTarget = join(hook.directory, 'src/example.ts');
+  const writeTarget = join(hook.directory, 'docs/generated.md');
+  const secretCommand = 'TOP_SECRET_COMMAND --token=abc';
+  const secretContent = 'secret-content';
+
+  const readInput = { path: readTarget };
   assert.equal(await hook.toolCall('read', readInput), undefined);
-  assert.deepEqual(readInput, { path: join(ROOT, 'src/example.ts') });
+  assert.deepEqual(readInput, { path: readTarget });
 
   assert.equal(
     await hook.toolCall('write', {
-      path: join(ROOT, 'docs/generated.md'),
-      content: 'secret-content',
+      path: writeTarget,
+      content: secretContent,
     }),
     undefined,
   );
   assert.equal(
-    await hook.toolCall('bash', { command: 'TOP_SECRET_COMMAND --token=abc' }),
+    await hook.toolCall('bash', { command: secretCommand }),
     undefined,
   );
   assert.equal(
     await hook.toolCall('custom_tool', {
-      command: 'TOP_SECRET_COMMAND',
-      content: 'secret-content',
+      command: secretCommand,
+      content: secretContent,
     }),
     undefined,
   );
-  assert.equal(
-    await hook.userBash('TOP_SECRET_COMMAND --token=abc'),
-    undefined,
-  );
+  assert.equal(await hook.userBash(secretCommand), undefined);
 
   const entries = hook.entries();
   assert.equal(entries.length, 5);
@@ -157,21 +172,27 @@ test('read, write, bash, unknown and user_bash are logged without blocking', asy
   assert.deepEqual(entries[0].action, {
     tool: 'read',
     operation: 'file_read',
-    target: join(ROOT, 'src/example.ts'),
+    target: readTarget,
   });
 
   assert.equal(entries[1].verdict, 'confirm');
+  assert.deepEqual(entries[1].matched_rule_ids, ['side_effect-1-2']);
   assert.deepEqual(entries[1].action, {
     tool: 'write',
     operation: 'file_write',
-    target: join(ROOT, 'docs/generated.md'),
+    target: writeTarget,
   });
 
-  assert.equal(entries[2].verdict, 'confirm');
+  assert.equal(entries[2].verdict, null);
+  assert.equal(entries[2].decision, 'not_evaluated');
   assert.deepEqual(entries[2].action, {
     tool: 'bash',
     operation: 'shell_input',
     target: 'unknown',
+  });
+  assert.deepEqual(entries[2].coverage, {
+    reason: 'opaque_action',
+    confirmation_eligible: false,
   });
 
   assert.equal(entries[3].verdict, 'deny');
@@ -182,11 +203,16 @@ test('read, write, bash, unknown and user_bash are logged without blocking', asy
     target: 'unknown',
   });
 
-  assert.equal(entries[4].verdict, 'confirm');
+  assert.equal(entries[4].verdict, null);
+  assert.equal(entries[4].decision, 'not_evaluated');
   assert.deepEqual(entries[4].action, {
     tool: 'user_bash',
     operation: 'shell_input',
     target: 'unknown',
+  });
+  assert.deepEqual(entries[4].coverage, {
+    reason: 'opaque_action',
+    confirmation_eligible: false,
   });
 
   const rawLog = readFileSync(hook.logPath(), 'utf8');
@@ -198,18 +224,39 @@ test('read, write, bash, unknown and user_bash are logged without blocking', asy
 test('a tool call ensures the recorder even without session_start', async (t) => {
   const hook = setup(t);
 
+  const readTarget = join(hook.directory, 'src/example.ts');
+  const grepTarget = join(hook.directory, 'engine');
   assert.equal(
-    await hook.toolCall('read', { path: join(ROOT, 'src/example.ts') }),
+    await hook.toolCall('read', { path: readTarget }),
     undefined,
   );
-  assert.equal(await hook.toolCall('grep', { path: join(ROOT, 'engine') }), undefined);
+  assert.equal(await hook.toolCall('grep', { path: grepTarget }), undefined);
 
   const entries = hook.entries();
   assert.deepEqual(entries.map((entry) => entry.verdict), ['log', 'log']);
   assert.deepEqual(entries[1].action, {
     tool: 'grep',
     operation: 'file_search',
-    target: join(ROOT, 'engine'),
+    target: grepTarget,
+  });
+});
+
+test('targets outside the explicit session workspace are denied', async (t) => {
+  const hook = setup(t);
+  const outsideTarget = join(OUTSIDE_WORKSPACE, 'src/example.ts');
+
+  assert.equal(
+    await hook.toolCall('read', { path: outsideTarget }),
+    undefined,
+  );
+
+  const [entry] = hook.entries();
+  assert.equal(entry.verdict, 'deny');
+  assert.ok(entry.matched_rule_ids.includes('filesystem-0-2'));
+  assert.deepEqual(entry.action, {
+    tool: 'read',
+    operation: 'file_read',
+    target: outsideTarget,
   });
 });
 
@@ -221,7 +268,7 @@ test('throwing payload getters are audited as engine_error without leaking value
   const badToolCall = {
     type: 'tool_call',
     toolCallId: 'call-throwing-tool-name',
-    input: { path: join(ROOT, 'src/example.ts') },
+    input: { path: join(hook.directory, 'src/example.ts') },
   };
   Object.defineProperty(badToolCall, 'toolName', {
     enumerable: true,
@@ -297,6 +344,37 @@ test('configuration failure never throws and is reported once', async (t) => {
   assert.equal(errors[0].includes(ROOT), false);
 });
 
+test('audit write failure is visible once without leaking path or payload', async (t) => {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map((value) => String(value)).join(' '));
+  };
+  t.after(() => {
+    console.error = originalError;
+  });
+
+  const hook = setup(t, {
+    config: { ...validConfig(), logPath: './blocker/audit.jsonl' },
+  });
+  writeFileSync(join(hook.directory, 'blocker'), 'not a directory', 'utf8');
+
+  const secret = 'AUDIT_FAILURE_SECRET';
+  assert.equal(
+    await hook.toolCall('read', { path: join(hook.directory, secret) }),
+    undefined,
+  );
+  assert.equal(
+    await hook.toolCall('read', { path: join(hook.directory, 'second.ts') }),
+    undefined,
+  );
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0] ?? '', /audit write failed/);
+  assert.equal(errors[0]?.includes(secret), false);
+  assert.equal(errors[0]?.includes(hook.directory), false);
+});
+
 test('invalid mode or malformed JSON degrades to a no-op recorder', async (t) => {
   const errors: string[] = [];
   const originalError = console.error;
@@ -322,7 +400,7 @@ test('invalid mode or malformed JSON degrades to a no-op recorder', async (t) =>
 });
 
 test('readPiConfig resolves relative paths against the explicit session directory', (t) => {
-  const directory = mkdtempSync(join('/tmp/opencode', 'atmos-pi-config-'));
+  const directory = mkdtempSync(join(tmpdir(), 'atmos-pi-config-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   mkdirSync(join(directory, '.pi'), { recursive: true });
   writeFileSync(

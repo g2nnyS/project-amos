@@ -1,21 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import plugin from "./index.ts";
 
 const ROOT = process.cwd();
 const RULES = join(ROOT, "constraints", "rules.yaml");
 const SCHEMA = join(ROOT, "constraints", "schema.json");
+
+// Logical session workspace supplied via the harness location. Rule evaluation
+// uses this instead of process.cwd() so the assertions describe the explicit
+// ${SESSION_WORKSPACE} boundary rather than the clone location.
+const WORKSPACE = "/home/test-user/projects/project-atmos";
 type Event = { tool?: unknown; input?: unknown };
 type Context = Parameters<typeof plugin.setup>[0];
 
 async function setupHook(t: any, optionOverrides: Record<string, unknown> = {}) {
-  const temporary = mkdtempSync(join("/tmp/opencode", "atmos-hook-"));
-  const logPath = join(temporary, "audit.jsonl");
+  const temporary = mkdtempSync(join(tmpdir(), "atmos-hook-"));
+  const logPath =
+    typeof optionOverrides.logPath === "string"
+      ? optionOverrides.logPath
+      : join(temporary, "audit.jsonl");
   let callback: ((event: Event) => void) | undefined;
   const cleanup = await plugin.setup({
-    location: { directory: ROOT },
+    location: { directory: WORKSPACE },
     options: {
       mode: "log-only",
       rulesPath: RULES,
@@ -48,33 +63,83 @@ async function setupHook(t: any, optionOverrides: Record<string, unknown> = {}) 
 
 test("compiled hook evaluates real snapshots and remains log-only", async (t) => {
   const hook = await setupHook(t);
-  hook.call({ tool: "read", input: { path: "constraints/rules.yaml" } });
-  hook.call({ tool: "write", input: { path: "docs/must-not-be-created.md", content: "no" } });
+  const readTarget = join(WORKSPACE, "constraints", "rules.yaml");
+  const writeTarget = join(WORKSPACE, "docs", "must-not-be-created.md");
+  const contentSecret = "OPENCODE_WRITE_SECRET";
+  hook.call({ tool: "read", input: { path: readTarget } });
+  hook.call({ tool: "write", input: { path: writeTarget, content: contentSecret } });
 
   const entries = hook.entries();
   assert.equal(entries.length, 2);
   assert.deepEqual(entries.map((entry: any) => entry.verdict), ["log", "confirm"]);
   assert.deepEqual(entries[0].matched_rule_ids, ["side_effect-1-3"]);
   assert.deepEqual(entries[1].matched_rule_ids, ["side_effect-1-2"]);
-  assert.equal(entries[0].action.target, RULES);
-  assert.equal(existsSync(join(ROOT, "docs", "must-not-be-created.md")), false);
+  assert.equal(entries[0].action.target, readTarget);
+  assert.equal(entries[1].action.target, writeTarget);
+  assert.equal(existsSync(writeTarget), false);
+
+  const rawLog = readFileSync(hook.logPath, "utf8");
+  assert.equal(rawLog.includes(contentSecret), false);
 });
 
-test("hook records parse and unknown payload errors without throwing", async (t) => {
+test("targets outside the explicit session workspace are denied", async (t) => {
   const hook = await setupHook(t);
+  const outsideTarget = "/home/test-user/projects/other-project/src/example.ts";
+
+  hook.call({ tool: "read", input: { path: outsideTarget } });
+
+  const [entry] = hook.entries();
+  assert.equal(entry.verdict, "deny");
+  assert.ok(entry.matched_rule_ids.includes("filesystem-0-2"));
+  assert.deepEqual(entry.action, {
+    tool: "read",
+    operation: "file_read",
+    target: outsideTarget,
+  });
+});
+
+test("hook records parse, unknown and coverage records without throwing", async (t) => {
+  const hook = await setupHook(t);
+  const shellSecret = "OPENCODE_SHELL_SECRET";
   hook.call({ tool: "read", input: {} });
-  hook.call({ tool: "patch", input: { patchText: "*** Update File: x" } });
-  hook.call({ tool: "mystery_file_tool", input: {} });
-  hook.call({ tool: "shell", input: { command: "echo ignored" } });
+  hook.call({
+    tool: "patch",
+    input: { patchText: "*** Update File: x", content: shellSecret },
+  });
+  hook.call({ tool: "mystery_file_tool", input: { command: shellSecret } });
+  hook.call({
+    tool: "shell",
+    input: { command: `echo ${shellSecret} --token=abc`, content: shellSecret },
+  });
 
   const entries = hook.entries();
-  assert.deepEqual(entries.map((entry: any) => entry.error), [
-    "parse_error",
-    "unknown_payload",
-    "unknown_payload",
-  ]);
-  assert.ok(entries.every((entry: any) => entry.verdict === "deny"));
-  assert.ok(entries.every((entry: any) => entry.action.target === "unknown"));
+  assert.equal(entries.length, 4);
+  assert.deepEqual(
+    entries.slice(0, 3).map((entry: any) => entry.error),
+    ["parse_error", "unknown_payload", "unknown_payload"],
+  );
+  assert.ok(entries.slice(0, 3).every((entry: any) => entry.verdict === "deny"));
+  assert.ok(entries.slice(0, 3).every((entry: any) => entry.action.target === "unknown"));
+
+  const coverage = entries[3];
+  assert.equal(coverage.verdict, null);
+  assert.equal(coverage.decision, "not_evaluated");
+  // The normalizer emits target: "unknown"; the shared audit sanitizer redacts
+  // targets for non-file operations, so the logged target stays opaque.
+  assert.deepEqual(coverage.action, {
+    tool: "shell",
+    operation: "tool_input",
+    target: "[redacted-target]",
+  });
+  assert.deepEqual(coverage.coverage, {
+    reason: "unsupported_tool",
+    confirmation_eligible: false,
+  });
+  assert.equal(coverage.error, undefined);
+
+  const rawLog = readFileSync(hook.logPath, "utf8");
+  assert.equal(rawLog.includes(shellSecret), false);
+  assert.equal(rawLog.includes("token=abc"), false);
 });
 
 test("first snapshot failure is fail-closed in the audit record", async (t) => {
@@ -128,6 +193,35 @@ test("throwing event getters are audited as engine_error without escaping the ho
   const rawLog = readFileSync(hook.logPath, "utf8");
   assert.equal(rawLog.includes(toolSecret), false);
   assert.equal(rawLog.includes(inputSecret), false);
+});
+
+test("audit write failure is visible once without leaking path or payload", async (t) => {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.error = originalError;
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "atmos-hook-failure-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const blocker = join(root, "blocker");
+  writeFileSync(blocker, "not a directory", "utf8");
+
+  const hook = await setupHook(t, {
+    logPath: join(blocker, "audit.jsonl"),
+  });
+
+  const secret = "OPENCODE_AUDIT_FAILURE_SECRET";
+  hook.call({ tool: "read", input: { path: join(WORKSPACE, secret) } });
+  hook.call({ tool: "read", input: { path: join(WORKSPACE, "second.ts") } });
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0] ?? "", /audit write failed/);
+  assert.equal(errors[0]?.includes(secret), false);
+  assert.equal(errors[0]?.includes(root), false);
 });
 
 test("missing explicit configuration and non-log-only modes fail setup", async () => {

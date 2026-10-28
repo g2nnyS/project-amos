@@ -1,4 +1,4 @@
-import type { AuditAction } from '../../storage/jsonl.ts';
+import type { AuditAction, AuditCoverage } from '../../storage/jsonl.ts';
 
 /** Structured action produced by a harness adapter. */
 export type NormalizedAction = AuditAction;
@@ -9,7 +9,11 @@ export type NormalizedAction = AuditAction;
  */
 export type ActionNormalization =
   | { kind: 'action'; action: NormalizedAction }
-  | { kind: 'skip' }
+  | {
+      kind: 'coverage';
+      action: NormalizedAction;
+      coverage: AuditCoverage;
+    }
   | {
       kind: 'error';
       error: 'parse_error' | 'unknown_payload' | 'engine_error';

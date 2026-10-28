@@ -3,3 +3,5 @@
 {"ts":"2026-10-26T16:58:54.025Z","action":{"tool":"bash","operation":"shell_input","target":"unknown"},"matched_rule_ids":["side_effect-1-2"],"verdict":"confirm","latency_ms":1.058}
 {"ts":"2026-10-26T16:58:54.027Z","action":{"tool":"read","operation":"file_read","target":"/etc/hostname"},"matched_rule_ids":["filesystem-0-2","side_effect-1-3"],"verdict":"deny","latency_ms":4.353}
 {"ts":"2026-10-26T16:58:54.031Z","action":{"tool":"read","operation":"file_read","target":"/home/ganyu/.ssh/id_ed25519"},"matched_rule_ids":["credential-0-1","filesystem-0-2","side_effect-1-3"],"verdict":"deny","latency_ms":0.376}
+{"ts":"2026-10-26T18:11:32.021Z","action":{"tool":"grep","operation":"file_search","target":"/home/ganyu/projects/project-atmos/constraints"},"matched_rule_ids":["side_effect-1-3"],"verdict":"log","latency_ms":5.208}
+{"ts":"2026-10-26T18:11:32.027Z","action":{"tool":"read","operation":"file_read","target":"/home/ganyu/projects/project-atmos/engine/engine.ts"},"matched_rule_ids":["side_effect-1-3"],"verdict":"log","latency_ms":0.617}

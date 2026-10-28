@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 import { normalizeOpenCodeAction } from './normalize.ts';
 
-const DIR = '/home/ganyu/projects/example-app';
+const DIR = '/home/test-user/projects/example-app';
 
 type Event = { tool: unknown; input?: unknown };
 
@@ -211,7 +211,7 @@ test('list maps to file_list and defaults to the project directory', () => {
   );
 });
 
-test('known non-file tools are skipped explicitly', () => {
+test('known non-file tools become explicit coverage gaps', () => {
   const tools = [
     'shell',
     'bash',
@@ -227,11 +227,27 @@ test('known non-file tools are skipped explicitly', () => {
   ];
 
   for (const tool of tools) {
+    const input = {
+      path: '/etc/passwd',
+      command: 'echo COVERAGE_SECRET --token=abc',
+      content: 'COVERAGE_SECRET',
+      prompt: 'raw free text',
+    };
+    const normalized = normalizeOpenCodeAction(event(tool, input), DIR);
     assert.deepStrictEqual(
-      normalizeOpenCodeAction(event(tool, { path: '/etc/passwd' }), DIR),
-      { kind: 'skip' },
+      normalized,
+      {
+        kind: 'coverage',
+        action: { tool, operation: 'tool_input', target: 'unknown' },
+        coverage: { reason: 'unsupported_tool', confirmation_eligible: false },
+      },
       tool,
     );
+
+    const serialized = JSON.stringify(normalized);
+    assert.equal(serialized.includes('COVERAGE_SECRET'), false, tool);
+    assert.equal(serialized.includes('/etc/passwd'), false, tool);
+    assert.equal(serialized.includes('free text'), false, tool);
   }
 });
 
@@ -249,7 +265,7 @@ test('patch and apply_patch are unknown_payload rather than skipped', () => {
 });
 
 test('unknown tools are unknown_payload and never leak raw input into target', () => {
-  const input = { path: '/home/ganyu/.ssh/id_ed25519', prompt: 'raw free text' };
+  const input = { path: '/home/test-user/.ssh/id_ed25519', prompt: 'raw free text' };
   assert.deepStrictEqual(
     normalizeOpenCodeAction(event('mystery_tool', input), DIR),
     {
@@ -340,18 +356,18 @@ test('tilde paths are expanded through homedir for file tools', () => {
   );
 });
 
-test('fallback and success actions always contain non-empty structured fields', () => {
+test('action, coverage and error results always contain non-empty structured fields', () => {
   const results = [
+    normalizeOpenCodeAction(event('read', { path: 'src/a.ts' }), DIR),
     normalizeOpenCodeAction(event('read', {}), DIR),
     normalizeOpenCodeAction(event('patch', { text: 'raw' }), DIR),
     normalizeOpenCodeAction(event('unknown', { text: 'raw' }), DIR),
+    normalizeOpenCodeAction(event('shell', { command: 'raw' }), DIR),
     normalized(null),
   ];
 
   for (const result of results) {
-    if (result.kind === 'skip') {
-      assert.fail('unexpected skip');
-    }
+    assert.notEqual(result.kind, 'skip');
     assert.ok(result.action.tool.length > 0);
     assert.ok(result.action.operation.length > 0);
     assert.ok(result.action.target.length > 0);
