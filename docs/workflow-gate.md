@@ -21,7 +21,7 @@ mediation or a trusted execution boundary.
 
 ## Configuration
 
-Pi reads the gate from `.pi/atmos.json`; OpenCode reads the equivalent object from the
+Pi reads the gate from `.pi/amos.json`; OpenCode reads the equivalent object from the
 plugin options. The security audit configuration remains required and independent.
 
 ```json

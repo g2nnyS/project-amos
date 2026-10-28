@@ -16,7 +16,7 @@ import {
 const ACTION: AssessmentAction = {
   tool: 'write',
   operation: 'file_write',
-  target: '/home/test-user/projects/project-atmos/engine/engine.ts',
+  target: '/home/test-user/projects/project-amos/engine/engine.ts',
 };
 
 const CONTEXT: AssessmentContext = {

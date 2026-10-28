@@ -694,7 +694,7 @@ export function renderReviewMarkdown(queue: ReviewQueue): string {
   ];
 
   return [
-    '# Atmos 阶段 A 人工审核工作表',
+    '# Amos 阶段 A 人工审核工作表',
     '',
     '> **这是从原始 JSONL 派生的人审工作表，不是自动审核结论，也不是自动放行。**',
     '> 所有“结论”和“说明”必须由人填写；生成器只读事实源，不会修改日志或规则。',

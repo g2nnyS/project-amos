@@ -38,7 +38,7 @@ import type {
 } from '../../workflow/shell.ts';
 import { assessShellCommand } from '../../workflow/shell.ts';
 
-import atmosPiLogOnly, {
+import amosPiLogOnly, {
   WORKFLOW_CONFIG_ERROR,
   WORKFLOW_GUIDANCE_SECTION,
   WORKFLOW_REVIEW_CUSTOM_TYPE,
@@ -121,7 +121,7 @@ function fakeJevConfig(): LoadedJevConfig {
 }
 
 function setup(t: { after(callback: () => void): void }, options: SetupOptions = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'atmos-pi-workflow-'));
+  const root = mkdtempSync(join(tmpdir(), 'amos-pi-workflow-'));
   const directory = join(root, 'workspace');
   mkdirSync(directory, { recursive: true });
 
@@ -130,7 +130,7 @@ function setup(t: { after(callback: () => void): void }, options: SetupOptions =
   if (config !== null) {
     mkdirSync(join(directory, '.pi'), { recursive: true });
     writeFileSync(
-      join(directory, '.pi', 'atmos.json'),
+      join(directory, '.pi', 'amos.json'),
       typeof config === 'string' ? config : JSON.stringify(config),
       'utf8',
     );
@@ -223,7 +223,7 @@ function setup(t: { after(callback: () => void): void }, options: SetupOptions =
     },
   } as unknown as ExtensionAPI;
 
-  atmosPiLogOnly(pi, dependencies);
+  amosPiLogOnly(pi, dependencies);
 
   t.after(() => rmSync(root, { recursive: true, force: true }));
 

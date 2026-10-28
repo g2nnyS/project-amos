@@ -123,12 +123,12 @@ type AuditConfig = {
   logPath: string;
 };
 
-const WORKFLOW_GATE_SHELL_DENIED = "atmos_workflow_gate_shell_denied";
-const WORKFLOW_GATE_SHELL_CONFIRM = "atmos_workflow_gate_shell_confirmation_required";
-const WORKFLOW_GATE_TOOL_BLOCKED = "atmos_workflow_gate_tool_blocked";
-const WORKFLOW_GATE_CONFIG_ERROR = "atmos_workflow_gate_config_error";
+const WORKFLOW_GATE_SHELL_DENIED = "amos_workflow_gate_shell_denied";
+const WORKFLOW_GATE_SHELL_CONFIRM = "amos_workflow_gate_shell_confirmation_required";
+const WORKFLOW_GATE_TOOL_BLOCKED = "amos_workflow_gate_tool_blocked";
+const WORKFLOW_GATE_CONFIG_ERROR = "amos_workflow_gate_config_error";
 
-const GUIDANCE_INSTRUCTION_KEY = "atmos.workflow.guidance";
+const GUIDANCE_INSTRUCTION_KEY = "amos.workflow.guidance";
 const MAX_GUIDANCE_SESSIONS = 64;
 const MAX_REVIEWED_SESSIONS = 64;
 const MAX_SYSTEM_FEEDBACK_BYTES = 2 * 1024;
@@ -349,7 +349,7 @@ function buildReviewFeedback(input: {
   readonly jevReason: string | null;
 }): string {
   const lines = [
-    "Atmos workflow review (advisory only; OpenCode V2 exposes no settle or merge block here): attention required.",
+    "Amos workflow review (advisory only; OpenCode V2 exposes no settle or merge block here): attention required.",
   ];
   if (input.checks.length > 0) {
     lines.push(`- checks: ${input.checks.join(", ")}`);
@@ -372,7 +372,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
   const loadJev = deps.loadJevConfig ?? loadJevConfig;
 
   return {
-    id: "atmos-opencode-v2-log-only",
+    id: "amos-opencode-v2-log-only",
     async setup(ctx: PluginContext) {
       const options = ctx.options ?? {};
       const config = readConfig(options, ctx.location.directory);
@@ -387,7 +387,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           if (auditErrorLogged) return;
           auditErrorLogged = true;
           console.error(
-            "Atmos OpenCode adapter: audit write failed; the tool call was not blocked.",
+            "Amos OpenCode adapter: audit write failed; the tool call was not blocked.",
           );
         },
       });
@@ -425,7 +425,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           deps.onDiagnostic(code);
           return;
         }
-        console.error(`Atmos workflow gate: ${code}; gated actions fail closed.`);
+        console.error(`Amos workflow gate: ${code}; gated actions fail closed.`);
       };
 
       if (configError) diagnostic(WORKFLOW_GATE_CONFIG_ERROR);
@@ -536,7 +536,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           pruneMap(reviewedDigests, MAX_REVIEWED_SESSIONS);
           appendSystem(
             event,
-            "Atmos workflow review is unavailable because the Jev configuration failed (jev_config_error). Request human review; shell governance remains active.",
+            "Amos workflow review is unavailable because the Jev configuration failed (jev_config_error). Request human review; shell governance remains active.",
           );
           return;
         }
@@ -555,7 +555,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           pruneMap(reviewedDigests, MAX_REVIEWED_SESSIONS);
           appendSystem(
             event,
-            "Atmos workflow review is unavailable for this change (review_error). Request human review before treating the change as complete.",
+            "Amos workflow review is unavailable for this change (review_error). Request human review before treating the change as complete.",
           );
           return;
         }
@@ -578,7 +578,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           } catch {
             appendSystem(
               event,
-              "Atmos workflow review is unavailable for this change (review_error). Request human review before treating the change as complete.",
+              "Amos workflow review is unavailable for this change (review_error). Request human review before treating the change as complete.",
             );
             return;
           }

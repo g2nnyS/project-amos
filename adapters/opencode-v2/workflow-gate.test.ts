@@ -17,7 +17,7 @@ import type { LoadedJevConfig } from "../../decision/config.ts";
 const ROOT = process.cwd();
 const RULES = join(ROOT, "constraints", "rules.yaml");
 const SCHEMA = join(ROOT, "constraints", "schema.json");
-const WORKSPACE = "/home/test-user/projects/project-atmos";
+const WORKSPACE = "/home/test-user/projects/project-amos";
 
 type AnyHook = (event: any) => unknown;
 
@@ -106,7 +106,7 @@ async function setupPlugin(
   mockOptions: MockOptions = {},
   deps: WorkflowGateDeps = {},
 ) {
-  const temporary = mkdtempSync(join(tmpdir(), "atmos-gate-"));
+  const temporary = mkdtempSync(join(tmpdir(), "amos-gate-"));
   const logPath = join(temporary, "audit.jsonl");
   const mock = createMock({ ...baseOptions(logPath), ...options }, mockOptions);
   const cleanup = await createOpenCodeV2Plugin(deps).setup(mock.context as any);
@@ -243,7 +243,7 @@ test("prompt guidance is stored as a keyed instruction, never echoed", async (t)
 
   assert.equal(plugin.putCalls.length, 1);
   assert.equal(plugin.putCalls[0].sessionID, "ses_guidance");
-  assert.equal(plugin.putCalls[0].key, "atmos.workflow.guidance");
+  assert.equal(plugin.putCalls[0].key, "amos.workflow.guidance");
   assert.match(plugin.putCalls[0].value, /Engineering guidance/);
   assert.match(plugin.putCalls[0].value, /Harness adapters/);
   assert.equal(plugin.putCalls[0].value.includes(secret), false);
@@ -294,7 +294,7 @@ test("deny shell commands throw a fixed code without leaking command text", asyn
         shell: "/bin/bash",
       }),
     (error: Error) => {
-      assert.equal(error.message, "atmos_workflow_gate_shell_denied");
+      assert.equal(error.message, "amos_workflow_gate_shell_denied");
       assert.equal(error.message.includes(secret), false);
       assert.equal(error.message.includes(WORKSPACE), false);
       return true;
@@ -316,7 +316,7 @@ test("confirm fails closed when no permission path exists", async (t) => {
         cwd: WORKSPACE,
         shell: "/bin/bash",
       }),
-    /atmos_workflow_gate_shell_confirmation_required/,
+    /amos_workflow_gate_shell_confirmation_required/,
   );
 });
 
@@ -334,7 +334,7 @@ test("cd-led opaque confirm never relies on the permission hook", async (t) => {
         cwd: WORKSPACE,
         shell: "/bin/bash",
       }),
-    /atmos_workflow_gate_shell_confirmation_required/,
+    /amos_workflow_gate_shell_confirmation_required/,
   );
 });
 
@@ -352,7 +352,7 @@ test("parsed confirm fails closed and permission defense only tightens", async (
         cwd: WORKSPACE,
         shell: "/bin/bash",
       }),
-    /atmos_workflow_gate_shell_confirmation_required/,
+    /amos_workflow_gate_shell_confirmation_required/,
   );
 
   const confirmAsk = {
@@ -403,7 +403,7 @@ test("code-execution tools are blocked while ordinary file tools still audit", a
         tool: "execute",
         input: { command: "OPENCODE_EXECUTE_SECRET" },
       }),
-    /atmos_workflow_gate_tool_blocked/,
+    /amos_workflow_gate_tool_blocked/,
   );
 
   await plugin.call("tool", "execute.before", {
@@ -574,7 +574,7 @@ test("gate configuration errors are reported safely and fail closed", async (t) 
         cwd: WORKSPACE,
         shell: "/bin/bash",
       }),
-    /atmos_workflow_gate_config_error/,
+    /amos_workflow_gate_config_error/,
   );
 
   await assert.rejects(
@@ -583,7 +583,7 @@ test("gate configuration errors are reported safely and fail closed", async (t) 
         tool: "execute",
         input: { command: secret },
       }),
-    /atmos_workflow_gate_config_error/,
+    /amos_workflow_gate_config_error/,
   );
 
   assert.equal(plugin.rawLog().includes(secret), false);

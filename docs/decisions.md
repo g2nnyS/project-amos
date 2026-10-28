@@ -20,13 +20,13 @@
 
 ## 当前实现约束
 
-- `opencode.jsonc` 显式传入规则、Schema、日志路径和 `log-only` 模式；Pi 通过 `ctx.cwd` 定位 `.pi/atmos.json`，两个适配器都不依赖进程 cwd。
+- `opencode.jsonc` 显式传入规则、Schema、日志路径和 `log-only` 模式；Pi 通过 `ctx.cwd` 定位 `.pi/amos.json`，两个适配器都不依赖进程 cwd。
 - 无法结构化的 patch/未知 payload 在 log-only 中记录 `unknown_payload`；已知但不属于当前文件通道的工具生成 `not_evaluated` 覆盖记录，不再静默跳过。OpenCode 的非文件工具和 Pi 的 `shell_input` 均为不可确认的覆盖缺口，命令文本不进入日志，空白命令记 `parse_error`。
 - 文件 target 在进入引擎前必须是已折叠的绝对路径。引擎拒绝 `//`、`.`、`..` 和末尾 `/`，不在热路径做 realpath。`${SESSION_WORKSPACE}` 是唯一允许的规则替换，只作用于 `target_glob`/`target_outside_glob` 的 patterns；缺失或非法 workspace 使快照加载 fail closed，digest 同时绑定规则原文和有效 workspace。
 - 原始 JSONL 通过追加接口写入，但“只追加”不等于防篡改：具备文件写权限的主体仍可截断或重写。派生样例可以重建，但不能回写原始日志。
 - OpenCode 与 Pi 只共享归一化结果、快照评估和 JSONL 记录；各 harness 的 deny、confirm、权限 UI 与事件生命周期保持独立，不建立模型 provider 抽象。
 - Pi 的 `tool_call` 可用于执行前 block，但安全策略当前仍仅启用 log-only；独立的工程工作流门可选择启用。Pi 没有原生 permission 体系，工作流门的 confirm 依赖 UI，非交互模式 fail-closed；bash 原始命令、`pi.exec`、扩展组合、`--no-extensions` 等旁路仍未完整接管。
-- 工程工作流门由 `.pi/atmos.json` 或 OpenCode 插件 options 中的 `workflowGate` 独立启用；缺失表示关闭，显式配置错误对有门控动作 fail closed。Jev 凭据、配置路径和公开限制见 `docs/workflow-gate.md`。
+- 工程工作流门由 `.pi/amos.json` 或 OpenCode 插件 options 中的 `workflowGate` 独立启用；缺失表示关闭，显式配置错误对有门控动作 fail closed。Jev 凭据、配置路径和公开限制见 `docs/workflow-gate.md`。
 
 ## 负约束
 

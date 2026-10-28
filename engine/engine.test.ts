@@ -6,7 +6,7 @@ import { evaluate, evaluateWithMatches, evaluatePolicy, assertValidTable } from 
 import { createSnapshotStore } from '../storage/snapshot.ts';
 
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
-const SESSION_WORKSPACE = '/home/test-user/projects/project-atmos';
+const SESSION_WORKSPACE = '/home/test-user/projects/project-amos';
 
 const ENGINE_ERROR = {
   verdict: 'deny',
@@ -812,12 +812,12 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'side effect project write',
-      action({ tool: 'fs', operation: 'file_write', target: '/home/test-user/projects/project-atmos/a.ts' }),
+      action({ tool: 'fs', operation: 'file_write', target: '/home/test-user/projects/project-amos/a.ts' }),
       'confirm',
     ],
     [
       'side effect project read is log only',
-      action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
+      action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-amos/a.ts' }),
       'log',
     ],
     [
@@ -846,7 +846,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   assert.ok(secretRead.matched_rule_ids.includes('side_effect-1-3'));
 
   const whitelistedRead = evaluateWithMatches(
-    action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
+    action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-amos/a.ts' }),
     rules,
     NOW,
   );

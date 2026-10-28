@@ -50,7 +50,7 @@ import {
   normalizePiUserBash,
 } from './normalize.ts';
 
-export interface PiAtmosConfig {
+export interface PiAmosConfig {
   mode: 'log-only';
   rulesPath: string;
   schemaPath: string;
@@ -64,8 +64,8 @@ export const WORKFLOW_SHELL_CONFIRMATION_REQUIRED =
 export const WORKFLOW_CONFIG_ERROR = 'workflow_config_error';
 
 /** Namespaced system-prompt section and custom-message type. */
-export const WORKFLOW_GUIDANCE_SECTION = 'atmos-workflow-guidance';
-export const WORKFLOW_REVIEW_CUSTOM_TYPE = 'atmos-workflow-review';
+export const WORKFLOW_GUIDANCE_SECTION = 'amos-workflow-guidance';
+export const WORKFLOW_REVIEW_CUSTOM_TYPE = 'amos-workflow-review';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -91,19 +91,19 @@ function fallbackToolName(event: unknown): string {
 }
 
 /**
- * Read `.pi/atmos.json` relative to the explicit Pi session directory.
+ * Read `.pi/amos.json` relative to the explicit Pi session directory.
  *
  * Returns null for every invalid shape so callers can degrade to a no-op
  * recorder without letting configuration errors reach a tool call.
  */
-export function readPiConfig(directory: string): PiAtmosConfig | null {
+export function readPiConfig(directory: string): PiAmosConfig | null {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return null;
   }
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(join(directory, '.pi', 'atmos.json'), 'utf8'));
+    raw = JSON.parse(readFileSync(join(directory, '.pi', 'amos.json'), 'utf8'));
   } catch {
     return null;
   }
@@ -138,7 +138,7 @@ export interface PiWorkflowGateState {
 }
 
 /**
- * Read only the optional `workflowGate` field from `.pi/atmos.json`.
+ * Read only the optional `workflowGate` field from `.pi/amos.json`.
  *
  * A missing file, missing field, or explicit `enabled: false` is inert. A
  * present but malformed gate is reported as `error` so the caller can fail
@@ -151,7 +151,7 @@ export function readPiWorkflowGateState(
     return { status: 'absent', config: null };
   }
 
-  const configPath = join(directory, '.pi', 'atmos.json');
+  const configPath = join(directory, '.pi', 'amos.json');
   if (!existsSync(configPath)) {
     return { status: 'absent', config: null };
   }
@@ -249,10 +249,10 @@ function createDefaultDependencies(pi: ExtensionAPI): PiWorkflowDependencies {
  * Pi log-only extension plus an optional engineering workflow gate.
  *
  * The security audit path is unchanged. The workflow gate is enabled only by
- * the separate `workflowGate` field in `.pi/atmos.json`; when it is absent or
+ * the separate `workflowGate` field in `.pi/amos.json`; when it is absent or
  * disabled this adapter records and returns exactly as before.
  */
-export default function atmosPiLogOnly(
+export default function amosPiLogOnly(
   pi: ExtensionAPI,
   overrides?: PiWorkflowOverrides,
 ): void {
@@ -275,7 +275,7 @@ export default function atmosPiLogOnly(
     }
     configErrorLogged = true;
     console.error(
-      'Atmos Pi adapter: configuration error; constraint logging is disabled until the configuration is repaired.',
+      'Amos Pi adapter: configuration error; constraint logging is disabled until the configuration is repaired.',
     );
   }
 
@@ -285,7 +285,7 @@ export default function atmosPiLogOnly(
     }
     auditErrorLogged = true;
     console.error(
-      'Atmos Pi adapter: audit write failed; the tool call was not blocked.',
+      'Amos Pi adapter: audit write failed; the tool call was not blocked.',
     );
   }
 
@@ -295,12 +295,12 @@ export default function atmosPiLogOnly(
     }
     workflowConfigErrorLogged = true;
     console.error(
-      'Atmos Pi adapter: workflow gate configuration error; workflow shell actions stay blocked until the configuration is repaired.',
+      'Amos Pi adapter: workflow gate configuration error; workflow shell actions stay blocked until the configuration is repaired.',
     );
   }
 
   function ensureRecorder(directory: string): LogOnlyRecorder | null {
-    // Do not cache configuration failures: a user may repair .pi/atmos.json
+    // Do not cache configuration failures: a user may repair .pi/amos.json
     // during the session. The diagnostic is still emitted once per process.
     const existing = recorders.get(directory);
     if (existing !== undefined) {
@@ -423,7 +423,7 @@ export default function atmosPiLogOnly(
 
   function confirmationMessage(command: string): string {
     // The raw command is intentionally confined to this interactive prompt.
-    return `Atmos workflow gate: this shell command requires confirmation.\n\n${command}`;
+    return `Amos workflow gate: this shell command requires confirmation.\n\n${command}`;
   }
 
   async function decideShell(
@@ -483,7 +483,7 @@ export default function atmosPiLogOnly(
       confirmed =
         ctx.hasUI === true &&
         (await ctx.ui.confirm(
-          'Atmos workflow gate',
+          'Amos workflow gate',
           confirmationMessage(command),
         )) === true;
     } catch {
@@ -503,7 +503,7 @@ export default function atmosPiLogOnly(
       try {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            'Atmos workflow review: repair cycle already used; manual review is required.',
+            'Amos workflow review: repair cycle already used; manual review is required.',
             'warning',
           );
         }
@@ -730,7 +730,7 @@ function buildReviewFeedback(issues: readonly string[]): string {
     .map((issue) => `- ${issue.slice(0, 120)}`);
 
   return [
-    'Atmos workflow review: completion is held for one local repair cycle.',
+    'Amos workflow review: completion is held for one local repair cycle.',
     'This feedback is advisory and is not an approval or a security verdict.',
     ...safeIssues,
     'Address the findings, then finish the run again.',
