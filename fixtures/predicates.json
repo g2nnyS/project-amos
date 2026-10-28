@@ -17,7 +17,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -43,7 +43,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "write a file"
       }
     ],
@@ -69,7 +69,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a private key"
       }
     ],
@@ -95,7 +95,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a note"
       }
     ],
@@ -121,7 +121,7 @@
         "scope": "session",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read an incoming patch"
       }
     ],
@@ -147,7 +147,7 @@
         "scope": "session",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a project file"
       }
     ],
@@ -166,14 +166,14 @@
         "policy_class": "security",
         "enforcement": "runtime",
         "predicate": [
-          { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
+          { "op": "url_query_key_in", "args": { "keys": ["token", "x-example-password"] } }
         ],
         "narrative": "secret query parameter",
         "on_hit": "deny",
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "send a token in the query string"
       }
     ],
@@ -192,14 +192,14 @@
         "policy_class": "security",
         "enforcement": "runtime",
         "predicate": [
-          { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
+          { "op": "url_query_key_in", "args": { "keys": ["token", "x-example-password"] } }
         ],
         "narrative": "secret query parameter",
         "on_hit": "deny",
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "send an unrelated query parameter"
       }
     ],
@@ -225,7 +225,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "open a dynamic forward"
       }
     ],
@@ -251,7 +251,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "open a local forward"
       }
     ],
@@ -277,7 +277,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "publish a tunnel on all interfaces"
       }
     ],
@@ -303,7 +303,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "publish a tunnel on one interface"
       }
     ],
@@ -329,7 +329,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "open a dynamic forward to a LAN host"
       }
     ],
@@ -355,7 +355,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "open a dynamic forward to localhost"
       }
     ],

@@ -113,6 +113,7 @@ npm run audit:review -- \
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
+- [V1 Implementation Guide (proposal)](docs/v1-implementation-guide.md)
 
 ---
 

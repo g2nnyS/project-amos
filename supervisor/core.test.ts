@@ -11,7 +11,7 @@ const OTHER_DIGEST = 'fedcba9876543210'.repeat(4);
 const WORKSPACE = '/home/test-user/projects/project-amos';
 
 const SOURCE = {
-  repo: 'Termcp',
+  repo: 'fixture',
   rev: '62e060057c79a8c4343ed7452471520a1bb3dcff',
   path: 'docs/api.md',
   section: 'supervisor-test',

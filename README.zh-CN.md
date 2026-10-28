@@ -113,6 +113,7 @@ npm run audit:review -- \
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
+- [V1 实施指导（目标方案）](docs/v1-implementation-guide.md)
 
 ---
 

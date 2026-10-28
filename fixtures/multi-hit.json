@@ -17,7 +17,7 @@
         "scope": "session",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       },
       {
@@ -35,7 +35,7 @@
         "scope": "session",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       },
       {
@@ -53,7 +53,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       },
       {
@@ -71,7 +71,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "write a file"
       }
     ],
@@ -97,7 +97,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       },
       {
@@ -115,7 +115,7 @@
         "scope": "session",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -141,7 +141,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       },
       {
@@ -159,7 +159,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -190,7 +190,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote", "extra_source_field": 1 },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote", "extra_source_field": 1 },
         "probe": "read a file"
       }
     ],
