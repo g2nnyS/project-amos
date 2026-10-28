@@ -1,16 +1,12 @@
 <h1 align="center">Project-Amos</h1>
 
 <p align="center">
-  <strong>Agent Mandate &amp; Oversight System</strong>
+  <strong>Agent policy matching and audit prototype</strong>
 </p>
 
 <p align="center">
-  Stop treating agent safety boundaries as wishful thinking inside a prompt.<br>
-  Amos enforces deterministic rules in the harness—before an action takes effect.
-</p>
-
-<p align="center">
-  <code>Stage A</code> · log-only · OpenCode V2 + Pi
+  <code>Stage A</code> · log-only · OpenCode V2 + Pi<br>
+  <strong>Status: NO-GO for runtime enforcement</strong>
 </p>
 
 <p align="center">
@@ -19,81 +15,96 @@
 
 ---
 
-## Why Amos?
+## What this is
 
-Today, most agent safety rules live as plain English inside `AGENTS.md` or system prompts. Natural language is great for expressing intent, but relying on a paragraph of text to stop a destructive tool call is a gamble:
+Amos is an experiment in moving agent constraints out of prompts and into a
+deterministic policy engine with an auditable decision record. It is **not yet a hard
+security boundary**.
 
-1. **Compliance is a coin toss** — Model obedience is probabilistic, never an engineering guarantee.
-2. **Attention dilution** — The more rules you pile on, the easier each one gets ignored (*Lost-in-the-Middle*).
-3. **Context truncation** — When the context window fills up, rules get silently dropped with no safety criteria.
+The current adapters observe selected file-tool actions and write hypothetical verdicts
+to JSONL. They do not block, confirm, sandbox, or mediate tool execution. Claims about
+"physical locking", "default deny everywhere", or an "immutable audit log" require a
+trusted supervisor, complete action coverage, and an OS-level execution boundary that
+are not implemented here.
 
-**Amos flips the model: the agent proposes, the harness disposes.**
+## Implemented today
 
-Every action passes through a deterministic policy engine before causing side effects. Hard boundaries are enforced by code; only soft preferences go into the prompt.
+- A pure TypeScript policy engine with a strict rule schema and content-addressed
+  policy snapshots.
+- A pure Supervisor core for registered session context, hypothetical decisions, and
+  process-local stop fencing; it is not connected to tool execution.
+- Explicit decisions for matched rules, no match, engine error, and not evaluated.
+- `log-only` adapters for OpenCode V2 and Pi covering the file channel.
+- Coverage records for known-but-unsupported tools and opaque shell actions instead of
+  silent skips.
+- Audit records carrying a rule snapshot digest, matched rule metadata, decision kind,
+  schema version, and coverage status.
+- Content-addressed snapshot archives under the log directory, containing the exact
+  rules, schema, schema digest, and effective session workspace for each policy digest.
+- URL value/userinfo/fragment/path redaction before persistence; shell text and file
+  contents are not logged.
+- Review worksheets that use the rule metadata captured at decision time and encode
+  untrusted fields so they cannot inject Markdown or HTML.
+- A provider-neutral Jev integration for typed semantic assessments. Jev is advisory;
+  deterministic policy remains authoritative and model output may only tighten a
+  verdict.
 
----
+## Not implemented yet
 
-## How It Works
+- Complete mediation across shell, patches, network, unknown tools, disabled
+  extensions, and other harness entry points.
+- A trusted supervisor separated from the agent's writable domain.
+- Policy and audit storage the agent cannot modify.
+- Runtime semantics for `scope`, `owner`, `level`, and `policy_class`; they are
+  validated audit metadata, not yet permissions or rule-selection mechanisms.
+- Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
+- Authenticated one-time approval bound to the action and policy snapshot.
+- Tamper-evident remote audit retention.
+- Real `deny`/`confirm` enforcement in either adapter.
+
+See [Security model and current guarantees](docs/security-model.md) for the threat model
+and the enforcement architecture required before those claims can be made.
+
+## How it works today
 
 ```text
-Model proposes an action
-       │
-       ▼
-Interceptor: normalize into (tool, operation, target)
-       │
-       ▼
-Policy engine: evaluate deterministic match conditions → combine verdicts
-       │
-       ├─ deny    → block side effects, write to audit log
-       ├─ confirm → show structured summary, wait for human sign-off
-       ├─ log     → allow through, record "what would have happened"
-       └─ allow   → allow through
+Tool event
+   │
+   ▼
+Adapter normalization ── unsupported/opaque ──► coverage record (not evaluated)
+   │
+   ▼
+Strict policy snapshot
+   │
+   ▼
+Deterministic evaluation
+   │
+   ├─ matched rule      → hypothetical verdict + matched rule metadata
+   ├─ no match          → explicit no_match (recorder uses hypothetical deny)
+   ├─ validation error  → deny + engine_error
+   └─ snapshot failure  → deny + snapshot_error
+   │
+   ▼
+Sanitized JSONL audit record ──► human review worksheet
 ```
 
-### 4 Core Design Principles
+The only side effects are writing the audit record and its content-addressed snapshot
+archive. The tool call is never modified.
 
-- **Structured interception, immune to prompt injection**: The engine only inspects normalized envelopes (`tool`, `operation`, `target`), never free text. Precedence is strictly `deny > confirm > log > allow` (and fail-closed on errors). No clever reasoning from the model can override a verdict.
-- **Hard vs. soft constraints**: Rules with deterministic match conditions (`predicate`) are enforced by the engine. Rules that can't be expressed deterministically are marked `advisory_only` and projected into `AGENTS.md` as guidance.
-- **Evidence-backed rules**: Every rule must cite a concrete threat scenario or incident (`source`) and a test `probe`—no gut-feeling rules.
-- **Proposals, never direct writes**: Agents can propose rule changes, not write them. Tightening a rule takes effect with a mandatory TTL; relaxing a rule requires human approval; Level-0 core invariants are strictly untouchable.
-
----
-
-## Current Status (Stage A: Log-only)
-
-A safety system that triggers a "deny storm" on day one just gets turned off by frustrated users. Amos rolls out in four stages:
-
-- [x] **Stage A (Current)**: `log-only` observation—run against real workflows to catch false positives.
-- [ ] **Stage B**: Selective Level-0 blocking (`deny`), followed by human confirmation (`confirm`).
-- [ ] **Stage C**: Rule proposal queue, human approval workflow, Git audit trail, and TTL expiration.
-- [ ] **Stage D**: Rebuildable SQLite read model and local web governance console.
-
-**What's ready today**:
-- **Policy Engine**: Pure TypeScript engine, 7 frozen match operators, 15 initial rules, and 142 passing tests.
-- **Adapters**: `log-only` adapters for **OpenCode V2** and **Pi** (covering file read/write/search operations without logging file contents or blocking live calls).
-- **Review Queue Generator**: Stratified sampling CLI that turns raw JSONL audit logs into human review worksheets.
-
-*(The G0 go/no-go gate is scheduled for human review on 2026-10-30; see [docs/go-no-go.md](docs/go-no-go.md).)*
-
----
-
-## Quick Start
+## Quick start
 
 Requires Node.js 26 and npm:
 
 ```bash
 npm ci
-npm run build
+npm run typecheck
 npm test
 ```
 
-### 1. Run with OpenCode V2 (log-only)
+OpenCode and Pi usage remains log-only. See [the Pi adapter guide](docs/pi-adapter.md)
+and the root `opencode.jsonc`.
 
-The root `opencode.jsonc` is pre-configured. Run `npm run build`, then launch OpenCode V2 from this directory. It will quietly log hypothetical verdicts to `spike/logs/opencode.jsonl` without interrupting your workflow.
-
-*(The Pi adapter lives in `adapters/pi/`; see the [Pi Adapter Guide](docs/pi-adapter.md).)*
-
-### 2. Generate a Review Worksheet
+Generate a review worksheet:
 
 ```bash
 npm run audit:review -- \
@@ -102,30 +113,29 @@ npm run audit:review -- \
   --output spike/review/new-review.md
 ```
 
----
+## Delivery conventions
 
-## Repository Layout & Docs
+- New work uses a `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/`
+  branch.
+- Protected branches, force-push prevention, secret scanning, and release authority
+  must be enforced by the Git host. Local hooks and branch names are not authorization.
+- Security-sensitive changes require human review. Agents do not self-approve, merge,
+  force-push, tag, or release.
+- See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```text
-constraints/   Rule table (rules.yaml), JSON Schema, and operator vocabulary
-engine/        Pure-function policy engine and unit tests
-fixtures/      Language-neutral adjudication test fixtures
-adapters/      Log-only adapters for OpenCode V2 and Pi
-storage/       In-memory snapshots, JSONL logger, and review queue builder
-spike/         Harness seam notes, real session logs, and review worksheets
-docs/          Architecture decisions and gate criteria
-```
+## Documentation
 
-For deep dives into our architectural trade-offs (including inspirations from Karpathy's `llm-wiki`, `obelisk`, and `iptables`), check out the docs *(currently in Chinese)*:
-
-- [Product & Engineering Decisions](docs/decisions.md)
-- [G0 Go/No-Go Checklist](docs/go-no-go.md)
-- [Fixture Coverage](docs/fixture-coverage.md) · [Advisory Translation Gaps](docs/translation-notes.md)
-- [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
-- [Full Design Document (Notion)](https://app.notion.com/p/eb784af41d4f834f8cb881cb913f7601)
+- [Security model](docs/security-model.md)
+- [Supervisor core](docs/supervisor-core.md)
+- [Jev integration](docs/jev-integration.md)
+- [Product and engineering decisions](docs/decisions.md)
+- [G0 gate criteria](docs/go-no-go.md)
+- [Fixture coverage](docs/fixture-coverage.md)
+- [OpenCode V2 seam notes](spike/README.md)
+- [Pi adapter guide](docs/pi-adapter.md)
 
 ---
 
 <p align="center">
-  <sub>Constraints shouldn't be wishes written in a prompt; they should be a deterministic gate before an action happens.</sub>
+  <sub>A policy engine is useful only when its trust boundary, coverage, and audit trail are as explicit as its verdicts.</sub>
 </p>

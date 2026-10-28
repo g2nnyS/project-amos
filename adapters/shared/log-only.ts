@@ -1,75 +1,135 @@
-import { evaluateWithMatches, type Verdict } from '../../engine/engine.ts';
-import { appendAuditEntry, type AuditError } from '../../storage/jsonl.ts';
+import { dirname, join } from 'node:path';
+import { evaluatePolicy } from '../../engine/engine.ts';
+import { sanitizeAuditAction } from '../../storage/audit.ts';
+import {
+  appendAuditEntry,
+  type AuditCoverage,
+  type AuditDecision,
+  type AuditEntry,
+  type AuditError,
+  type Verdict,
+} from '../../storage/jsonl.ts';
 import { createSnapshotStore } from '../../storage/snapshot.ts';
-import type { ActionNormalization, NormalizedAction } from './types.ts';
+import type { ActionNormalization } from './types.ts';
 
 export interface LogOnlyConfig {
   rulesPath: string;
   schemaPath: string;
   logPath: string;
+  /**
+   * Explicit session workspace used for the single `${SESSION_WORKSPACE}`
+   * rule-table substitution. Adapters pass the harness-provided project or
+   * session directory; it never defaults to `process.cwd()`.
+   */
+  sessionWorkspace?: string;
+  /**
+   * Directory for content-addressed snapshot provenance archives. Defaults to
+   * `<dirname(logPath)>/snapshots` so every audit log can resolve its
+   * `snapshot_digest` back to the exact rules, schema, and session workspace
+   * that produced it.
+   */
+  snapshotArchiveDir?: string;
+  /**
+   * Receives fixed-code audit write failures only. The event never carries the
+   * log path, the action, or any payload detail.
+   */
+  onDiagnostic?: (event: { code: 'audit_write_failed' }) => void;
 }
 
 export interface LogOnlyRecorder {
   record(normalized: ActionNormalization, now?: number, started?: number): void;
 }
 
-type Outcome = {
-  action: NormalizedAction;
-  matched_rule_ids: string[];
-  verdict: Verdict;
-  error?: AuditError;
-};
-
 /**
  * Build the log-only recorder shared by harness adapters. The snapshot is
  * loaded once at initialization, mirroring the adapter lifecycle.
  */
 export function createLogOnlyRecorder(config: LogOnlyConfig): LogOnlyRecorder {
-  const snapshots = createSnapshotStore();
-  snapshots.load(config.rulesPath, config.schemaPath);
+  const snapshotArchiveDir =
+    config.snapshotArchiveDir ??
+    join(dirname(config.logPath), 'snapshots');
+  const snapshots = createSnapshotStore({ archiveDir: snapshotArchiveDir });
+  snapshots.load(
+    config.rulesPath,
+    config.schemaPath,
+    config.sessionWorkspace === undefined
+      ? undefined
+      : { sessionWorkspace: config.sessionWorkspace },
+  );
 
   return {
     record(normalized, now = Date.now(), started = performance.now()) {
-      if (normalized.kind === 'skip') {
-        return;
-      }
+      const snapshot = snapshots.current();
+      const snapshotDigest = snapshot?.digest ?? null;
+      const action = sanitizeAuditAction(normalized.action);
 
-      let outcome: Outcome;
-      if (normalized.kind === 'error') {
-        outcome = {
-          action: normalized.action,
-          matched_rule_ids: [],
-          verdict: 'deny',
-          error: normalized.error,
-        };
+      let matchedRuleIds: string[] = [];
+      let matchedRules: AuditEntry['matched_rules'] = [];
+      let verdict: Verdict | null = null;
+      let decision: AuditDecision;
+      let coverage: AuditCoverage | undefined;
+      let error: AuditError | undefined;
+
+      if (normalized.kind === 'coverage') {
+        // Coverage gaps are recorded for review but deliberately not
+        // evaluated, so no rule or snapshot decision can be inferred.
+        decision = 'not_evaluated';
+        coverage = normalized.coverage;
+      } else if (normalized.kind === 'error') {
+        decision = 'error';
+        verdict = 'deny';
+        error = normalized.error;
+      } else if (snapshot === null) {
+        decision = 'error';
+        verdict = 'deny';
+        error = 'snapshot_error';
       } else {
-        const snapshot = snapshots.current();
-        if (snapshot === null) {
-          outcome = {
-            action: normalized.action,
-            matched_rule_ids: [],
-            verdict: 'deny',
-            error: 'snapshot_error',
-          };
-        } else {
-          const result = evaluateWithMatches(normalized.action, snapshot.table, now);
-          outcome = {
-            action: normalized.action,
-            matched_rule_ids: result.matched_rule_ids,
-            verdict: result.verdict,
-            ...(result.error === undefined ? {} : { error: result.error }),
-          };
+        const result = evaluatePolicy(
+          normalized.action,
+          snapshot.table,
+          now,
+          { defaultVerdict: 'deny' },
+        );
+        matchedRuleIds = [...result.matched_rule_ids];
+        matchedRules = result.matched_rules.map((rule) => ({
+          id: rule.id,
+          dimension: rule.dimension,
+          level: rule.level,
+          policy_class: rule.policy_class,
+          enforcement: rule.enforcement,
+          on_hit: rule.on_hit,
+        }));
+        verdict = result.verdict;
+        decision = result.decision;
+        if (result.error !== undefined) {
+          error = result.error;
         }
       }
 
       try {
         appendAuditEntry(config.logPath, {
+          schema_version: 2,
           ts: new Date(now).toISOString(),
-          ...outcome,
+          action,
+          matched_rule_ids: matchedRuleIds,
+          matched_rules: matchedRules,
+          verdict,
+          decision,
+          snapshot_digest: snapshotDigest,
+          mode: 'log-only',
+          ...(coverage === undefined ? {} : { coverage }),
+          ...(error === undefined ? {} : { error }),
           latency_ms: Number((performance.now() - started).toFixed(3)),
         });
       } catch {
-        // Log-only must never interfere with the actual tool call.
+        // Log-only must never interfere with the actual tool call, and the
+        // diagnostic callback must not be able to turn a write failure into a
+        // harness-visible error either.
+        try {
+          config.onDiagnostic?.({ code: 'audit_write_failed' });
+        } catch {
+          // Intentionally ignored.
+        }
       }
     },
   };

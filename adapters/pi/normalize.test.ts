@@ -13,7 +13,7 @@ import {
   normalizePiUserBash,
 } from './normalize.ts';
 
-const CWD = '/home/ganyu/projects/example-app';
+const CWD = '/home/test-user/projects/example-app';
 
 function event(toolName: string, input?: unknown): ToolCallEvent {
   return {
@@ -259,7 +259,7 @@ test('tilde paths are expanded through homedir for read and search tools', () =>
   );
 });
 
-test('bash and powershell map to shell_input without leaking commands', () => {
+test('bash and powershell are opaque coverage gaps without leaking commands', () => {
   const command = 'curl -H "Authorization: Bearer TOP-SECRET" https://example.test';
   for (const tool of ['bash', 'powershell']) {
     const normalized = normalizePiToolCall(
@@ -267,19 +267,21 @@ test('bash and powershell map to shell_input without leaking commands', () => {
       CWD,
     );
     assert.deepStrictEqual(normalized, {
-      kind: 'action',
+      kind: 'coverage',
       action: { tool, operation: 'shell_input', target: 'unknown' },
+      coverage: { reason: 'opaque_action', confirmation_eligible: false },
     });
     assert.ok(!JSON.stringify(normalized).includes('TOP-SECRET'));
     assert.ok(!JSON.stringify(normalized).includes('curl'));
   }
 });
 
-test('user_bash maps to shell_input without leaking the command', () => {
+test('user_bash is an opaque coverage gap without leaking the command', () => {
   const normalized = normalizePiUserBash(userBash('echo USER-SECRET'), CWD);
   assert.deepStrictEqual(normalized, {
-    kind: 'action',
+    kind: 'coverage',
     action: { tool: 'user_bash', operation: 'shell_input', target: 'unknown' },
+    coverage: { reason: 'opaque_action', confirmation_eligible: false },
   });
   assert.ok(!JSON.stringify(normalized).includes('USER-SECRET'));
   assert.ok(!JSON.stringify(normalized).includes('echo'));
@@ -322,7 +324,7 @@ test('shell tools with missing or blank command return parse_error', () => {
 
 test('custom and unknown tools are unknown_payload and hide raw payload', () => {
   const customInput = {
-    path: '/home/ganyu/.ssh/id_ed25519',
+    path: '/home/test-user/.ssh/id_ed25519',
     command: 'cat CUSTOM-SECRET',
     prompt: 'raw free text',
   };
@@ -395,20 +397,19 @@ test('cwd must be a non-empty absolute path', () => {
   );
 });
 
-test('action and error fallbacks always have non-empty structured fields', () => {
+test('action, coverage and error results always have non-empty structured fields', () => {
   const results = [
     normalizePiToolCall(event('read', { path: 'src/a.ts' }), CWD),
     normalizePiToolCall(event('read', {}), CWD),
     normalizePiToolCall(event('mystery_tool', {}), CWD),
     normalizePiToolCall(null as unknown as ToolCallEvent, CWD),
+    normalizePiToolCall(event('bash', { command: 'echo a' }), CWD),
     normalizePiUserBash(userBash('echo a'), CWD),
     normalizePiUserBash(userBash('echo a'), ''),
   ];
 
   for (const result of results) {
-    if (result.kind === 'skip') {
-      assert.fail('unexpected skip');
-    }
+    assert.notEqual(result.kind, 'skip');
     assert.ok(result.action.tool.length > 0);
     assert.ok(result.action.operation.length > 0);
     assert.ok(result.action.target.length > 0);

@@ -65,11 +65,63 @@ test('the current constraints/rules.yaml passes the schema', () => {
   }
 });
 
-test('the schema accepts an empty rule table and unknown rule fields', () => {
-  assert.equal(validate([]), true, ajv.errorsText(validate.errors));
+test('the schema rejects empty rule tables and unknown rule fields', () => {
+  assert.equal(validate([]), false);
 
   const extended = { ...firstRule(), unexpected_rule_field: { anything: true } };
-  assert.equal(validate([extended]), true, ajv.errorsText(validate.errors));
+  assert.equal(validate([extended]), false);
+});
+
+test('the schema requires policy_class and enforcement with strict enums', () => {
+  const base = firstRule();
+
+  assert.equal(validate([{ ...base, policy_class: undefined }]), false);
+  assert.equal(validate([{ ...base, policy_class: 'compliance' }]), false);
+  assert.equal(validate([{ ...base, enforcement: undefined }]), false);
+  assert.equal(validate([{ ...base, enforcement: 'always' }]), false);
+  assert.equal(validate([{ ...base, enforcement: 'advisory' }]), false);
+  assert.equal(
+    validate([
+      {
+        ...base,
+        expressivity: 'advisory_only',
+        predicate: null,
+        enforcement: 'runtime',
+      },
+    ]),
+    false,
+  );
+});
+
+test('the schema rejects unknown fields on source, predicate calls and args', () => {
+  const base = firstRule();
+  const withPredicate = (predicate: unknown) => ({ ...base, predicate });
+
+  assert.equal(
+    validate([
+      {
+        ...base,
+        source: { ...(base.source as Record<string, unknown>), extra: 'x' },
+      },
+    ]),
+    false,
+  );
+  assert.equal(
+    validate([
+      withPredicate([
+        { op: 'op_in', args: { operations: ['file_read'] }, extra: 'x' },
+      ]),
+    ]),
+    false,
+  );
+  assert.equal(
+    validate([
+      withPredicate([
+        { op: 'op_in', args: { operations: ['file_read'], extra: 'x' } },
+      ]),
+    ]),
+    false,
+  );
 });
 
 test('the schema rejects unknown ops, missing args, bad ttl types and expressivity mismatches', () => {

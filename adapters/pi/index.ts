@@ -92,8 +92,9 @@ export function readPiConfig(directory: string): PiAtmosConfig | null {
  * failures escape into Pi's tool pipeline.
  */
 export default function atmosPiLogOnly(pi: ExtensionAPI): void {
-  const recorders = new Map<string, LogOnlyRecorder | null>();
+  const recorders = new Map<string, LogOnlyRecorder>();
   let configErrorLogged = false;
+  let auditErrorLogged = false;
 
   function reportConfigErrorOnce(): void {
     if (configErrorLogged) {
@@ -101,19 +102,31 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
     }
     configErrorLogged = true;
     console.error(
-      'Atmos Pi adapter: configuration error; constraint logging is disabled.',
+      'Atmos Pi adapter: configuration error; constraint logging is disabled until the configuration is repaired.',
+    );
+  }
+
+  function reportAuditErrorOnce(): void {
+    if (auditErrorLogged) {
+      return;
+    }
+    auditErrorLogged = true;
+    console.error(
+      'Atmos Pi adapter: audit write failed; the tool call was not blocked.',
     );
   }
 
   function ensureRecorder(directory: string): LogOnlyRecorder | null {
-    if (recorders.has(directory)) {
-      return recorders.get(directory) ?? null;
+    // Do not cache configuration failures: a user may repair .pi/atmos.json
+    // during the session. The diagnostic is still emitted once per process.
+    const existing = recorders.get(directory);
+    if (existing !== undefined) {
+      return existing;
     }
 
     const config = readPiConfig(directory);
     if (config === null) {
       reportConfigErrorOnce();
-      recorders.set(directory, null);
       return null;
     }
 
@@ -122,12 +135,13 @@ export default function atmosPiLogOnly(pi: ExtensionAPI): void {
         rulesPath: config.rulesPath,
         schemaPath: config.schemaPath,
         logPath: config.logPath,
+        sessionWorkspace: directory,
+        onDiagnostic: reportAuditErrorOnce,
       });
       recorders.set(directory, recorder);
       return recorder;
     } catch {
       reportConfigErrorOnce();
-      recorders.set(directory, null);
       return null;
     }
   }

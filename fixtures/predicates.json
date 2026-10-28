@@ -7,6 +7,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read", "file_stat"] } }
         ],
@@ -19,7 +21,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["predicate-rule"] }
   },
@@ -31,6 +33,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read", "file_stat"] } }
         ],
@@ -43,7 +47,7 @@
         "probe": "write a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "FILE_READ", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "FILE_READ", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "allow", "matched_rule_ids": [] }
   },
@@ -55,6 +59,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*", "/**/*.pem"] } }
         ],
@@ -79,6 +85,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_glob", "args": { "patterns": ["/home/*/.ssh/id_*", "/**/*.pem"] } }
         ],
@@ -103,8 +111,10 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
-          { "op": "target_outside_glob", "args": { "patterns": ["/home/ganyu/projects/**"] } }
+          { "op": "target_outside_glob", "args": { "patterns": ["/home/test-user/projects/**"] } }
         ],
         "narrative": "path leaves the capability whitelist",
         "on_hit": "deny",
@@ -127,8 +137,10 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
-          { "op": "target_outside_glob", "args": { "patterns": ["/home/ganyu/projects/**"] } }
+          { "op": "target_outside_glob", "args": { "patterns": ["/home/test-user/projects/**"] } }
         ],
         "narrative": "path leaves the capability whitelist",
         "on_hit": "deny",
@@ -139,7 +151,7 @@
         "probe": "read a project file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/nested/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/nested/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "allow", "matched_rule_ids": [] }
   },
@@ -151,6 +163,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
         ],
@@ -175,6 +189,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "url_query_key_in", "args": { "keys": ["token", "x-termcp-password"] } }
         ],
@@ -199,6 +215,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_scheme_in", "args": { "schemes": ["dynamic"] } }
         ],
@@ -223,6 +241,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_scheme_in", "args": { "schemes": ["dynamic"] } }
         ],
@@ -247,6 +267,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }
         ],
@@ -271,6 +293,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_host_in", "args": { "hosts": ["0.0.0.0", "::"] } }
         ],
@@ -295,6 +319,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_host_not_in", "args": { "hosts": ["localhost"] } }
         ],
@@ -319,6 +345,8 @@
         "dimension": "network",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "target_host_not_in", "args": { "hosts": ["localhost"] } }
         ],

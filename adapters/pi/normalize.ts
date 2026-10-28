@@ -67,6 +67,19 @@ function error(
   };
 }
 
+/**
+ * Shell payloads are opaque: they cannot be evaluated as file actions, so they
+ * become an explicit coverage gap. The command text is never copied into the
+ * action or the audit log.
+ */
+function opaqueShell(tool: string): ActionNormalization {
+  return {
+    kind: 'coverage',
+    action: { tool, operation: 'shell_input', target: 'unknown' },
+    coverage: { reason: 'opaque_action', confirmation_eligible: false },
+  };
+}
+
 function unknownEvent(): ActionNormalization {
   return error('unknown_payload', 'unknown', 'unknown');
 }
@@ -120,9 +133,11 @@ function normalizeFileTool(
 /**
  * Normalize one Pi `tool_call` event into the shared action envelope.
  *
- * Shell payloads are deliberately opaque: commands never enter the action or
- * the audit log. Unknown/custom tools are surfaced as `unknown_payload`
- * instead of being silently skipped.
+ * Shell payloads are deliberately opaque: they are validated and then reported
+ * as a coverage gap, never evaluated as normal actions and never turned into a
+ * confirm verdict. Commands never enter the action or the audit log.
+ * Unknown/custom tools are surfaced as `unknown_payload` instead of being
+ * silently skipped.
  */
 export function normalizePiToolCall(
   event: ToolCallEvent,
@@ -145,7 +160,7 @@ export function normalizePiToolCall(
     if (!isRecord(input) || !isNonBlankString(input.command)) {
       return error('parse_error', tool, 'shell_input');
     }
-    return action(tool, 'shell_input', 'unknown');
+    return opaqueShell(tool);
   }
 
   const operation = FILE_TOOL_OPERATIONS.get(tool);
@@ -177,5 +192,5 @@ export function normalizePiUserBash(
     return error('parse_error', 'user_bash', 'shell_input');
   }
 
-  return action('user_bash', 'shell_input', 'unknown');
+  return opaqueShell('user_bash');
 }

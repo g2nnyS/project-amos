@@ -7,6 +7,8 @@
         "dimension": "side_effect",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -23,6 +25,8 @@
         "dimension": "side_effect",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -39,6 +43,8 @@
         "dimension": "credential",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -55,6 +61,8 @@
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_write"] } }
         ],
@@ -67,7 +75,7 @@
         "probe": "write a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["log-rule", "confirm-rule", "deny-rule"] }
   },
@@ -79,6 +87,8 @@
         "dimension": "filesystem",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -95,6 +105,8 @@
         "dimension": "side_effect",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -107,7 +119,7 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["deny-a", "confirm-b"] }
   },
@@ -119,6 +131,8 @@
         "dimension": "filesystem",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -135,6 +149,8 @@
         "dimension": "credential",
         "level": 1,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "predicate": [
           { "op": "op_in", "args": { "operations": ["file_read"] } }
         ],
@@ -147,18 +163,20 @@
         "probe": "read a file"
       }
     ],
-    "action": { "tool": "fs", "operation": "file_read", "target": "/home/ganyu/projects/a.ts" },
+    "action": { "tool": "fs", "operation": "file_read", "target": "/home/test-user/projects/a.ts" },
     "now": "2026-10-24T12:00:00.000Z",
     "expect": { "verdict": "deny", "matched_rule_ids": ["deny-a", "deny-b"] }
   },
   {
-    "name": "unknown fields on action, rule, predicate call and args are ignored",
+    "name": "unknown fields on action, rule, predicate call and args fail closed",
     "table": [
       {
         "id": "extra-rule",
         "dimension": "filesystem",
         "level": 0,
         "expressivity": "deterministic",
+        "policy_class": "security",
+        "enforcement": "runtime",
         "unexpected_rule_field": { "anything": true },
         "predicate": [
           {
@@ -167,7 +185,7 @@
             "extra_call_field": "ignored"
           }
         ],
-        "narrative": "extra fields do not change matching",
+        "narrative": "extra fields are rejected",
         "on_hit": "deny",
         "scope": "project",
         "ttl": null,
@@ -179,12 +197,12 @@
     "action": {
       "tool": "fs",
       "operation": "file_read",
-      "target": "/home/ganyu/projects/a.ts",
+      "target": "/home/test-user/projects/a.ts",
       "request_id": "abc",
       "metadata": { "nested": true },
       "extra": [1, 2, 3]
     },
     "now": "2026-10-24T12:00:00.000Z",
-    "expect": { "verdict": "deny", "matched_rule_ids": ["extra-rule"] }
+    "expect": { "verdict": "deny", "matched_rule_ids": [], "error": "engine_error" }
   }
 ]
