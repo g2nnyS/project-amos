@@ -21,8 +21,9 @@ mediation or a trusted execution boundary.
 
 ## Configuration
 
-Pi reads the gate from `.pi/amos.json`; OpenCode reads the equivalent object from the
-plugin options. The security audit configuration remains required and independent.
+Pi reads the gate from the local, untracked `.pi/amos.json`; OpenCode reads the equivalent
+object from plugin options. The security audit configuration remains required and
+independent. `.pi/` must not be committed; create it locally.
 
 ```json
 {
