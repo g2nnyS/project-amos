@@ -27,6 +27,8 @@ Amos 在尝试把 Agent 约束从提示词移入确定性策略引擎，并留�
 ## 已实现
 
 - 纯 TypeScript 策略引擎、严格规则 Schema 与按 digest 定位的规则快照。
+- 纯 Supervisor 核心，提供已注册 session 上下文、假设裁决与进程内停止栅栏；
+  尚未接入工具执行。
 - 明确区分规则命中、未命中、引擎错误和未评估。
 - OpenCode V2 与 Pi 的 `log-only` 文件通道适配器。
 - 已知但不支持的工具和不可解释的 shell 动作会生成覆盖记录，不再静默消失。
@@ -111,6 +113,7 @@ npm run audit:review -- \
 ## 文档
 
 - [安全模型](docs/security-model.md)
+- [Supervisor 核心](docs/supervisor-core.md)
 - [Jev 接入](docs/jev-integration.md)
 - [产品与工程决策](docs/decisions.md)
 - [G0 门禁标准](docs/go-no-go.md)

@@ -31,6 +31,8 @@ are not implemented here.
 
 - A pure TypeScript policy engine with a strict rule schema and content-addressed
   policy snapshots.
+- A pure Supervisor core for registered session context, hypothetical decisions, and
+  process-local stop fencing; it is not connected to tool execution.
 - Explicit decisions for matched rules, no match, engine error, and not evaluated.
 - `log-only` adapters for OpenCode V2 and Pi covering the file channel.
 - Coverage records for known-but-unsupported tools and opaque shell actions instead of
@@ -124,6 +126,7 @@ npm run audit:review -- \
 ## Documentation
 
 - [Security model](docs/security-model.md)
+- [Supervisor core](docs/supervisor-core.md)
 - [Jev integration](docs/jev-integration.md)
 - [Product and engineering decisions](docs/decisions.md)
 - [G0 gate criteria](docs/go-no-go.md)
