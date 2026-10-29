@@ -348,3 +348,121 @@ test('a throwing diagnostic callback cannot escape the recorder', (t) => {
     });
   });
 });
+
+const ASSESSMENT = {
+  kind: 'jev_assessment' as const,
+  deterministic_verdict: 'allow' as const,
+  final_verdict: 'confirm' as const,
+  requirement: {
+    frame_digest: `sha256:${'a'.repeat(64)}`,
+    source: 'user_message' as const,
+    actor: 'user' as const,
+    root_frame_id: 'rf_001',
+  },
+  question_set_version: 'jev-questions/v2',
+  model: 'jev-latest',
+  intent: 'feature' as const,
+  requirementMatch: 'match' as const,
+  sensitiveArea: false,
+  irreversible: false,
+  riskScore: 0.2,
+  confidence: 0.9,
+  requiresReview: false,
+  assessmentRequired: true,
+};
+
+test('recordAssessment writes a separate safe not_evaluated entry', (t) => {
+  const directory = temporaryDirectory(t);
+  const logPath = join(directory, 'audit.jsonl');
+  const recorder = createLogOnlyRecorder({
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath,
+    sessionWorkspace: WORKSPACE,
+  });
+  const now = Date.parse('2026-10-26T00:00:00.000Z');
+
+  recorder.recordAssessment(
+    {
+      tool: 'bash',
+      operation: 'shell_input',
+      target: `echo ${SECRET}`,
+    },
+    ASSESSMENT,
+    now,
+  );
+
+  const [entry] = entries(logPath);
+  assert.equal(entry.schema_version, 2);
+  assert.equal(entry.mode, 'log-only');
+  assert.equal(entry.ts, new Date(now).toISOString());
+  assert.equal(entry.verdict, null);
+  assert.equal(entry.decision, 'not_evaluated');
+  assert.deepEqual(entry.matched_rule_ids, []);
+  assert.deepEqual(entry.matched_rules, []);
+  assert.equal(entry.snapshot_digest, RULES_DIGEST);
+  assert.deepEqual(entry.coverage, {
+    reason: 'opaque_action',
+    confirmation_eligible: false,
+  });
+  assert.deepEqual(entry.assessment, ASSESSMENT);
+  assert.deepEqual(entry.action, {
+    tool: 'bash',
+    operation: 'shell_input',
+    target: 'unknown',
+  });
+  assert.equal('error' in entry, false);
+  assert.equal(JSON.stringify(entry).includes(SECRET), false);
+});
+
+test('recordAssessment leaves record() entries unchanged', (t) => {
+  const directory = temporaryDirectory(t);
+  const logPath = join(directory, 'audit.jsonl');
+  const recorder = createLogOnlyRecorder({
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath,
+    sessionWorkspace: WORKSPACE,
+  });
+
+  recorder.record({
+    kind: 'action',
+    action: { tool: 'read', operation: 'file_read', target: RULES },
+  });
+  recorder.recordAssessment(
+    { tool: 'read', operation: 'file_read', target: RULES },
+    { ...ASSESSMENT, kind: 'user_literal_grant', final_verdict: 'allow' },
+  );
+
+  const recorded = entries(logPath);
+  assert.equal(recorded.length, 2);
+  assert.equal('assessment' in recorded[0], false);
+  assert.equal(recorded[0].decision, 'matched');
+  assert.equal(recorded[1].decision, 'not_evaluated');
+  assert.equal(recorded[1].assessment.kind, 'user_literal_grant');
+});
+
+test('recordAssessment audit failures are swallowed with a fixed diagnostic', (t) => {
+  const directory = temporaryDirectory(t);
+  const blocker = join(directory, 'blocker');
+  writeFileSync(blocker, 'not a directory');
+  const events: Array<{ code: 'audit_write_failed' }> = [];
+  const recorder = createLogOnlyRecorder({
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath: join(blocker, 'audit.jsonl'),
+    sessionWorkspace: WORKSPACE,
+    onDiagnostic: (event) => events.push(event),
+  });
+
+  assert.doesNotThrow(() => {
+    recorder.recordAssessment(
+      { tool: 'bash', operation: 'shell_input', target: `echo ${SECRET}` },
+      ASSESSMENT,
+    );
+  });
+
+  assert.deepEqual(events, [{ code: 'audit_write_failed' }]);
+  assert.equal(JSON.stringify(events).includes(SECRET), false);
+  assert.equal(JSON.stringify(events).includes(directory), false);
+});

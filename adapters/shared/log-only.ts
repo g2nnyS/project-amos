@@ -3,6 +3,8 @@ import { evaluatePolicy } from '../../engine/engine.ts';
 import { sanitizeAuditAction } from '../../storage/audit.ts';
 import {
   appendAuditEntry,
+  type AuditAction,
+  type AuditAssessment,
   type AuditCoverage,
   type AuditDecision,
   type AuditEntry,
@@ -38,6 +40,18 @@ export interface LogOnlyConfig {
 
 export interface LogOnlyRecorder {
   record(normalized: ActionNormalization, now?: number, started?: number): void;
+  /**
+   * Write a separate, explicit assessment provenance entry. This never
+   * evaluates policy and never changes `record()` behavior; it records the
+   * already-computed metadata for review as `not_evaluated` with opaque,
+   * non-confirmable coverage.
+   */
+  recordAssessment(
+    action: AuditAction,
+    assessment: AuditAssessment,
+    now?: number,
+    started?: number,
+  ): void;
 }
 
 /**
@@ -125,6 +139,39 @@ export function createLogOnlyRecorder(config: LogOnlyConfig): LogOnlyRecorder {
         // Log-only must never interfere with the actual tool call, and the
         // diagnostic callback must not be able to turn a write failure into a
         // harness-visible error either.
+        try {
+          config.onDiagnostic?.({ code: 'audit_write_failed' });
+        } catch {
+          // Intentionally ignored.
+        }
+      }
+    },
+
+    recordAssessment(
+      action: AuditAction,
+      assessment: AuditAssessment,
+      now = Date.now(),
+      started = performance.now(),
+    ) {
+      const snapshot = snapshots.current();
+
+      try {
+        appendAuditEntry(config.logPath, {
+          schema_version: 2,
+          ts: new Date(now).toISOString(),
+          action: sanitizeAuditAction(action),
+          matched_rule_ids: [],
+          matched_rules: [],
+          verdict: null,
+          decision: 'not_evaluated',
+          snapshot_digest: snapshot?.digest ?? null,
+          mode: 'log-only',
+          coverage: { reason: 'opaque_action', confirmation_eligible: false },
+          assessment,
+          latency_ms: Number((performance.now() - started).toFixed(3)),
+        });
+      } catch {
+        // Same fixed, swallowed diagnostic path as record().
         try {
           config.onDiagnostic?.({ code: 'audit_write_failed' });
         } catch {
