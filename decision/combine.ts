@@ -1,9 +1,14 @@
 import type { Verdict } from '../engine/engine.ts';
+import {
+  requirementFrameDigest,
+  type RequirementFrame,
+} from './requirement.ts';
 import type {
   AssessmentAction,
   AssessmentContext,
   AssessmentFacts,
   AssessmentProvider,
+  RequirementMatch,
 } from './types.ts';
 
 const VERDICT_RANK: Record<Verdict, number> = {
@@ -12,6 +17,13 @@ const VERDICT_RANK: Record<Verdict, number> = {
   confirm: 2,
   deny: 3,
 };
+
+const REQUIREMENT_MATCH_VALUES: readonly RequirementMatch[] = [
+  'match',
+  'partial',
+  'mismatch',
+  'unclear',
+];
 
 /** Combine verdicts conservatively: the stricter verdict always wins. */
 export function maxVerdict(a: Verdict, b: Verdict): Verdict {
@@ -35,15 +47,26 @@ const DEFAULT_MIN_CONFIDENCE = 0.6;
 /**
  * Convert probabilistic facts into a verdict using trusted thresholds.
  *
- * `allow` is possible only when the facts are explicitly below every
- * threshold and confidence is sufficient. Sensitive, irreversible, ambiguous,
- * or low-confidence facts require confirmation, and high risk denies.
+ * Requirement conformance is checked first and only ever adds friction:
+ * `mismatch` denies, `partial`/`unclear` require confirmation, and `match` does
+ * not grant anything by itself. `allow` is possible only when the action
+ * matches the requirement and the remaining facts are explicitly below every
+ * threshold with sufficient confidence.
  */
 export function assessmentToVerdict(
   facts: AssessmentFacts,
   policy: AssessmentPolicy,
 ): 'allow' | 'confirm' | 'deny' {
   validateAssessmentPolicy(policy);
+  validateRequirementMatch(facts.requirementMatch);
+
+  if (facts.requirementMatch === 'mismatch') {
+    return 'deny';
+  }
+  if (facts.requirementMatch === 'partial' || facts.requirementMatch === 'unclear') {
+    return 'confirm';
+  }
+
   if (policy.denyRisk !== undefined && facts.riskScore >= policy.denyRisk) {
     return 'deny';
   }
@@ -77,6 +100,8 @@ export interface CombineWithAssessmentOptions {
   provider: AssessmentProvider;
   action: AssessmentAction;
   context: AssessmentContext;
+  /** The exact human requirement these facts must be bound to. */
+  requirement: RequirementFrame;
   policy: AssessmentPolicy;
   /**
    * When true, a provider failure fails closed to `deny`. When false, the
@@ -89,6 +114,7 @@ export interface CombineWithAssessmentOptions {
 export interface CombinedAssessmentResult {
   verdict: Verdict;
   facts?: AssessmentFacts;
+  requirementFrameDigest?: string;
   error?: 'assessment_failed';
 }
 
@@ -96,16 +122,35 @@ export interface CombinedAssessmentResult {
  * Assess an action and combine the result with the deterministic verdict.
  * Provider failures never loosen policy: required assessments deny, optional
  * assessments keep the deterministic result.
+ *
+ * The returned facts must be bound to the supplied requirement frame. A
+ * provider that answers about a different frame is treated as failed.
  */
 export async function combineWithAssessment(
   options: CombineWithAssessmentOptions,
 ): Promise<CombinedAssessmentResult> {
+  let expectedDigest: string;
+  try {
+    expectedDigest = requirementFrameDigest(options.requirement);
+  } catch {
+    return {
+      verdict: options.assessmentRequired ? 'deny' : options.deterministic,
+      error: 'assessment_failed',
+    };
+  }
+
   try {
     const facts = await options.provider.assess(
       options.action,
       options.context,
-      options.signal,
+      {
+        requirement: options.requirement,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
     );
+    if (facts.requirementFrameDigest !== expectedDigest) {
+      throw new TypeError('assessment facts are bound to a different requirement');
+    }
     const modelVerdict = assessmentToVerdict(facts, options.policy);
     return {
       verdict: combineDeterministicWithAssessment(
@@ -113,6 +158,7 @@ export async function combineWithAssessment(
         modelVerdict,
       ),
       facts,
+      requirementFrameDigest: expectedDigest,
     };
   } catch {
     // Provider failure and invalid/unsafe policy configuration both fail
@@ -121,6 +167,16 @@ export async function combineWithAssessment(
       verdict: options.assessmentRequired ? 'deny' : options.deterministic,
       error: 'assessment_failed',
     };
+  }
+}
+
+function validateRequirementMatch(value: unknown): void {
+  if (
+    typeof value !== 'string' ||
+    !(REQUIREMENT_MATCH_VALUES as readonly string[]).includes(value)
+  ) {
+    // Missing or unknown facts fail closed through the caller's catch path.
+    throw new TypeError('requirementMatch must be a known value');
   }
 }
 

@@ -12,10 +12,21 @@ import test from 'node:test';
 
 import { loadJevConfig, parseJevConfig } from './config.ts';
 import { createJevAssessmentProvider, systemOneEndpoint } from './jev.ts';
+import { createRequirementFrame } from './requirement.ts';
 import { JevAssessmentError } from './types.ts';
 
 const OPENROUTER_KEY = 'openrouter-test-secret';
 const TYPESAFE_KEY = 'typesafe-test-secret';
+
+const FRAME = createRequirementFrame({
+  frame_id: 'rf_config_test',
+  session_id: 'ses_config_test',
+  source: 'user_message',
+  user_turn_digest: `sha256:${'e'.repeat(64)}`,
+  egress: 'allowed',
+  text: 'Update /workspace/a.ts',
+  captured_at: '2026-10-29T00:00:00.000Z',
+});
 
 function validConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -37,6 +48,7 @@ function payload(model = 'typesafe/jev-1.14'): unknown {
     model,
     answers: {
       intent: { type: 'choice', choice: 'feature', confidence: 0.9 },
+      requirementMatch: { type: 'choice', choice: 'match', confidence: 0.9 },
       sensitiveArea: { type: 'noul', noul: 0.1 },
       irreversible: { type: 'noul', noul: 0.2 },
       risk: { type: 'score', score: 0.5, confidence: 0.8 },
@@ -88,6 +100,7 @@ test('OpenRouter config resolves the official System One endpoint and public con
   await loaded.assessmentProvider.assess(
     { tool: 'write', operation: 'file_write', target: '/workspace/a.ts' },
     {},
+    { requirement: FRAME },
   );
   assert.equal(url, 'https://openrouter.ai/api/v1/systemone');
   assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${OPENROUTER_KEY}`);
@@ -118,6 +131,7 @@ test('TypeSafe config supports its direct provider and expected environment vari
   await loaded.assessmentProvider.assess(
     { tool: 'read', operation: 'file_read', target: '/workspace/a.ts' },
     {},
+    { requirement: FRAME },
   );
   assert.equal(url, 'https://api.typesafe.ai/v1/systemone');
   assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${TYPESAFE_KEY}`);

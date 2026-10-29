@@ -14,6 +14,8 @@ export interface WorkflowGateConfig {
   readonly shellGate: boolean;
   readonly completionReview: boolean;
   readonly jevConfigPath: string | null;
+  readonly actionAssessment: boolean;
+  readonly requirementEgress: 'allowed' | 'denied';
 }
 
 export class WorkflowConfigError extends Error {
@@ -31,6 +33,8 @@ const FIELDS = [
   'shellGate',
   'completionReview',
   'jevConfigPath',
+  'actionAssessment',
+  'requirementEgress',
 ] as const;
 
 export function parseWorkflowGateConfig(
@@ -61,6 +65,8 @@ export function parseWorkflowGateConfig(
       shellGate: false,
       completionReview: false,
       jevConfigPath: null,
+      actionAssessment: false,
+      requirementEgress: 'denied',
     });
   }
 
@@ -72,13 +78,39 @@ export function parseWorkflowGateConfig(
     throw new WorkflowConfigError();
   }
 
+  const actionAssessment = optionalBoolean(raw.actionAssessment, false);
+  const requirementEgress = optionalRequirementEgress(raw.requirementEgress);
+  if (
+    actionAssessment &&
+    (!shellGate || jevConfigPath === null)
+  ) {
+    throw new WorkflowConfigError();
+  }
+  if (requirementEgress === 'allowed' && !actionAssessment) {
+    throw new WorkflowConfigError();
+  }
+
   return Object.freeze({
     enabled: true,
     guidance,
     shellGate,
     completionReview,
     jevConfigPath,
+    actionAssessment,
+    requirementEgress,
   });
+}
+
+function optionalRequirementEgress(
+  value: unknown,
+): 'allowed' | 'denied' {
+  if (value === undefined) {
+    return 'denied';
+  }
+  if (value !== 'allowed' && value !== 'denied') {
+    throw new WorkflowConfigError();
+  }
+  return value;
 }
 
 function optionalBoolean(value: unknown, fallback: boolean): boolean {

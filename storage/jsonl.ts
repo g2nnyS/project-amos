@@ -38,6 +38,51 @@ export interface AuditCoverage {
   confirmation_eligible: boolean;
 }
 
+export type AuditAssessmentVerdict = 'allow' | 'confirm' | 'deny';
+
+export type AssessmentAuditKind = 'jev_assessment' | 'user_literal_grant';
+
+export type AssessmentAuditError =
+  | 'assessment_failed'
+  | 'requirement_unavailable';
+
+/**
+ * Audit-safe requirement identity. Every field is independently nullable so a
+ * partial projection (for example a grant that carries only a frame digest)
+ * never forces a fabricated value or the raw requirement text.
+ */
+export interface AuditAssessmentRequirement {
+  frame_digest: string | null;
+  source: 'user_message' | 'delegated' | null;
+  actor: 'user' | 'agent' | null;
+  root_frame_id: string | null;
+}
+
+/**
+ * Explicit, opt-in assessment provenance attached to a separate audit entry.
+ *
+ * This deliberately contains no requirement text, declared scope, raw command,
+ * raw provider response, or additional path data beyond the already-sanitized
+ * `action`. Optional Jev facts are omitted when they cannot be validated.
+ */
+export interface AuditAssessment {
+  kind: AssessmentAuditKind;
+  deterministic_verdict: AuditAssessmentVerdict;
+  final_verdict: AuditAssessmentVerdict;
+  requirement: AuditAssessmentRequirement | null;
+  question_set_version?: string;
+  model?: string;
+  intent?: 'feature' | 'fix' | 'refactor' | 'docs' | 'chore';
+  requirementMatch?: 'match' | 'partial' | 'mismatch' | 'unclear';
+  sensitiveArea?: boolean;
+  irreversible?: boolean;
+  riskScore?: number;
+  confidence?: number;
+  requiresReview?: boolean;
+  assessmentRequired: boolean | null;
+  error?: AssessmentAuditError;
+}
+
 /**
  * One line in the append-only audit log.
  *
@@ -56,6 +101,8 @@ export interface AuditEntry {
   mode: 'log-only';
   coverage?: AuditCoverage;
   error?: AuditError;
+  /** Optional, additive assessment provenance; readers may ignore it. */
+  assessment?: AuditAssessment;
   latency_ms: number;
 }
 
