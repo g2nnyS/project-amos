@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
-    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/*/*.test.js dist/decision/*.test.js dist/supervisor/*.test.js dist/guidance/*.test.js dist/workflow/*.test.js",
+    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/*/*.test.js dist/decision/*.test.js dist/supervisor/*.test.js dist/guidance/*.test.js dist/injector/*.test.js dist/workflow/*.test.js",
     "audit:review": "npm run build && node dist/storage/audit-review-cli.js",
     "typecheck": "tsc --noEmit"
   },
