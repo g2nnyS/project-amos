@@ -53,6 +53,50 @@ The implementation is being hardened to provide these properties:
 These properties cover the observer pipeline only. They do not stop a tool call in the
 real harness.
 
+## Requirement conformance (semantic layer)
+
+The deterministic engine answers "what does the policy say"; it cannot answer "did the
+human ask for this". Jev supplies that as a typed semantic sensor, never as an
+authority:
+
+| Layer | Question | Authority |
+|---|---|---|
+| Structural | Is the tool mediated, is the target in scope, is it a zero-level action? | Trusted code |
+| Deterministic | What is the policy baseline? | `engine/` |
+| Semantic | Does the action serve the captured requirement? | Jev facts |
+
+A `RequirementFrame` is the only accepted representation of a human requirement. It is
+captured by the harness from a user-input channel. Its `source` is either
+`user_message` or `delegated`; a delegated frame records that the immediate
+instruction came from an agent, and can never justify relaxing a verdict. Requirement
+text from tool results, file contents, MCP responses, or model summaries is not a
+frame.
+
+Jev returns `requirementMatch` plus `sensitiveArea`, `irreversible`, `risk`, and
+`confidence`. The fixed combination table is trusted code:
+
+| Deterministic baseline | `requirementMatch` | Result |
+|---|---|---|
+| `deny` | any | `deny` |
+| `confirm` | any | `confirm` |
+| `allow` | `match` | `allow` |
+| `allow` | `partial` / `unclear` | `confirm` |
+| `allow` | `mismatch` | `deny` |
+
+`match` never loosens a stricter baseline. Provider failure, refusal, timeout, low
+confidence, or facts bound to a different frame digest fail closed when an assessment
+is required and otherwise preserve the deterministic verdict.
+
+Requirement text is user content. Sending it to a hosted assessor requires
+`egress: "allowed"` on the frame; the provider rejects a denied frame with
+`egress_denied`. Audit records carry the frame digest and provenance only, never the
+text or declared scope.
+
+Implementation status: the frame type, Jev question set v2, digest binding, and
+combination table exist in `decision/` and are covered by tests. No adapter captures a
+frame yet, and no harness is blocked by this layer; runtime enforcement remains Stage A
+`log-only`.
+
 ## Snapshot provenance archives
 
 Each successful snapshot load can persist the exact policy inputs that produced its
@@ -133,17 +177,31 @@ the agent. A branch name is metadata, never an authorization decision.
 ## Engineering workflow gate
 
 The opt-in `workflowGate` is a separate engineering guardrail, not part of the guarantees
-above. It can select versioned guidance, block a closed subset of dangerous shell
+above. It can select advisory guidance, block a closed subset of dangerous shell
 commands before execution where the harness exposes a blocking seam, run fixed local
 change checks, and send an eligible filtered diff to Jev for advisory engineering review.
+Its optional `actionAssessment` mode compares a model-authored shell action with a
+harness-captured human requirement and may only tighten the deterministic shell verdict.
+A Pi `user_bash` command typed directly by the human is a separate structural literal
+grant: every deterministic deny remains, while a non-deny can proceed without a second
+approval. These are engineering controls, not authenticated approvals, complete mediation,
+or a security boundary.
 
 - Unknown shell syntax, custom shells/prefixes, PowerShell, and analysis failures remain
   confirmation-required or denied. Confirm-class decisions fail closed without a safe
   approval path.
 - Pi can block `tool_call` and stop `user_bash` by throwing. OpenCode `execute.before`
-  cannot block by contract; it uses `shell.create.before` plus permission tightening and
-  fails a parseable confirm-classified command in the shell hook rather than relying on
-  uncertain event ordering.
+  cannot block by contract; it uses `shell.create.before` plus native permission
+  tightening. Only a parsed plan-class confirm is admitted from the shell hook into
+  OpenCode's own `permission.assert` → `permission.evaluate` → user once/always/reject
+  path; opaque, unsupported, or reduced-host decisions fail closed with
+  `amos_workflow_gate_shell_confirm_unavailable` (this path cannot approve, rather than
+  waiting for approval). The gate's permission hook can only tighten: `allow` becomes
+  `ask` for a parsed confirm, and `deny` stays `deny`. This covers only the agent shell
+  tool's plan confirm; `/api/shell` and `POST /api/session/{id}/shell` are outside the
+  channel, `--auto` may accept `once` without a human, a saved `always` may still be
+  asked again after tightening, and direct shell APIs cannot be claimed as mediated. The
+  gate remains an engineering guardrail, not a security boundary.
 - Pi allows at most one repair continuation per session. OpenCode V2 exposes no true
   settle/merge block, so its completion feedback is advisory only.
 - The gate does not provide complete mediation. Disabled extensions, alternate entry

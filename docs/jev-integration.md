@@ -7,20 +7,48 @@ rule engine and it cannot grant permissions.
 ## Boundary
 
 ```
+harness-captured RequirementFrame ──┐
+                                    ▼
 deterministic engine ──> verdict ──┐
                                    ├─> maxVerdict() ──> final verdict
 Jev facts ──> trusted mapping ─────┘
 ```
 
 - `engine/` remains the authority. Its `Verdict` is the baseline.
-- Jev returns bounded facts (`intent`, `sensitiveArea`, `irreversible`,
-  `riskScore`, `confidence`), not a verdict.
+- Jev returns bounded facts (`intent`, `requirementMatch`, `sensitiveArea`,
+  `irreversible`, `riskScore`, `confidence`), not a verdict.
 - Trusted code maps those facts through explicit thresholds and policy.
 - `combineDeterministicWithAssessment` is a strict maximum: the model may
   tighten `allow -> log/confirm/deny`, but can never relax `deny` or `confirm`.
 - When an assessment is required and the provider fails, the async helper
   fails closed to `deny`. Optional assessments preserve the deterministic
   result.
+- Every fact set is bound to the digest of the requirement frame it was
+  produced from. A mismatch is treated as an assessment failure.
+
+## Requirement conformance
+
+`requirementMatch` answers "does this action serve what the human asked for".
+It is a separate question from `intent` (`feature`/`fix`/...), which is
+telemetry only.
+
+| Deterministic baseline | `requirementMatch` | Model verdict |
+| --- | --- | --- |
+| any | `match` | normal thresholds |
+| `allow` | `partial` / `unclear` | `confirm` |
+| `allow` | `mismatch` | `deny` |
+| `deny` / `confirm` | any | unchanged by `match` |
+
+A requirement frame is only valid when the harness captured it from a user
+input channel. `source: "delegated"` records an agent-authored instruction and
+must never be used to relax a deterministic verdict. Requirement text, file
+contents, tool results, MCP responses, and model summaries are not substitutes
+for a frame.
+
+Requirement text is user content. The frame must carry `egress: "allowed"`
+before the provider will send it; otherwise the provider throws
+`egress_denied`. Audit only the frame digest and provenance, never the text or
+declared scope.
 
 ## Configuration and data egress
 
@@ -41,6 +69,7 @@ const result = await combineWithAssessment({
   provider,
   action,
   context,
+  requirement: frame,
   policy: { reviewRisk: 0.6, denyRisk: 0.9 },
   assessmentRequired: true,
 });
@@ -82,13 +111,16 @@ Path resolution:
 `systemOneClient` for typed engineering reviews, and a public config that never contains
 the credential.
 
-**Data egress warning:** `state` is `{ action, context }`. The adapter applies the
-same safe action projection as the audit sink before egress: URL userinfo, paths,
-query values, fragments, shell text, and hostile tool identifiers are removed.
-`context` is caller-supplied and is not automatically redacted, so callers must
-remove secrets, tokens, personal data, and anything that must not leave the
-process. Never place the API key in `context`. The key is sent only in the
-`Authorization` header and is never included in errors.
+**Data egress warning:** `state` is `{ action, context, requirement }`. The
+adapter applies the same safe action projection as the audit sink before
+egress: URL userinfo, paths, query values, fragments, shell text, and hostile
+tool identifiers are removed. `requirement` is sent only when its frame
+carries `egress: "allowed"`; it contains the bounded requirement text,
+declared scope, source, and frame digest. `context` is caller-supplied and is
+not automatically redacted, so callers must remove secrets, tokens, personal
+data, and anything that must not leave the process. Never place the API key in
+`context`. The key is sent only in the `Authorization` header and is never
+included in errors.
 
 Pin a concrete model version when thresholds are calibrated. `jev-latest` can
 move underneath the thresholds.
@@ -101,13 +133,14 @@ Defaults live in `decision/jev.ts`:
 | --- | --- |
 | `sensitiveArea` | noul probability at/above which the action is sensitive |
 | `irreversible` | noul probability at/above which the action is irreversible |
-| `minConfidence` | intent confidence below which review is required |
+| `minConfidence` | weakest intent/requirementMatch confidence below which review is required |
 | `nearThresholdMargin` | probability distance treated as ambiguous |
 
-`requiresReview` is set when intent confidence is below `minConfidence` or a
-noul probability is within `nearThresholdMargin` of its threshold. Sensitive,
-irreversible, ambiguous, or low-confidence facts map to `confirm`. Risk at or
-above `denyRisk` maps to `deny` when that policy is configured.
+`requiresReview` is set when the weakest of the intent and requirementMatch
+confidences is below `minConfidence`, or a noul probability is within
+`nearThresholdMargin` of its threshold. Sensitive, irreversible, ambiguous, or
+low-confidence facts map to `confirm`. Risk at or above `denyRisk` maps to
+`deny` when that policy is configured.
 
 ## Audit requirements
 
@@ -115,9 +148,11 @@ Audit the model identifier and the probabilistic inputs alongside the final
 verdict. Keep at minimum:
 
 - returned `model` and the fixed question-set version
-  (`JEV_QUESTION_SET_VERSION`);
-- `intent`, `sensitiveArea`, `irreversible`, `riskScore`, `confidence`,
-  `requiresReview`;
+  (`JEV_QUESTION_SET_VERSION`, currently `jev-questions/v2`);
+- `intent`, `requirementMatch`, `requirementFrameDigest`, `sensitiveArea`,
+  `irreversible`, `riskScore`, `confidence`, `requiresReview`;
+- the requirement frame's `source`, `actor`, and `root_frame_id`, but never its
+  text or declared scope;
 - whether assessment was required, and whether it failed (`assessment_failed`);
 - the deterministic verdict before combination and the final verdict.
 
@@ -127,11 +162,13 @@ unredacted context. `JevAssessmentError` intentionally exposes only a safe
 
 ## Failure behavior
 
-The adapter throws `JevAssessmentError` for configuration errors, non-2xx
-responses, timeouts, aborts, invalid JSON, refusals, malformed answer shapes,
-and out-of-range probabilities/confidence. It validates strictly:
+The adapter throws `JevAssessmentError` for configuration errors,
+non-2xx responses, timeouts, aborts, invalid JSON, refusals, malformed answer
+shapes, denied requirement egress, and out-of-range probabilities/confidence.
+It validates strictly:
 
-- choice answers must use a known intent and a confidence in `[0, 1]`;
+- choice answers must use a known intent or requirementMatch value and a
+  confidence in `[0, 1]`;
 - noul answers must be in `[0, 1]`;
 - score answers are raw rubric values in `[0, levels - 1]` (3 levels for
   risk, so `[0, 2]`), normalized by the adapter to `[0, 1]`;
@@ -143,6 +180,9 @@ is combined with the timeout.
 ## Non-goals
 
 - Jev does not decide policy, grant access, or override deny/confirm rules.
+- Jev does not discover the human requirement from model text. Only a
+  harness-captured frame is accepted, and a `delegated` frame never relaxes a
+  verdict.
 - Jev is not a substitute for exact checks of paths, URLs, credentials, or
   authorization.
 - The adapter does not add the TypeSafe SDK; it uses injectable `fetch`.
