@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <code>阶段 A</code> · log-only · OpenCode V2 + Pi<br>
-  <strong>当前状态：观察与审计原型（运行期强制执行 NO-GO）</strong>
+  <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
+  <strong>当前状态：工程硬门已实现（可选启用）；安全运行期强制执行 NO-GO</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 把安全规矩写在 `AGENTS.md` 或系统提示词里，本质上是在赌模型的自觉。**Amos 的思路很简单：模型只管提议动作，确定性的策略引擎负责按规则算账，并留下一条干净的审计链。**
 
 > **安全边界声明**：安全策略层目前处于 **阶段 A（`log-only` 旁路观察）**，还**不是硬安全边界**。
-> 安全适配器只观察部分文件工具调用，把假设裁决写进 JSONL。另有独立的、显式启用的**工程工作流硬门**，可阻断危险 Shell 命令、注入工程规范并暂缓有问题的变更；它是工作流护栏，不等于全通道中介或 OS 安全边界。“物理锁定”“全局默认拒绝”或“防篡改审计”仍需受信任监督进程、完整动作覆盖与 OS 级执行隔离（详见 [安全模型](docs/security-model.md) 与 [工作流硬门](docs/workflow-gate.md)）。
+> 安全适配器只观察部分文件工具调用，把假设裁决写进 JSONL。另有独立的、显式启用的**工程工作流硬门**，可阻断危险 Shell 命令、注入按会话固定的 advisory 规范、按捕获的人类要求评估动作，并暂缓有问题的变更；它是工作流护栏，不等于全通道中介或 OS 安全边界。“物理锁定”“全局默认拒绝”或“防篡改审计”仍需受信任监督进程、完整动作覆盖与 OS 级执行隔离（详见 [安全模型](docs/security-model.md) 与 [工作流硬门](docs/workflow-gate.md)）。
 
 ---
 
@@ -64,6 +64,8 @@
 - **Supervisor 会话与停止栅栏核心**：提供进程内的已注册会话上下文、假设裁决与停止栅栏（Stop Fencing）核心逻辑（目前仅在内存中运行，尚未接入真实工具拦截）。
 - **双端安全 `log-only` 适配器**：支持 **OpenCode V2** 与 **Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
+- **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
+- **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
 - **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
 
@@ -113,7 +115,6 @@ npm run audit:review -- \
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
-- [V1 实施指导（目标方案）](docs/v1-implementation-guide.md)
 
 ---
 
