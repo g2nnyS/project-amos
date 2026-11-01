@@ -1,0 +1,1 @@
+<script setup lang="ts">import { RouterLink } from 'vue-router'; import EmptyState from '@/components/common/EmptyState.vue'</script><template><div class="page"><EmptyState title="页面不存在" description="请从导航选择治理页面。"><RouterLink to="/" class="text-sm underline">返回总览</RouterLink></EmptyState></div></template>

@@ -156,8 +156,14 @@ agent cannot publish them. Engineering guardrails and advisory injection stay
 outside this trio.
 
 This shape is not implemented. Current adapters remain log-only, and today's
-Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
+Jev path may only tighten. See `docs/security-shape.md` and decisions 21–25 in
 `docs/decisions.md`. Aligning the target does not pass the enforcement gate.
+
+The standalone [local governance console](local-governance.md) adds persistent rule
+proposals, capability-authenticated human governance review, and atomic version
+publication. These are not runtime action approvals: publishing does not change
+harness configuration, enable adapter enforcement, or establish a separate OS
+trust domain. Same-UID processes can still access its credentials and database.
 
 ## Required enforcement architecture
 

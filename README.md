@@ -68,6 +68,7 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
 - **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
+- **Local Governance Console**: A Chinese browser UI and SQLite service for projects, complete rule editing, immutable proposals, human approval/publication, version history, rollback proposals, exports, and governance audit. This is local governance, not trusted execution or per-tool authorization.
 
 ### What's Not Built Yet (Required Before Enforcement)
 
@@ -105,6 +106,16 @@ npm run audit:review -- \
 
 *(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
 
+### 3. Open the Human Governance Console
+
+```bash
+npm run console
+```
+
+Open `http://127.0.0.1:4310` and use the **human token file** named by the startup output to log in. Tokens are never printed. State defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`, outside the workspace. Do not share the human token with agents; their separate token can read and propose but cannot approve.
+
+Create a project, import the repository seed rules into a candidate, edit and validate, then submit a proposal. **Approve and publish** commits a new local version atomically; rollback also requires a new proposal. Nothing rewrites the current harness configuration or enables runtime security enforcement. Same-user processes can still access the token and database; this is not OS isolation. See [Local Governance Guide](docs/local-governance.md) for startup options, recovery, and limits.
+
 ---
 
 ## Workflow & Documentation
@@ -116,6 +127,7 @@ npm run audit:review -- \
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
+- [Local Governance Console](docs/local-governance.md)
 
 ---
 

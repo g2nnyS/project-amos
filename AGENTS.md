@@ -11,6 +11,7 @@
 - New top-level source directories need `tsconfig.json` include entries; new test directories also need the explicit test globs in `package.json`.
 - Root `opencode.jsonc` enables the workflow shell gate. Its closed allowlist can require confirmation even for installs or inspection commands; use dedicated read tools or a normal terminal rather than weakening the gate.
 - Follow `CONTRIBUTING.md` for worktree isolation and PR requirements; CI enforces `(feat|fix|chore|docs|refactor|test|ci)/<lowercase-slug>` branch names.
+- `npm run console` builds/starts the loopback governance UI; `npm run console:serve` skips building. State and separate human/Agent tokens default outside the workspace; never print token files. See `docs/local-governance.md`.
 
 ## Current security boundary
 
@@ -24,6 +25,7 @@
 
 - `engine/` is pure and uses an injected clock. Preserve `deny > confirm > log > allow` and fail-closed evaluation; keep filesystem, network, model, and harness I/O outside it.
 - `supervisor/` is an in-memory session/decision/stop core, not a running trust boundary. Its fences rely on process-local object identity, do not survive IPC, and are not approvals or execution authorization; see `docs/supervisor-core.md`.
+- `control-plane/` is a local SQLite governance service, not the trusted execution layer. Approval atomically publishes an immutable version; rollback is a new proposal. It never changes adapter configuration or grants tool execution; same-UID token/database access remains possible.
 - `guidance/` contains static versioned engineering guidance; `workflow/` contains the opt-in workflow gate: closed-subset shell assessment, fixed local checks, filtered diff egress, and advisory Jev engineering review. Never treat these modules as security enforcement.
 - `injector/` compiles session-pinned advisory snapshots from guidance seeds and selects/renders active rules. Prompts cannot introduce rules; injection failures must not change gate decisions or audit behavior.
 - `constraints/rules.yaml` is the current Stage A runtime input, not the target authority. The trusted control plane in `docs/decisions.md` is not implemented. The seven predicate operators are frozen; do not add regex routing, custom DSLs, or one-off operators.

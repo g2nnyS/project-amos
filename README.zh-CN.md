@@ -68,6 +68,7 @@
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
 - **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
+- **本地治理控制台**：中文浏览器界面与 SQLite 服务，支持项目、完整规则编辑、不可变提案、人类审批与发布、历史版本、回滚提案、导出及治理审计。这是本地治理，不是受信执行层或单次工具放行。
 
 ### 尚未实现（进入强制执行前必须补齐的拼图）
 
@@ -105,6 +106,16 @@ npm run audit:review -- \
 
 *(注：`--output` 必须指向尚不存在的新文件，防止覆盖已有的人工审核结论。)*
 
+### 3. 打开人类治理控制台
+
+```bash
+npm run console
+```
+
+打开 `http://127.0.0.1:4310`，从启动信息指定的**人类令牌文件**获取令牌并登录；程序不打印令牌内容。状态默认位于工作区外的 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`。不要把人类令牌交给 Agent；独立的 Agent 令牌只能读取、提案，不能审批。
+
+创建项目后，将仓库规则导入候选，编辑并校验，再提交提案。“批准并发布”会原子生成本地新版本；回滚也必须创建新提案。发布不会改写现有 Harness 配置或开启安全强制执行。同 UID 进程仍能读取令牌或改写数据库，不构成 OS 隔离。启动参数、恢复方法与限制见[本地治理指南](docs/local-governance.md)。
+
 ---
 
 ## 协作规范与延伸文档
@@ -116,6 +127,7 @@ npm run audit:review -- \
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
+- [本地治理控制台](docs/local-governance.md)
 
 ---
 
