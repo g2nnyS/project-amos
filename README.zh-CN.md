@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>当前状态：工程硬门已实现（可选启用）；安全运行期强制执行 NO-GO</strong>
+  <strong>当前状态：三块产品 — Approve for me（尚未实现）、内置多维拦截规则并可被人修改、工程规范动态注入；运行期强制执行 NO-GO</strong>
 </p>
 
 <p align="center">
@@ -76,6 +76,7 @@
 - 抗符号链接（Symlink）、硬链接、Bind Mount 及 TOCTOU 竞争的文件系统安全执行。
 - 绑定具体动作与策略快照的**一次性认证审批**，以及 `scope` / `owner` / `level` 等元数据的运行期权限语义。
 - 安全策略层在任一适配器中的真实 `deny` / `confirm` 拦截。独立的工程工作流硬门不满足这一要求。
+- Approve for me 形态的安全边界：宿主沙箱先停住越界，独立审查者只能批准这一次已停住的升级。目标记录在 [安全形态](docs/security-shape.md)。它不是插件模式，当前 Jev 路径仍然不能批准。
 
 ---
 
@@ -111,7 +112,7 @@ npm run audit:review -- \
 - **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 **核心文档索引**：
-- [安全模型与当前保证](docs/security-model.md) · [G0 门禁核验标准](docs/go-no-go.md)
+- [安全模型与当前保证](docs/security-model.md) · [安全形态](docs/security-shape.md) · [G0 门禁核验标准](docs/go-no-go.md)
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)

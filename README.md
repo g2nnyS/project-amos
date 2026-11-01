@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Status: Engineering gate implemented (opt-in); security runtime enforcement NO-GO</strong>
+  <strong>Status: three parts — Approve for me (not implemented), built-in multi-dimensional intercept rules plus user edits, dynamic engineering-norm injection; runtime enforcement NO-GO</strong>
 </p>
 
 <p align="center">
@@ -76,6 +76,7 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
 - Authenticated one-time human approval bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
 - Live security-layer `deny` or `confirm` blocking in either adapter. The separate engineering workflow gate does not satisfy this requirement.
+- The Approve for me security shape: a host sandbox that stops a boundary crossing before a separate reviewer may approve that one escalation. The target is recorded in [Security Shape](docs/security-shape.md). It is not a plugin mode, and today's Jev path still cannot approve.
 
 ---
 
@@ -111,7 +112,7 @@ npm run audit:review -- \
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
-- [Security Model & Guarantees](docs/security-model.md) · [G0 Gate Criteria](docs/go-no-go.md)
+- [Security Model & Guarantees](docs/security-model.md) · [Security Shape](docs/security-shape.md) · [G0 Gate Criteria](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)

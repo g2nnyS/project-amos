@@ -4,6 +4,11 @@ The `decision/` module integrates TypeSafe Jev (`POST /v1/systemone`) as an
 **optional probabilistic semantic sensor**. It never replaces the deterministic
 rule engine and it cannot grant permissions.
 
+This module is not the security auto-reviewer. The target Approve for me
+reviewer, which may approve one sandbox-stopped confirm-class escalation, is
+specified in `docs/security-shape.md` and is not implemented. Do not reuse
+`combineDeterministicWithAssessment` for that role.
+
 ## Boundary
 
 ```

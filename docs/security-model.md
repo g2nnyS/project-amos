@@ -143,6 +143,22 @@ The following remain open until a separate enforcement milestone:
 Until those are implemented and adversarially tested, the product must be described
 as a policy-matching and observation prototype, not a hard security boundary.
 
+## Target shape: Approve for me
+
+The target security shape is the Codex Approve for me trio, not a plugin mode
+and not a stronger claim than that product makes. A host sandbox stops a
+boundary crossing first. `on-request` means in-sandbox work proceeds and a
+crossing waits. A separate reviewer may approve or deny only that stopped
+confirm-class escalation. The reviewer cannot expand the writable root, enable
+network, weaken a protected path, or lift a `deny`. Level 0 denies are not
+eligible. Humans edit rules through the existing multi-dimensional table; the
+agent cannot publish them. Engineering guardrails and advisory injection stay
+outside this trio.
+
+This shape is not implemented. Current adapters remain log-only, and today's
+Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
+`docs/decisions.md`. Aligning the target does not pass the enforcement gate.
+
 ## Required enforcement architecture
 
 1. A trusted supervisor outside the agent's writable domain loads policy from a
@@ -218,4 +234,6 @@ A probabilistic decision model such as Jev may supply typed semantic facts (inte
 sensitivity, reversibility, risk). It must not own policy or execute actions. The
 deterministic engine remains authoritative, the model may only tighten a verdict, and
 model failure or low confidence must fail closed when the policy requires an
-assessment. See `docs/jev-integration.md`.
+assessment. This implemented path is not the security auto-reviewer in
+`docs/security-shape.md`; do not extend it to approve a `confirm`. See
+`docs/jev-integration.md`.

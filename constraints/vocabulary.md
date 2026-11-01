@@ -4,7 +4,7 @@
 
 规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 15 条规则的 `policy_class` 均为 `security`。
 
-当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当作已成立的能力。
+当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当作已成立的能力。目标形态里这些字段在编译时把规则分到沙箱快照、工程护栏或动态注入，见 `docs/security-shape.md`；编译器未实现。
 
 ## 表示边界
 
