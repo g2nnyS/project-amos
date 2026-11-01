@@ -6,21 +6,38 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   ToolCallEvent,
+  ToolResultEvent,
+  ToolResultEventResult,
   UserBashEvent,
 } from '@earendil-works/pi-coding-agent';
 
+import {
+  buildJevAssessmentAudit,
+  buildUserLiteralGrantAudit,
+} from '../../decision/audit.ts';
+import {
+  combineWithAssessment,
+  type CombinedAssessmentResult,
+} from '../../decision/combine.ts';
 import {
   loadJevConfig,
   type JevConfigLoadOptions,
   type LoadedJevConfig,
 } from '../../decision/config.ts';
-import { renderGuidance } from '../../guidance/render.ts';
-import { selectGuidance } from '../../guidance/select.ts';
-import type {
-  GuidanceInput,
-  GuidancePack,
-  GuidanceSelection,
-} from '../../guidance/types.ts';
+import {
+  applyUserLiteralGrant,
+  type UserLiteralGrant,
+} from '../../decision/grant.ts';
+import type { RequirementFrame } from '../../decision/requirement.ts';
+import { createRequirementSessionStore } from '../../decision/session.ts';
+import type { AssessmentContext } from '../../decision/types.ts';
+import {
+  createInjectorSession,
+  getProjectSeedSnapshot,
+  guidancePacksForRuleIds,
+  type InjectionBlock,
+  type InjectorSession,
+} from '../../injector/index.ts';
 import {
   createChangeReview,
   type ChangeReviewOptions,
@@ -45,6 +62,7 @@ import {
   createLogOnlyRecorder,
   type LogOnlyRecorder,
 } from '../shared/log-only.ts';
+import type { ActionNormalization } from '../shared/types.ts';
 import {
   normalizePiToolCall,
   normalizePiUserBash,
@@ -194,8 +212,8 @@ export interface PiShellSettings {
  * model. UI access still comes from Pi's `ctx`, which tests also supply.
  */
 export interface PiWorkflowDependencies {
-  selectGuidance(input?: GuidanceInput | null): GuidanceSelection;
-  renderGuidance(packs: readonly GuidancePack[]): string;
+  /** Create one advisory injector session; production uses the seed snapshot. */
+  createSession(): InjectorSession;
   assessShellCommand(
     command: string,
     options: AssessShellOptions,
@@ -225,8 +243,7 @@ function block(code: string): GateDecision {
 
 function createDefaultDependencies(pi: ExtensionAPI): PiWorkflowDependencies {
   return {
-    selectGuidance,
-    renderGuidance,
+    createSession: () => createInjectorSession(getProjectSeedSnapshot()),
     assessShellCommand,
     createChangeReview,
     loadJevConfig,
@@ -243,6 +260,16 @@ function createDefaultDependencies(pi: ExtensionAPI): PiWorkflowDependencies {
       };
     },
   };
+}
+
+const MAX_GUIDANCE_SESSIONS = 32;
+const MAX_QUEUED_TOOL_CALLS = 256;
+/** Bound the safe semantic context so compound commands stay reviewable. */
+const MAX_ASSESSMENT_CONTEXT_OPERATIONS = 16;
+
+interface GuidanceSessionState {
+  readonly injector: InjectorSession;
+  readonly committedRuleIds: Set<string>;
 }
 
 /**
@@ -262,7 +289,11 @@ export default function amosPiLogOnly(
   };
 
   const recorders = new Map<string, LogOnlyRecorder>();
-  const selectedGuidance = new Map<string, readonly GuidancePack[]>();
+  // One bounded, memory-only requirement capture per extension. Frames are
+  // keyed by session and only ever created from the direct user prompt.
+  const requirementStore = createRequirementSessionStore();
+  const guidanceSessions = new Map<string, GuidanceSessionState>();
+  const queuedToolCalls = new Map<string, string>();
   const repairContinuedSessions = new Set<string>();
   const reviewedCompletionDigests = new Map<string, string>();
   let configErrorLogged = false;
@@ -329,13 +360,148 @@ export default function amosPiLogOnly(
     }
   }
 
-  function recordToolCall(event: ToolCallEvent, ctx: ExtensionContext): void {
+  function forgetQueuedCalls(key: string): void {
+    for (const [composite, owner] of queuedToolCalls) {
+      if (owner === key) {
+        queuedToolCalls.delete(composite);
+      }
+    }
+  }
+
+  /**
+   * Queue keys include the session because Pi call IDs are only unique within
+   * a session. The length prefix keeps the pair encoding unambiguous.
+   */
+  function queuedCallKey(key: string, toolCallId: string): string {
+    return `${key.length}:${key}${toolCallId}`;
+  }
+
+  function rememberGuidanceSession(
+    key: string,
+    state: GuidanceSessionState,
+  ): GuidanceSessionState {
+    guidanceSessions.delete(key);
+    guidanceSessions.set(key, state);
+    while (guidanceSessions.size > MAX_GUIDANCE_SESSIONS) {
+      const oldest = guidanceSessions.keys().next().value;
+      if (oldest === undefined || oldest === key) {
+        break;
+      }
+      guidanceSessions.delete(oldest);
+      forgetQueuedCalls(oldest);
+    }
+    return state;
+  }
+
+  /** One advisory injector session per real session key. */
+  function guidanceSession(key: string): GuidanceSessionState {
+    const existing = guidanceSessions.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    return rememberGuidanceSession(key, {
+      injector: dependencies.createSession(),
+      committedRuleIds: new Set<string>(),
+    });
+  }
+
+  function commitGuidance(
+    state: GuidanceSessionState,
+    block: InjectionBlock,
+  ): void {
+    state.injector.commit(block);
+    for (const id of block.ruleIds) {
+      state.committedRuleIds.add(id);
+    }
+  }
+
+  function rememberQueuedCall(key: string, toolCallId: string): void {
+    const composite = queuedCallKey(key, toolCallId);
+    queuedToolCalls.delete(composite);
+    queuedToolCalls.set(composite, key);
+    while (queuedToolCalls.size > MAX_QUEUED_TOOL_CALLS) {
+      const oldest = queuedToolCalls.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      queuedToolCalls.delete(oldest);
+    }
+  }
+
+  function guidanceIsEnabled(ctx: ExtensionContext): boolean {
+    const state = readPiWorkflowGateState(ctx.cwd);
+    if (state.status === 'error') {
+      reportWorkflowConfigErrorOnce();
+      return false;
+    }
+    return (
+      state.status === 'enabled' &&
+      state.config !== null &&
+      state.config.guidance
+    );
+  }
+
+  /**
+   * Advisory area queueing runs in its own guard: no injector failure may
+   * affect the audit record or a shell gate decision.
+   */
+  function queueAdvisory(
+    normalized: ActionNormalization | null,
+    event: ToolCallEvent,
+    ctx: ExtensionContext,
+  ): void {
+    try {
+      if (normalized === null || normalized.kind !== 'action') {
+        return;
+      }
+      const { tool, operation, target } = normalized.action;
+      const normalizedTool = tool.toLowerCase();
+      if (
+        operation !== 'file_write' ||
+        (normalizedTool !== 'write' &&
+          normalizedTool !== 'edit' &&
+          normalizedTool !== 'file_write')
+      ) {
+        return;
+      }
+      if (!guidanceIsEnabled(ctx)) {
+        return;
+      }
+
+      const toolCallId = readToolCallId(event);
+      if (toolCallId === null) {
+        return;
+      }
+      const key = sessionKey(ctx);
+      const state = guidanceSession(key);
+      if (state.injector.queueAction({ tool, operation, target }, ctx.cwd)) {
+        rememberQueuedCall(key, toolCallId);
+      }
+    } catch {
+      // Advisory only: a throw must not change recording or the shell decision.
+    }
+  }
+
+  function recordToolCall(
+    normalized: ActionNormalization | null,
+    event: ToolCallEvent,
+    ctx: ExtensionContext,
+  ): void {
     const now = Date.now();
     const started = performance.now();
+    const fallback: ActionNormalization = {
+      kind: 'error',
+      error: 'engine_error',
+      action: {
+        tool: fallbackToolName(event),
+        operation: 'unknown',
+        target: 'unknown',
+      },
+    };
     try {
       const recorder = ensureRecorder(ctx.cwd);
       if (recorder !== null) {
-        recorder.record(normalizePiToolCall(event, ctx.cwd), now, started);
+        recorder.record(normalized ?? fallback, now, started);
       }
     } catch {
       try {
@@ -343,19 +509,7 @@ export default function amosPiLogOnly(
         // trail. Configuration failures have no recorder and stay silent.
         const recorder = ensureRecorder(ctx.cwd);
         if (recorder !== null) {
-          recorder.record(
-            {
-              kind: 'error',
-              error: 'engine_error',
-              action: {
-                tool: fallbackToolName(event),
-                operation: 'unknown',
-                target: 'unknown',
-              },
-            },
-            now,
-            started,
-          );
+          recorder.record(fallback, now, started);
         }
       } catch {
         // Pi blocks a tool call when a hook throws. Log-only stays passive.
@@ -407,6 +561,17 @@ export default function amosPiLogOnly(
     return ctx.cwd;
   }
 
+  function readToolCallId(event: unknown): string | null {
+    try {
+      if (isRecord(event) && isNonBlankString(event.toolCallId)) {
+        return event.toolCallId;
+      }
+    } catch {
+      // A throwing getter cannot identify a queued call.
+    }
+    return null;
+  }
+
   function readCommand(event: unknown): string | null {
     try {
       if (!isRecord(event) || !isRecord(event.input)) {
@@ -426,24 +591,38 @@ export default function amosPiLogOnly(
     return `Amos workflow gate: this shell command requires confirmation.\n\n${command}`;
   }
 
-  async function decideShell(
+  type ShellGateEvaluation =
+    | { readonly outcome: 'allow' }
+    | { readonly outcome: 'block'; readonly code: string }
+    | {
+        readonly outcome: 'assessed';
+        readonly config: WorkflowGateConfig;
+        readonly assessment: ShellAssessment;
+      };
+
+  /**
+   * Deterministic part of the shell gate. Returns the assessed plan (or an
+   * ordinary allow/block) without any confirmation prompt or semantic
+   * assessment, so the direct-user literal path can reuse it.
+   */
+  async function evaluateShellGate(
     command: string | null,
     dialect: ShellDialect,
     ctx: ExtensionContext,
-  ): Promise<GateDecision> {
+  ): Promise<ShellGateEvaluation> {
     const state = readPiWorkflowGateState(ctx.cwd);
     if (state.status === 'absent') {
-      return ALLOW;
+      return { outcome: 'allow' };
     }
     if (state.status === 'error' || state.config === null) {
       reportWorkflowConfigErrorOnce();
-      return block(WORKFLOW_CONFIG_ERROR);
+      return { outcome: 'block', code: WORKFLOW_CONFIG_ERROR };
     }
     if (!state.config.shellGate) {
-      return ALLOW;
+      return { outcome: 'allow' };
     }
     if (command === null) {
-      return block(WORKFLOW_SHELL_DENIED);
+      return { outcome: 'block', code: WORKFLOW_SHELL_DENIED };
     }
 
     let settings: PiShellSettings;
@@ -451,7 +630,7 @@ export default function amosPiLogOnly(
       settings = dependencies.getSettings();
     } catch {
       reportWorkflowConfigErrorOnce();
-      return block(WORKFLOW_CONFIG_ERROR);
+      return { outcome: 'block', code: WORKFLOW_CONFIG_ERROR };
     }
 
     let assessment: ShellAssessment;
@@ -468,28 +647,226 @@ export default function amosPiLogOnly(
       });
     } catch {
       reportWorkflowConfigErrorOnce();
-      return block(WORKFLOW_CONFIG_ERROR);
+      return { outcome: 'block', code: WORKFLOW_CONFIG_ERROR };
     }
 
-    if (assessment.verdict === 'deny') {
-      return block(WORKFLOW_SHELL_DENIED);
-    }
-    if (assessment.verdict !== 'confirm') {
-      return ALLOW;
-    }
+    return { outcome: 'assessed', config: state.config, assessment };
+  }
 
-    let confirmed = false;
+  async function confirmShell(
+    command: string,
+    ctx: ExtensionContext,
+  ): Promise<boolean> {
     try {
-      confirmed =
+      return (
         ctx.hasUI === true &&
         (await ctx.ui.confirm(
           'Amos workflow gate',
           confirmationMessage(command),
-        )) === true;
+        )) === true
+      );
     } catch {
-      confirmed = false;
+      return false;
     }
-    return confirmed
+  }
+
+  function sessionRequirement(
+    ctx: ExtensionContext,
+  ): RequirementFrame | null {
+    try {
+      return requirementStore.current(sessionKey(ctx));
+    } catch {
+      return null;
+    }
+  }
+
+  function modelAction(dialect: ShellDialect) {
+    return {
+      tool: dialect,
+      operation: 'shell_input',
+      target: 'unknown',
+    };
+  }
+
+  /**
+   * Safe semantic context: only the assessment classification and bounded
+   * canonical operation descriptors. Raw command text, arguments, redirect
+   * targets, prompt text, file contents, and credentials never enter here.
+   */
+  function modelActionContext(
+    assessment: ShellAssessment,
+  ): AssessmentContext {
+    const source = assessment.operations.slice(
+      0,
+      MAX_ASSESSMENT_CONTEXT_OPERATIONS,
+    );
+    const operations = source.map((operation) => ({
+      program: operation.program,
+      effect: operation.effect,
+      reason: operation.reason,
+    }));
+
+    // Keep a compact summary of the strictest operation for simple readers.
+    let strictest: (typeof source)[number] | undefined;
+    let strictestRank = -1;
+    for (const operation of source) {
+      const rank = operationVerdictRank(operation.verdict);
+      if (rank > strictestRank) {
+        strictest = operation;
+        strictestRank = rank;
+      }
+    }
+
+    return {
+      assessment: {
+        kind: assessment.kind,
+        reason: assessment.reason,
+      },
+      operation:
+        strictest === undefined
+          ? { program: 'unknown', effect: 'unknown' }
+          : { program: strictest.program, effect: strictest.effect },
+      operations,
+    };
+  }
+
+  function operationVerdictRank(
+    verdict: ShellAssessment['verdict'],
+  ): number {
+    return verdict === 'deny' ? 2 : verdict === 'confirm' ? 1 : 0;
+  }
+
+  /** Best-effort provenance entry; never changes the gate decision. */
+  function recordActionAssessment(
+    ctx: ExtensionContext,
+    dialect: ShellDialect,
+    shellAssessment: ShellAssessment,
+    result: CombinedAssessmentResult,
+    requirement: RequirementFrame | null,
+    assessmentRequired?: boolean,
+  ): void {
+    try {
+      const recorder = ensureRecorder(ctx.cwd);
+      if (recorder === null) {
+        return;
+      }
+      recorder.recordAssessment(
+        modelAction(dialect),
+        buildJevAssessmentAudit({
+          requirement,
+          shellAssessment,
+          result,
+          assessmentRequired,
+        }),
+      );
+    } catch {
+      // Audit is a separate best-effort path.
+    }
+  }
+
+  /**
+   * Optional Jev sensor for a model-authored shell action.
+   *
+   * The provider is only called when a current requirement frame exists, and
+   * its facts must be bound to that exact frame. Required assessments fail
+   * closed on every missing frame, configuration, provider, or egress error.
+   */
+  async function assessModelAction(
+    shellAssessment: ShellAssessment,
+    config: WorkflowGateConfig,
+    dialect: ShellDialect,
+    ctx: ExtensionContext,
+  ): Promise<ShellAssessment['verdict']> {
+    const requirement = sessionRequirement(ctx);
+
+    let loaded: LoadedJevConfig;
+    try {
+      if (config.jevConfigPath === null) {
+        throw new Error('workflow_config_error');
+      }
+      loaded = dependencies.loadJevConfig(config.jevConfigPath);
+    } catch {
+      recordActionAssessment(
+        ctx,
+        dialect,
+        shellAssessment,
+        { verdict: 'deny', error: 'assessment_failed' },
+        requirement,
+      );
+      return 'deny';
+    }
+
+    if (requirement === null) {
+      const verdict = loaded.config.assessmentRequired
+        ? 'deny'
+        : shellAssessment.verdict;
+      // No error/facts: the builder records `requirement_unavailable`.
+      recordActionAssessment(
+        ctx,
+        dialect,
+        shellAssessment,
+        { verdict },
+        null,
+        loaded.config.assessmentRequired,
+      );
+      return verdict;
+    }
+
+    const result = await combineWithAssessment({
+      deterministic: shellAssessment.verdict,
+      provider: loaded.assessmentProvider,
+      action: modelAction(dialect),
+      context: modelActionContext(shellAssessment),
+      requirement,
+      policy: loaded.config.policy,
+      assessmentRequired: loaded.config.assessmentRequired,
+      ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+    });
+
+    recordActionAssessment(
+      ctx,
+      dialect,
+      shellAssessment,
+      result,
+      requirement,
+      loaded.config.assessmentRequired,
+    );
+
+    // `log` is non-blocking and only reachable from a malformed combination;
+    // treat it as allow in the shell vocabulary.
+    return result.verdict === 'log' ? 'allow' : result.verdict;
+  }
+
+  async function decideShell(
+    command: string | null,
+    dialect: ShellDialect,
+    ctx: ExtensionContext,
+  ): Promise<GateDecision> {
+    const gate = await evaluateShellGate(command, dialect, ctx);
+    if (gate.outcome === 'allow') {
+      return ALLOW;
+    }
+    if (gate.outcome === 'block') {
+      return block(gate.code);
+    }
+
+    const { config, assessment } = gate;
+    if (assessment.verdict === 'deny') {
+      return block(WORKFLOW_SHELL_DENIED);
+    }
+
+    let verdict: ShellAssessment['verdict'] = assessment.verdict;
+    if (config.actionAssessment && assessment.kind === 'plan') {
+      verdict = await assessModelAction(assessment, config, dialect, ctx);
+    }
+
+    if (verdict === 'deny') {
+      return block(WORKFLOW_SHELL_DENIED);
+    }
+    if (verdict !== 'confirm') {
+      return ALLOW;
+    }
+    return (await confirmShell(command ?? '', ctx))
       ? ALLOW
       : block(WORKFLOW_SHELL_CONFIRMATION_REQUIRED);
   }
@@ -583,6 +960,22 @@ export default function amosPiLogOnly(
     return requestReviewContinuation(ctx, issues);
   }
 
+  /**
+   * Jev still consumes guidance packs. Convert the committed injected rule IDs
+   * for this session only; no second selection path exists.
+   */
+  function reviewGuidance(ctx: ExtensionContext) {
+    try {
+      const state = guidanceSessions.get(sessionKey(ctx));
+      if (state === undefined) {
+        return guidancePacksForRuleIds([]);
+      }
+      return guidancePacksForRuleIds([...state.committedRuleIds]);
+    } catch {
+      return guidancePacksForRuleIds([]);
+    }
+  }
+
   async function appendEngineeringIssues(
     ctx: ExtensionContext,
     review: ChangeReviewResult,
@@ -603,9 +996,7 @@ export default function amosPiLogOnly(
       return;
     }
 
-    const guidance =
-      selectedGuidance.get(sessionKey(ctx)) ??
-      dependencies.selectGuidance().packs;
+    const guidance = reviewGuidance(ctx);
 
     let result: EngineeringReviewResult;
     try {
@@ -626,45 +1017,97 @@ export default function amosPiLogOnly(
     }
   }
 
-  pi.on('session_start', (_event, ctx) => {
+  pi.on('session_start', (event, ctx) => {
     try {
       ensureRecorder(ctx.cwd);
     } catch {
       // Initialization is best-effort; tool hooks retry ensure if needed.
+    }
+    try {
+      // Only a genuinely new session resets advisory state. A reload or resume
+      // keeps the existing injector session for this key when one exists.
+      if (!isRecord(event) || event.reason !== 'new') {
+        return;
+      }
+      const key = sessionKey(ctx);
+      guidanceSessions.delete(key);
+      forgetQueuedCalls(key);
+      requirementStore.clear(key);
+    } catch {
+      // A failed reset leaves the previous advisory state in place.
     }
   });
 
   pi.on('before_agent_start', (event, ctx) => {
     try {
       if (event.messageType !== 'user') {
+        // Custom-message runs are never touched by this extension.
         return undefined;
       }
+
+      const rawSections = event.systemPromptOptions?.sections;
+      const sections = isRecord(rawSections) ? rawSections : null;
+      const removeSection = (): void => {
+        if (sections !== null) {
+          delete sections[WORKFLOW_GUIDANCE_SECTION];
+        }
+      };
 
       const state = readPiWorkflowGateState(ctx.cwd);
       if (state.status === 'error') {
         reportWorkflowConfigErrorOnce();
-        return undefined;
       }
+
+      // Capture the direct user turn before any advisory selection. Only a
+      // real user message creates a frame; invalid or oversized turns drop the
+      // old one so it can never be reused for a later action.
+      const key = sessionKey(ctx);
+      const actionAssessmentConfig =
+        state.status === 'enabled' &&
+        state.config !== null &&
+        state.config.actionAssessment
+          ? state.config
+          : null;
+      if (actionAssessmentConfig === null) {
+        requirementStore.clear(key);
+      } else {
+        try {
+          requirementStore.captureUserMessage(
+            key,
+            typeof event.prompt === 'string' ? event.prompt : '',
+            actionAssessmentConfig.requirementEgress,
+          );
+        } catch {
+          requirementStore.clear(key);
+        }
+      }
+
       if (
         state.status !== 'enabled' ||
         state.config === null ||
         !state.config.guidance
       ) {
+        removeSection();
         return undefined;
       }
 
-      const selection = dependencies.selectGuidance({ prompt: event.prompt });
-      const rendered = dependencies.renderGuidance(selection.packs);
-      if (typeof rendered !== 'string' || rendered.length === 0) {
+      const guidance = guidanceSession(key);
+      const block = guidance.injector.selectPrompt(
+        typeof event.prompt === 'string' ? event.prompt : '',
+      );
+      if (block.text.length === 0 || sections === null) {
+        // No new text: remove only our stale namespaced section.
+        removeSection();
         return undefined;
       }
 
-      const sections = event.systemPromptOptions?.sections;
-      if (isRecord(sections)) {
-        // A namespaced entry leaves every other section untouched.
-        sections[WORKFLOW_GUIDANCE_SECTION] = rendered;
-        selectedGuidance.set(sessionKey(ctx), selection.packs);
+      // Overwrite only this namespaced entry, then commit only if the write
+      // actually landed. Every other section and custom message stays as is.
+      sections[WORKFLOW_GUIDANCE_SECTION] = block.text;
+      if (sections[WORKFLOW_GUIDANCE_SECTION] !== block.text) {
+        return undefined;
       }
+      commitGuidance(guidance, block);
     } catch {
       // Guidance is advisory and must never echo the prompt or block the run.
     }
@@ -672,7 +1115,17 @@ export default function amosPiLogOnly(
   });
 
   pi.on('tool_call', async (event, ctx) => {
-    recordToolCall(event, ctx);
+    // Normalize once and reuse the result for the audit record and advisory
+    // queue. A normalization failure still produces the engine_error record.
+    let normalized: ActionNormalization | null = null;
+    try {
+      normalized = normalizePiToolCall(event, ctx.cwd);
+    } catch {
+      normalized = null;
+    }
+
+    recordToolCall(normalized, event, ctx);
+    queueAdvisory(normalized, event, ctx);
 
     const tool = fallbackToolName(event);
     if (tool !== 'bash' && tool !== 'powershell') {
@@ -689,6 +1142,65 @@ export default function amosPiLogOnly(
       : undefined;
   });
 
+  pi.on('tool_result', (event: ToolResultEvent, ctx: ExtensionContext) => {
+    try {
+      const toolCallId = readToolCallId(event);
+      if (toolCallId === null) {
+        return undefined;
+      }
+      const key = sessionKey(ctx);
+      const composite = queuedCallKey(key, toolCallId);
+      const owner = queuedToolCalls.get(composite);
+      if (owner === undefined) {
+        return undefined;
+      }
+      queuedToolCalls.delete(composite);
+      // The composite key already binds the session; keep the identity check
+      // as a defensive guard before touching that session's injector state.
+      if (owner !== key) {
+        return undefined;
+      }
+
+      const state = guidanceSessions.get(owner);
+      if (state === undefined) {
+        return undefined;
+      }
+
+      const block = state.injector.selectPendingArea();
+      if (block === null) {
+        return undefined;
+      }
+      if (block.text.length === 0 || block.ruleIds.length === 0) {
+        // Retire an empty area block without emitting anything. Committing it
+        // marks the area injected so it is never selected again.
+        commitGuidance(state, block);
+        return undefined;
+      }
+
+      const content = event.content;
+      if (!Array.isArray(content)) {
+        return undefined;
+      }
+      // Append one independent text block; every existing block is untouched.
+      const appended = [
+        ...content,
+        { type: 'text' as const, text: block.text },
+      ];
+      const result: ToolResultEventResult = { content: appended };
+      // Returning only `content` would drop structured content in Pi.
+      if (event.structuredContent !== undefined) {
+        result.structuredContent = event.structuredContent;
+      }
+
+      // Commit only after the appended result is fully formed.
+      commitGuidance(state, block);
+      return result;
+    } catch {
+      // Advisory injection never changes the tool result or a gate verdict.
+      return undefined;
+    }
+  });
+
   pi.on('user_bash', async (event, ctx) => {
     recordUserBash(event, ctx);
 
@@ -701,11 +1213,67 @@ export default function amosPiLogOnly(
       command = null;
     }
 
-    const decision = await decideShell(command, 'bash', ctx);
-    if (decision.action === 'block') {
+    const gate = await evaluateShellGate(command, 'bash', ctx);
+    if (gate.outcome === 'allow') {
+      return undefined;
+    }
+    if (gate.outcome === 'block') {
       // Pi has no first-class block result for user_bash, so a fixed-code
       // error is the only non-leaking way to stop local execution.
-      throw new Error(decision.code);
+      throw new Error(gate.code);
+    }
+
+    const assessment = gate.assessment;
+    if (assessment.verdict === 'deny') {
+      throw new Error(WORKFLOW_SHELL_DENIED);
+    }
+
+    // Direct-user literal commands are a structural path: never Jev, and only
+    // the command the human typed can bind to the freshly captured frame.
+    const key = sessionKey(ctx);
+    let grant: UserLiteralGrant | null = null;
+    try {
+      grant = requirementStore.captureUserLiteral(key, command ?? '').grant;
+    } catch {
+      // A failed literal capture must not leave an older prompt available for
+      // a later model action.
+      requirementStore.clear(key);
+      grant = null;
+    }
+
+    if (grant !== null) {
+      const finalVerdict = applyUserLiteralGrant(grant, assessment, key);
+      try {
+        const recorder = ensureRecorder(ctx.cwd);
+        if (recorder !== null) {
+          recorder.recordAssessment(
+            { tool: 'user_bash', operation: 'shell_input', target: 'unknown' },
+            buildUserLiteralGrantAudit({
+              grant,
+              shellAssessment: assessment,
+              finalVerdict,
+              requirement: sessionRequirement(ctx),
+            }),
+          );
+        }
+      } catch {
+        // The grant is harness-captured; audit stays best effort.
+      }
+
+      if (finalVerdict === 'deny') {
+        throw new Error(WORKFLOW_SHELL_DENIED);
+      }
+      // A valid literal grant resolves every non-deny verdict; no UI prompt.
+      return undefined;
+    }
+
+    // Capture or binding failure falls back to ordinary confirmation behavior
+    // without consulting any older frame.
+    if (assessment.verdict === 'confirm') {
+      const confirmed = await confirmShell(command ?? '', ctx);
+      if (!confirmed) {
+        throw new Error(WORKFLOW_SHELL_CONFIRMATION_REQUIRED);
+      }
     }
     return undefined;
   });

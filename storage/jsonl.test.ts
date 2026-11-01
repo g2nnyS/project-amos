@@ -116,6 +116,51 @@ test('appends v2 JSONL entries one line at a time and preserves history', (t) =>
   }
 });
 
+test('assessment metadata is additive and old readers see schema_version 2', (t) => {
+  const dir = makeTempDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const logPath = join(dir, 'audit.jsonl');
+
+  const withoutAssessment: AuditEntry = entry();
+  const withAssessment: AuditEntry = {
+    ...entry(),
+    assessment: {
+      kind: 'jev_assessment',
+      deterministic_verdict: 'allow',
+      final_verdict: 'confirm',
+      requirement: {
+        frame_digest: `sha256:${'a'.repeat(64)}`,
+        source: 'user_message',
+        actor: 'user',
+        root_frame_id: 'rf_001',
+      },
+      question_set_version: 'jev-questions/v2',
+      model: 'jev-latest',
+      intent: 'feature',
+      requirementMatch: 'match',
+      sensitiveArea: false,
+      irreversible: false,
+      riskScore: 0.2,
+      confidence: 0.9,
+      requiresReview: false,
+      assessmentRequired: true,
+    },
+  };
+
+  appendAuditEntry(logPath, withoutAssessment);
+  appendAuditEntry(logPath, withAssessment);
+
+  const parsed = readFileSync(logPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as AuditEntry);
+
+  assert.equal(parsed[0]?.schema_version, 2);
+  assert.equal('assessment' in (parsed[0] as object), false);
+  assert.equal(parsed[1]?.schema_version, 2);
+  assert.deepEqual(parsed[1]?.assessment, withAssessment.assessment);
+});
+
 function entry(): AuditEntry {
   return {
     schema_version: 2,

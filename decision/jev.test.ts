@@ -7,6 +7,11 @@ import {
   createJevAssessmentProvider,
 } from './jev.ts';
 import {
+  createRequirementFrame,
+  requirementEgressProjection,
+  requirementFrameDigest,
+} from './requirement.ts';
+import {
   JevAssessmentError,
   type AssessmentAction,
   type AssessmentContext,
@@ -24,10 +29,24 @@ const CONTEXT: AssessmentContext = {
   diffSummary: 'Adds one predicate and a test.',
 };
 
+const FRAME = createRequirementFrame({
+  frame_id: 'rf_jev_test',
+  session_id: 'ses_jev_test',
+  source: 'user_message',
+  user_turn_digest: `sha256:${'c'.repeat(64)}`,
+  egress: 'allowed',
+  text: 'Add a deny rule for unexpected network access.',
+  declared_scope: ['engine'],
+  captured_at: '2026-10-29T00:00:00.000Z',
+});
+
+const ASSESSMENT_INPUT = { requirement: FRAME } as const;
+
 const API_KEY = 'test-key-never-log-me';
 
 function validPayload(options: {
   confidence?: number;
+  matchConfidence?: number;
   sensitive?: number;
   irreversible?: number;
   risk?: number;
@@ -46,6 +65,17 @@ function validPayload(options: {
           refactor: 0.01,
           docs: 0.01,
           chore: 0.02,
+        },
+      },
+      requirementMatch: {
+        type: 'choice',
+        choice: 'match',
+        confidence: options.matchConfidence ?? 0.9,
+        probabilities: {
+          match: 0.9,
+          partial: 0.05,
+          mismatch: 0.03,
+          unclear: 0.02,
         },
       },
       sensitiveArea: { type: 'noul', noul: options.sensitive ?? 0.1 },
@@ -124,14 +154,16 @@ async function captureJevError(
 test('maps valid choice, noul, and score answers into facts', async () => {
   const provider = makeProvider((async () => jsonResponse(validPayload())) as typeof fetch);
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.deepEqual(facts, {
     intent: 'feature',
+    requirementMatch: 'match',
+    requirementFrameDigest: requirementFrameDigest(FRAME),
     sensitiveArea: false,
     irreversible: false,
     riskScore: 0.25,
-    confidence: 0.93,
+    confidence: 0.9,
     requiresReview: false,
     model: 'jev-latest',
   });
@@ -151,7 +183,7 @@ test('sends the fixed versioned questions, model, action, and caller context', a
   }) as typeof fetch;
 
   const provider = makeProvider(fetchImpl);
-  await provider.assess(ACTION, CONTEXT);
+  await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(capturedInput, 'https://api.typesafe.ai/v1/systemone');
   assert.equal(capturedInit?.method, 'POST');
@@ -167,13 +199,18 @@ test('sends the fixed versioned questions, model, action, and caller context', a
     questions: unknown;
   };
 
-  assert.equal(JEV_QUESTION_SET_VERSION, 'jev-questions/v1');
+  assert.equal(JEV_QUESTION_SET_VERSION, 'jev-questions/v2');
   assert.equal(body.model, 'jev-latest');
-  assert.deepEqual(body.state, { action: ACTION, context: CONTEXT });
+  assert.deepEqual(body.state, {
+    action: ACTION,
+    context: CONTEXT,
+    requirement: requirementEgressProjection(FRAME),
+  });
   assert.deepEqual(body.questions, JEV_QUESTIONS);
 
   const questions = body.questions as typeof JEV_QUESTIONS;
   assert.equal(questions.intent.type, 'choice');
+  assert.equal(questions.requirementMatch.type, 'choice');
   assert.equal(questions.sensitiveArea.type, 'noul');
   assert.equal(questions.irreversible.type, 'noul');
   assert.equal(questions.risk.type, 'score');
@@ -202,6 +239,7 @@ test('redacts the action target before sending state to the hosted service', asy
       target: `https://user:${secret}@example.com/export/${secret}?token=${secret}#${secret}`,
     },
     CONTEXT,
+    ASSESSMENT_INPUT,
   );
 
   const rawBody = String(capturedInit?.body);
@@ -219,7 +257,7 @@ test('keeps the API key out of errors while reporting only safe status/code', as
     (async () => jsonResponse({ error: 'unauthorized' }, 401)) as typeof fetch,
   );
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
 
   assert.equal(error.code, 'auth');
   assert.equal(error.status, 401);
@@ -232,7 +270,7 @@ test('maps 500 to a safe http error', async () => {
     (async () => new Response('upstream exploded with secret data', { status: 500 })) as typeof fetch,
   );
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
 
   assert.equal(error.code, 'http');
   assert.equal(error.status, 500);
@@ -244,7 +282,7 @@ test('maps invalid JSON to a safe error', async () => {
     (async () => new Response('not-json', { status: 200 })) as typeof fetch,
   );
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
 
   assert.equal(error.code, 'invalid_json');
   assert.equal(error.status, undefined);
@@ -258,7 +296,7 @@ test('rejects refusal answers safely', async () => {
 
   const provider = makeProvider((async () => jsonResponse(payload)) as typeof fetch);
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
 
   assert.equal(error.code, 'refusal');
 });
@@ -315,7 +353,7 @@ test('rejects malformed or unknown answer shapes', async () => {
     const provider = makeProvider(
       (async () => jsonResponse(payload)) as typeof fetch,
     );
-    const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+    const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
     assert.equal(error.code, 'invalid_response');
   }
 });
@@ -333,7 +371,7 @@ test('times out with a safe code and clears the abort timer', async () => {
 
   const provider = makeProvider(fetchImpl, { timeoutMs: 10 });
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT));
 
   assert.equal(error.code, 'timeout');
 });
@@ -344,7 +382,7 @@ test('marks low-confidence answers as requiring review', async () => {
     { thresholds: { minConfidence: 0.8 } },
   );
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(facts.confidence, 0.4);
   assert.equal(facts.requiresReview, true);
@@ -361,7 +399,7 @@ test('marks probabilities near a threshold as requiring review', async () => {
     },
   );
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(facts.sensitiveArea, false);
   assert.equal(facts.requiresReview, true);
@@ -375,7 +413,7 @@ test('accepts noul probabilities exactly at the threshold', async () => {
       )) as typeof fetch,
   );
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(facts.sensitiveArea, true);
   assert.equal(facts.irreversible, true);
@@ -386,7 +424,7 @@ test('normalizes fractional three-level score 1.05 to 0.525', async () => {
     (async () => jsonResponse(validPayload({ risk: 1.05 }))) as typeof fetch,
   );
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(facts.riskScore, 0.525);
 });
@@ -396,7 +434,7 @@ test('normalizes maximum three-level score 2.0 to 1', async () => {
     (async () => jsonResponse(validPayload({ risk: 2 }))) as typeof fetch,
   );
 
-  const facts = await provider.assess(ACTION, CONTEXT);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
 
   assert.equal(facts.riskScore, 1);
 });
@@ -406,7 +444,60 @@ test('rejects a score above the three-level maximum', async () => {
     (async () => jsonResponse(validPayload({ risk: 2.1 }))) as typeof fetch,
   );
 
-  const error = await captureJevError(() => provider.assess(ACTION, CONTEXT));
+  const error = await captureJevError(() =>
+    provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT),
+  );
 
   assert.equal(error.code, 'invalid_response');
+});
+
+test('maps a requirement mismatch as a typed fact, not an error', async () => {
+  const payload = validPayload() as {
+    answers: Record<string, Record<string, unknown>>;
+  };
+  payload.answers.requirementMatch = {
+    type: 'choice',
+    choice: 'mismatch',
+    confidence: 0.88,
+  };
+
+  const provider = makeProvider((async () => jsonResponse(payload)) as typeof fetch);
+  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
+
+  assert.equal(facts.requirementMatch, 'mismatch');
+  assert.equal(facts.confidence, 0.88);
+});
+
+test('refuses requirement egress unless the frame explicitly allows it', async () => {
+  const denied = createRequirementFrame({
+    frame_id: 'rf_denied',
+    session_id: 'ses_jev_test',
+    source: 'user_message',
+    user_turn_digest: `sha256:${'d'.repeat(64)}`,
+    egress: 'denied',
+    text: 'Do not send this text anywhere.',
+    captured_at: '2026-10-29T00:00:00.000Z',
+  });
+
+  const provider = makeProvider(
+    (async () => jsonResponse(validPayload())) as typeof fetch,
+  );
+
+  const error = await captureJevError(() =>
+    provider.assess(ACTION, CONTEXT, { requirement: denied }),
+  );
+
+  assert.equal(error.code, 'egress_denied');
+});
+
+test('rejects a missing or malformed requirement frame', async () => {
+  const provider = makeProvider(
+    (async () => jsonResponse(validPayload())) as typeof fetch,
+  );
+
+  const error = await captureJevError(() =>
+    provider.assess(ACTION, CONTEXT, {} as never),
+  );
+
+  assert.equal(error.code, 'invalid_input');
 });

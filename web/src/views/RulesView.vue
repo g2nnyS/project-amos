@@ -1,0 +1,18 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
+import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import RuleDetail from '@/components/rules/RuleDetail.vue'
+import { useGovernanceStore } from '@/stores/governance'
+const governance = useGovernanceStore()
+const search = ref(''); const dimension = ref(''); const policyClass = ref(''); const hit = ref(''); const selected = ref<string | null>(null)
+const rules = computed(() => governance.policy?.candidate.rules ?? [])
+const dimensions = computed(() => [...new Set(rules.value.map(r => r.dimension))].sort())
+const filtered = computed(() => rules.value.filter(r => (!dimension.value || r.dimension === dimension.value) && (!policyClass.value || r.policy_class === policyClass.value) && (!hit.value || r.on_hit === hit.value) && [r.id, r.dimension, r.narrative, r.probe].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
+const detail = computed(() => rules.value.find(r => r.id === selected.value))
+watch(() => governance.activeProjectId, () => { selected.value = null; search.value = ''; dimension.value = ''; policyClass.value = ''; hit.value = '' })
+</script>
+<template><div class="page space-y-5"><PageHeader title="规则库" description="查看当前项目已发布的规则。发布是本地治理记录，不授予工具执行权限。"><template #actions><RouterLink to="/editor" class="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent">编辑候选</RouterLink></template></PageHeader>
+<EmptyState v-if="!governance.activeProjectId" title="请选择项目" description="选择项目后查看其已发布规则。" /><EmptyState v-else-if="!governance.policy" title="尚无已发布策略" description="可从仓库种子创建候选并提交提案。" />
+<template v-else><section class="panel min-w-0"><div class="panel-header"><div><h2 class="panel-title">已发布规则</h2><p class="panel-kicker">版本 {{ governance.policy.version }} · {{ filtered.length }} / {{ rules.length }} 条</p></div></div><div class="filterbar"><input v-model="search" aria-label="搜索规则" placeholder="搜索 ID、维度、说明或探测" class="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs" /><select v-model="dimension" aria-label="筛选维度" class="h-8 rounded-md border border-input bg-background px-2 text-xs"><option value="">全部维度</option><option v-for="d in dimensions" :key="d">{{ d }}</option></select><select v-model="policyClass" aria-label="筛选分类" class="h-8 rounded-md border border-input bg-background px-2 text-xs"><option value="">全部分类</option><option value="security">安全</option><option value="engineering">工程</option></select><select v-model="hit" aria-label="筛选命中裁决" class="h-8 rounded-md border border-input bg-background px-2 text-xs"><option value="">全部裁决</option><option>deny</option><option>confirm</option><option>log</option></select></div><div class="overflow-x-auto"><table class="data-table"><thead><tr><th>规则 ID</th><th>维度</th><th>层级</th><th>分类</th><th>执行面</th><th>命中</th><th>范围</th><th>TTL</th></tr></thead><tbody><tr v-for="rule in filtered" :key="rule.id"><td><button class="text-left font-medium underline-offset-4 hover:underline" type="button" @click="selected = rule.id">{{ rule.id }}</button></td><td>{{ rule.dimension }}</td><td>{{ rule.level }}</td><td>{{ rule.policy_class }}</td><td>{{ rule.enforcement }}</td><td>{{ rule.on_hit }}</td><td>{{ rule.scope }}</td><td>{{ rule.ttl ?? '无' }}</td></tr></tbody></table><p v-if="!filtered.length" class="p-6 text-center text-xs text-muted-foreground">没有匹配的规则。</p></div></section><RuleDetail v-if="detail" :rule="detail" /><p v-else class="text-xs text-muted-foreground">选择规则 ID 查看完整字段。</p></template></div></template>

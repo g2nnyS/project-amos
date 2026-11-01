@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <code>Stage A</code> · log-only · OpenCode V2 + Pi<br>
-  <strong>Status: Observation &amp; Audit Prototype (NO-GO for runtime enforcement)</strong>
+  <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
+  <strong>Status: Engineering gate implemented (opt-in); security runtime enforcement NO-GO</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
 
 > **Security Boundary Notice**: The security policy layer is in **Stage A (`log-only` observation)** and is **not yet a hard security boundary**.
-> Security adapters observe selected file-tool actions and log hypothetical verdicts to JSONL. A separate opt-in **engineering workflow gate** can block dangerous shell commands, inject engineering guidance, and hold changes for local/Jev review. That gate is a workflow guardrail, not complete mediation or an OS security boundary. True "physical locking," "default deny everywhere," or "tamper-proof auditing" still require an isolated supervisor process, complete action mediation, and OS-level execution boundaries (see [Security Model & Current Guarantees](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md)).
+> Security adapters observe selected file-tool actions and log hypothetical verdicts to JSONL. A separate opt-in **engineering workflow gate** can block dangerous shell commands, inject session-pinned advisory rules, assess actions against the captured human requirement, and hold changes for local/Jev review. That gate is a workflow guardrail, not complete mediation or an OS security boundary. True "physical locking," "default deny everywhere," or "tamper-proof auditing" still require an isolated supervisor process, complete action mediation, and OS-level execution boundaries (see [Security Model & Current Guarantees](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md)).
 
 ---
 
@@ -64,8 +64,11 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **In-Memory Supervisor Core**: Manages registered session context, hypothetical decisions, and process-local stop fencing (not yet wired to block live tool execution).
 - **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
+- **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
+- **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
 - **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
+- **Local Governance Console**: A Chinese browser UI and SQLite service for projects, complete rule editing, immutable proposals, human approval/publication, version history, rollback proposals, exports, and governance audit. This is local governance, not trusted execution or per-tool authorization.
 
 ### What's Not Built Yet (Required Before Enforcement)
 
@@ -102,6 +105,16 @@ npm run audit:review -- \
 
 *(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
 
+### 3. Open the Human Governance Console
+
+```bash
+npm run console
+```
+
+Open `http://127.0.0.1:4310` and use the **human token file** named by the startup output to log in. Tokens are never printed. State defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`, outside the workspace. Do not share the human token with agents; their separate token can read and propose but cannot approve.
+
+Create a project, import the repository seed rules into a candidate, edit and validate, then submit a proposal. **Approve and publish** commits a new local version atomically; rollback also requires a new proposal. Nothing rewrites the current harness configuration or enables runtime security enforcement. Same-user processes can still access the token and database; this is not OS isolation. See [Local Governance Guide](docs/local-governance.md) for startup options, recovery, and limits.
+
 ---
 
 ## Workflow & Documentation
@@ -113,7 +126,7 @@ npm run audit:review -- \
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
-- [V1 Implementation Guide (proposal)](docs/v1-implementation-guide.md)
+- [Local Governance Console](docs/local-governance.md)
 
 ---
 

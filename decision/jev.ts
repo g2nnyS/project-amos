@@ -1,16 +1,23 @@
 import { sanitizeAuditAction } from '../storage/audit.ts';
 import {
+  isRequirementFrame,
+  requirementEgressProjection,
+  requirementFrameDigest,
+} from './requirement.ts';
+import {
   JevAssessmentError,
   type AssessmentAction,
   type AssessmentContext,
   type AssessmentFacts,
+  type AssessmentInput,
   type AssessmentIntent,
   type AssessmentProvider,
   type AssessmentThresholds,
   type JevConfig,
+  type RequirementMatch,
 } from './types.ts';
 
-export const JEV_QUESTION_SET_VERSION = 'jev-questions/v1';
+export const JEV_QUESTION_SET_VERSION = 'jev-questions/v2';
 
 const INTENT_VALUES = [
   'feature',
@@ -18,6 +25,13 @@ const INTENT_VALUES = [
   'refactor',
   'docs',
   'chore',
+] as const;
+
+const REQUIREMENT_MATCH_VALUES = [
+  'match',
+  'partial',
+  'mismatch',
+  'unclear',
 ] as const;
 
 /**
@@ -35,6 +49,17 @@ export const JEV_QUESTIONS = Object.freeze({
       refactor: 'Restructures existing behavior without intended behavior change.',
       docs: 'Changes documentation, comments, or examples only.',
       chore: 'Maintenance, tooling, dependencies, or housekeeping with no product behavior change.',
+    }),
+  }),
+  requirementMatch: Object.freeze({
+    type: 'choice' as const,
+    instructions:
+      'Compare the proposed action with the human requirement in state.requirement. Judge only whether this action is within the stated request; do not assume unstated permission.',
+    criteria: Object.freeze({
+      match: 'The action directly serves the stated requirement and stays within its scope.',
+      partial: 'The action serves the requirement but includes an unstated target, method, or side effect.',
+      mismatch: 'The action does not serve the stated requirement, or exceeds its scope.',
+      unclear: 'The requirement is too ambiguous to compare, or the action cannot be related to it.',
     }),
   }),
   sensitiveArea: Object.freeze({
@@ -113,12 +138,22 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
     async assess(
       action: AssessmentAction,
       context: AssessmentContext,
-      signal?: AbortSignal,
+      input: AssessmentInput,
     ): Promise<AssessmentFacts> {
       assertAction(action);
       if (!isRecord(context)) {
         throw new JevAssessmentError('invalid_input');
       }
+      if (!isRecord(input) || !isRequirementFrame(input.requirement)) {
+        throw new JevAssessmentError('invalid_input');
+      }
+      const requirement = input.requirement;
+      if (requirement.egress !== 'allowed') {
+        // Requirement text is user content. Sending it to a hosted assessor is
+        // an explicit, per-frame decision, never a provider default.
+        throw new JevAssessmentError('egress_denied');
+      }
+      const signal = input.signal;
       if (isAborted(signal)) {
         throw new JevAssessmentError('aborted');
       }
@@ -129,7 +164,11 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
         // hostile tool identifiers to the hosted decision service. The action
         // projection is the same safe surface used by the audit sink.
         body = JSON.stringify({
-          state: { action: sanitizeAuditAction(action), context },
+          state: {
+            action: sanitizeAuditAction(action),
+            context,
+            requirement: requirementEgressProjection(requirement),
+          },
           model,
           questions: JEV_QUESTIONS,
         });
@@ -187,7 +226,11 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
           throw new JevAssessmentError('invalid_json');
         }
 
-        return mapResponse(payload, thresholds);
+        return mapResponse(
+          payload,
+          thresholds,
+          requirementFrameDigest(requirement),
+        );
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener('abort', onExternalAbort);
@@ -243,6 +286,7 @@ function statusToCode(status: number): 'auth' | 'rate_limited' | 'http' {
 function mapResponse(
   payload: unknown,
   thresholds: AssessmentThresholds,
+  requirementDigest: string,
 ): AssessmentFacts {
   if (!isRecord(payload)) {
     throw new JevAssessmentError('invalid_response');
@@ -263,12 +307,14 @@ function mapResponse(
   }
 
   const intentAnswer = readAnswer(answers, 'intent');
+  const requirementAnswer = readAnswer(answers, 'requirementMatch');
   const sensitiveAnswer = readAnswer(answers, 'sensitiveArea');
   const irreversibleAnswer = readAnswer(answers, 'irreversible');
   const riskAnswer = readAnswer(answers, 'risk');
 
   if (
     isRefusalAnswer(intentAnswer) ||
+    isRefusalAnswer(requirementAnswer) ||
     isRefusalAnswer(sensitiveAnswer) ||
     isRefusalAnswer(irreversibleAnswer) ||
     isRefusalAnswer(riskAnswer)
@@ -276,12 +322,20 @@ function mapResponse(
     throw new JevAssessmentError('refusal');
   }
 
-  const { intent, confidence } = readChoiceIntent(intentAnswer);
+  const intentSelection = readChoiceIntent(intentAnswer);
+  const requirementSelection = readChoiceRequirement(requirementAnswer);
   const sensitiveProbability = readNoul(sensitiveAnswer);
   const irreversibleProbability = readNoul(irreversibleAnswer);
   const riskScore = readScore(
     riskAnswer,
     JEV_QUESTIONS.risk.criteria.length,
+  );
+
+  // The combined confidence is the weakest answer that can change a verdict.
+  // A confident intent classification must not mask an uncertain match.
+  const confidence = Math.min(
+    intentSelection.confidence,
+    requirementSelection.confidence,
   );
 
   const requiresReview =
@@ -298,7 +352,9 @@ function mapResponse(
     );
 
   return {
-    intent,
+    intent: intentSelection.intent,
+    requirementMatch: requirementSelection.match,
+    requirementFrameDigest: requirementDigest,
     sensitiveArea: sensitiveProbability >= thresholds.sensitiveArea,
     irreversible: irreversibleProbability >= thresholds.irreversible,
     riskScore,
@@ -326,6 +382,21 @@ function isRefusalAnswer(answer: Record<string, unknown>): boolean {
 function readChoiceIntent(
   answer: Record<string, unknown>,
 ): { intent: AssessmentIntent; confidence: number } {
+  const selection = readChoice(answer, INTENT_VALUES);
+  return { intent: selection.value, confidence: selection.confidence };
+}
+
+function readChoiceRequirement(
+  answer: Record<string, unknown>,
+): { match: RequirementMatch; confidence: number } {
+  const selection = readChoice(answer, REQUIREMENT_MATCH_VALUES);
+  return { match: selection.value, confidence: selection.confidence };
+}
+
+function readChoice<T extends string>(
+  answer: Record<string, unknown>,
+  values: readonly T[],
+): { value: T; confidence: number } {
   if (answer.type !== 'choice') {
     throw new JevAssessmentError('invalid_response');
   }
@@ -333,7 +404,7 @@ function readChoiceIntent(
   const choice = answer.choice;
   if (
     typeof choice !== 'string' ||
-    !(INTENT_VALUES as readonly string[]).includes(choice)
+    !(values as readonly string[]).includes(choice)
   ) {
     throw new JevAssessmentError('invalid_response');
   }
@@ -350,7 +421,7 @@ function readChoiceIntent(
     }
   }
 
-  return { intent: choice as AssessmentIntent, confidence };
+  return { value: choice as T, confidence };
 }
 
 function readNoul(answer: Record<string, unknown>): number {

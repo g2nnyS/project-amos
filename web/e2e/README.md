@@ -1,0 +1,3 @@
+# Browser smoke
+
+Start the Neuralyn Vite server separately (default `http://127.0.0.1:5178`), then run `node e2e/smoke.mjs` from the Neuralyn directory. Override with `NEURALYN_URL=http://127.0.0.1:PORT`. Requires Node and `/usr/bin/chromium`; no extra npm dependencies. The script launches an isolated headless Chromium profile under `/tmp/opencode`, uses actual CDP input and DOM observations (not store injection), and saves JSON/text evidence and desktop/mobile screenshots there. It reports failures independently and exits nonzero for failed checks, console errors, runtime exceptions, or HTTP errors. Unimplemented scenarios are explicitly listed as unverified in the evidence.
