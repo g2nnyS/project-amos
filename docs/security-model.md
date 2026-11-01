@@ -93,9 +93,10 @@ Requirement text is user content. Sending it to a hosted assessor requires
 text or declared scope.
 
 Implementation status: the frame type, Jev question set v2, digest binding, and
-combination table exist in `decision/` and are covered by tests. No adapter captures a
-frame yet, and no harness is blocked by this layer; runtime enforcement remains Stage A
-`log-only`.
+combination table exist in `decision/`. The opt-in engineering workflow gate captures
+frames and uses them for its shell-assessment path; the separate security observer
+does not become an enforcement boundary through that integration. Runtime security
+enforcement remains Stage A `log-only`.
 
 ## Snapshot provenance archives
 
@@ -136,7 +137,9 @@ The following remain open until a separate enforcement milestone:
   bind mounts, hard links, or check/use races.
 - Tamper-resistant audit. Appending JSONL is not an immutability or remote-retention
   guarantee.
-- Authenticated, one-time human approval bound to the exact action and snapshot.
+- Authenticated, one-time system authorization bound to the exact action, session,
+  snapshot/epoch and expiry, following independent Jev review of an eligible stopped
+  escalation. Human per-request approval is not the latest target; see decision 32.
 - A real OS sandbox or trusted mediator that performs side effects on the agent's
   behalf.
 
@@ -155,6 +158,14 @@ eligible. Humans edit rules through the existing multi-dimensional table; the
 agent cannot publish them. Engineering guardrails and advisory injection stay
 outside this trio.
 
+The 2026-11-02 [Product Design](product-design.md) makes protected-service-owned
+SQLite the sole Amos configuration authority at the GUI stage. A shared project
+activation snapshot feeds enforcement and narrative injection; temporary tightening
+requires a trusted publisher, human preauthorization, finite TTL and immutable epochs.
+Neither the GUI nor SQLite alone supplies isolation. The current YAML/JSON loaders,
+shared advisory seed and same-domain JSONL remain unchanged. The eleven implementation
+gaps and falsifiable acceptance gates are in [Gap Closure](product-gap-plan.md).
+
 This shape is not implemented. Current adapters remain log-only, and today's
 Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
 `docs/decisions.md`. Aligning the target does not pass the enforcement gate.
@@ -167,13 +178,20 @@ Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
    incomplete actions are denied, not guessed.
 3. Filesystem and network operations are executed through an OS sandbox or protected
    mediator using real object identity. A preflight `realpath()` check is insufficient.
-4. Approvals bind the action digest, policy snapshot digest, session, expiry, and
-   one-time use. Non-interactive environments fail closed when confirmation is needed.
+4. Approvals bind the action digest, policy snapshot/epoch, session, expiry, and
+   one-time use, with revalidation immediately before execution. The target reviewer
+   may resolve an eligible stopped request; without a valid reviewer/human protocol,
+   confirm stays stopped. Today's engineering gate still requires its supported UI.
 5. Policy and audit storage use a separate OS identity or remote trust anchor. A local
    hash chain without an external anchor only detects accidental edits.
 6. Adversarial integration tests cover symlinks, TOCTOU, hard links, shell escapes,
    unknown tools, disabled extensions, policy modification, approval substitution, and
    audit tampering.
+7. The protected publisher authenticates SQLite configuration versions and shared
+   activation projections; the agent cannot modify the DB, WAL, backups or generated
+   native configuration. TTL, rollout and language-check evidence cannot be forged by
+   changing project files or by naming a rule in a prompt. Durable audit acknowledgement
+   precedes effects; outcome receipts remain distinct from authorization records.
 
 ## Policy dimensions
 

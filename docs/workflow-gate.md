@@ -5,6 +5,14 @@ security adapters' Stage A `log-only` mode. Enabling it may block a dangerous sh
 command or hold work for engineering review; that does not turn Amos into complete
 mediation or a trusted execution boundary.
 
+**Target direction, not current behavior:** routine engineering gate decisions
+should be automatic under human-maintained standards, using deterministic checks
+and Jev where applicable, without per-change human approval. Failed checks,
+missing evidence, and failed or uncertain review do not become passes. The
+current implementation and harness limitations described below remain unchanged;
+in particular, OpenCode completion feedback is not a merge block. See
+[decision 32](decisions.md) and the [gap plan](product-gap-plan.md).
+
 ## What it does
 
 - Selects advisory engineering rules from a session-pinned snapshot before and during a coding run. The current DB-free adapter uses a transitional seed compiled from `guidance/`; it is not a trusted control-plane snapshot.
@@ -24,6 +32,15 @@ mediation or a trusted execution boundary.
 - Never logs shell command text, file contents, credentials, or the raw diff.
 
 ## Configuration
+
+**Target migration, not current behavior:** at the GUI stage all Amos gate,
+guidance/routing/budget, provider and review configuration moves to the protected
+SQLite authority described in [Product Design](product-design.md). Native harness
+files become installation/bootstrap or generated projections, not parallel writable
+policy sources. Secrets remain protected references. Enforcement and injection will
+derive from one activation snapshot; today's separate guidance seed does not provide
+that invariant. Keep the guardrail and dynamic injection throughout migration; neither
+may be relabeled as the sandbox. The examples below describe the existing loaders.
 
 Pi reads the gate from the local, untracked `.pi/amos.json`; OpenCode reads the equivalent
 object from plugin options. The security audit configuration remains required and

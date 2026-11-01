@@ -57,6 +57,12 @@ declared scope.
 
 ## Configuration and data egress
 
+The GUI-stage target moves Amos-owned non-secret provider/model/threshold/egress
+configuration into protected-service-owned SQLite, with secret references rather
+than plaintext keys. See [Product Design](product-design.md), section 3.1. This does
+not change the file configuration or construction API below today, and does not give
+the engineering Jev path the separate security reviewer's approval authority.
+
 Direct construction remains available:
 
 ```ts

@@ -29,6 +29,29 @@ Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. 
 
 ---
 
+## Target Product Contract (Not Yet Implemented)
+
+Approve for me, editable multi-dimensional rules, and dynamic engineering guidance
+remain three first-class capabilities. They share **one auditable project activation
+snapshot**: all applicable hard rules are evaluated, while active narratives are
+selected for context. Inactive rules are neither evaluated nor newly injected;
+injection failure never changes a verdict.
+
+At the GUI stage, **protected-service-owned SQLite is the sole authority for all
+Amos configuration**. The GUI uses an authenticated API; YAML/JSON/Git become
+import/export and archives, and native harness configuration is generated where
+required. Secrets stay outside configuration as protected references. This is a
+target migration, not a change to today's file-based setup.
+
+The design also specifies bounded automatic tightening with mandatory TTL,
+human-approved relaxation, real probes and per-rule rollout, structured language
+check findings, protected acceptance gates and agent-inaccessible audit storage.
+See [Product Design](docs/product-design.md) and the
+[eleven-gap evidence and delivery plan](docs/product-gap-plan.md). None of these
+design updates lifts the runtime-enforcement NO-GO.
+
+---
+
 ## How It Works Today
 
 ```text
@@ -74,9 +97,11 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - Complete mediation across shell commands, patches, network calls, unknown tools, and other harness entry points.
 - A trusted supervisor process and policy/audit storage isolated from the agent's writable domain.
 - Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
-- Authenticated one-time human approval bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
+- Authenticated one-time system authorization bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
 - Live security-layer `deny` or `confirm` blocking in either adapter. The separate engineering workflow gate does not satisfy this requirement.
 - The Approve for me security shape: a host sandbox that stops a boundary crossing before a separate reviewer may approve that one escalation. The target is recorded in [Security Shape](docs/security-shape.md). It is not a plugin mode, and today's Jev path still cannot approve.
+- Shared project activation for enforcement and guidance, trusted temporary-tightening publication, rule rollout/probe execution, and version-bound language-check findings. The existing advisory seed is not that shared activation authority.
+- A completed GUI/SQLite single-authority configuration migration and protected publication/dispatch path. The separate governance-console worktree is not a delivered execution boundary.
 
 ---
 
@@ -112,6 +137,7 @@ npm run audit:review -- \
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
+- [Product Design](docs/product-design.md) · [Gap Closure & Delivery Gates](docs/product-gap-plan.md)
 - [Security Model & Guarantees](docs/security-model.md) · [Security Shape](docs/security-shape.md) · [G0 Gate Criteria](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
