@@ -129,6 +129,7 @@ npm run audit:review -- \
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
+- [受限严格 Harness](docs/strict-harness.md) — 受控 Pi SDK 宿主；只暂存内存变更，不开放原生 Shell/MCP 执行。
 
 ---
 
