@@ -128,6 +128,7 @@ npm run console
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
 - [本地治理控制台](docs/local-governance.md)
+- [受限严格 Harness](docs/strict-harness.md) — 受控 Pi SDK 宿主；只暂存内存变更，不开放原生 Shell/MCP 执行。
 
 ---
 

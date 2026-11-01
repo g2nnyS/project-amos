@@ -128,6 +128,7 @@ Create a project, import the repository seed rules into a candidate, edit and va
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
 - [Local Governance Console](docs/local-governance.md)
+- [Restricted Strict Harness](docs/strict-harness.md) — controlled Pi SDK host; memory-only staged changes, no native Shell/MCP executor.
 
 ---
 
