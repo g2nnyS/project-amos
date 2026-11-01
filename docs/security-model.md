@@ -145,6 +145,16 @@ as a policy-matching and observation prototype, not a hard security boundary.
 
 ## Required enforcement architecture
 
+### Restricted staging profile
+
+The experimental controlled Pi host described in [strict-harness.md](strict-harness.md)
+uses a smaller execution domain: its only model tools operate on private in-memory
+string files, not native paths. Shell, MCP, extensions, native filesystem executors,
+and automatic change application are absent. Mandatory audit, pinned policy, and a
+closed dispatcher protect that virtual domain. Its guarantees must not be generalized
+to the ordinary plugins or to native filesystem/OS enforcement. The requirements below
+still apply before expanding to that broader execution domain.
+
 1. A trusted supervisor outside the agent's writable domain loads policy from a
    protected location, owns credentials, and writes audit records.
 2. A complete action envelope is produced at the execution boundary. Unsupported or

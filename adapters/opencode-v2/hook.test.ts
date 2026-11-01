@@ -238,3 +238,36 @@ test("missing explicit configuration and non-log-only modes fail setup", async (
     options: { mode: "enforce", rulesPath: RULES, schemaPath: SCHEMA, logPath: "x" },
   } as Context), /Only log-only/);
 });
+
+test("an explicit strict mode rejects setup with the fixed code and registers nothing", async () => {
+  const registrations: string[] = [];
+  const context = {
+    location: { directory: ROOT },
+    options: {
+      mode: "strict",
+      rulesPath: RULES,
+      schemaPath: SCHEMA,
+      logPath: join(tmpdir(), "amos-strict-not-created.jsonl"),
+    },
+    tool: {
+      hook: async (name: string) => {
+        registrations.push(name);
+        return { dispose: async () => {} };
+      },
+    },
+    shell: {
+      hook: async (name: string) => {
+        registrations.push(name);
+        return { dispose: async () => {} };
+      },
+    },
+  } as unknown as Context;
+
+  await assert.rejects(
+    plugin.setup(context),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === "amos_strict_requires_controlled_host",
+  );
+  assert.deepEqual(registrations, []);
+});

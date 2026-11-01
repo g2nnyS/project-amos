@@ -25,6 +25,8 @@
 19. （2026-10-29）当前无控制面阶段的 pack-to-snapshot seed 只用于打通闭集选择、session 去重、纯渲染和 Harness 注入管道，不是受信策略源或不可绕过边界。基线与轮次注入可先落地；区域队列也可以先复用现有 adapter 的 write/edit 归一化结果做工程验证，但在 Phase 3 受管执行闭环前不得宣称完成受信的区域注入。Pi 的区域规范只能作为 `tool_result` 的独立追加块，OpenCode V2 只能排队到下一次 context；两者都不得改写工具结果正文。运行时应只有一个选择实现，`guidance/packs.ts` 逐步降级为导入种子，`AGENTS.md` 投影与 digest 一致性检查留待后续子阶段。
 20. （2026-10-29，2026-10-30 实现）动作裁决分为三层：结构层（工具是否受管、路径是否在范围内、是否命中 0 层拒绝）、确定性策略层（引擎基线）和语义层（Jev 的 requirement conformance 与风险事实）。Jev 只能收紧基线：`requirementMatch: mismatch` 可把 `allow` 降为 `deny`，`partial` / `unclear` 降为 `confirm`；`match` 不得把 `deny` / `confirm` 升为 `allow`。事实必须绑定 `RequirementFrame` digest，digest 不匹配按评估失败处理。受管动作的基线必须允许人类明确要求生效；Pi 直接用户通道的逐字命令经 `UserLiteralGrant` 在结构层把非 `deny` 提升为 `allow`，但所有确定性 `deny` 永远保留。人类要求只能由 harness 用户输入通道捕获；`actionAssessment` 必须显式启用，requirement 文本出境另需 `requirementEgress: allowed`。OpenCode 中由语义层新增而确定性基线未要求的 `confirm` 必须 fail closed，不能依赖可能不会询问的后续权限事件。评估结果写入独立脱敏审计记录；运行期整体仍是 Stage A log-only，且该门控不是安全边界。
 
+21. （2026-10-31）用户确认优先实现 Harness 内严格管控，而非仅由模型判断恶意。保护域包含本 Harness 发起的全部动作，不能把它启动的 Shell、MCP 或子 Harness 作为外部旁路。首个可验证实现限定为受控 Pi SDK 宿主及内存工作区：仅显式开放结构化文件工具，关闭原生 Shell、网络工具、MCP、扩展和项目资源发现，变更只暂存、由宿主显式导出；因此不声称原生文件系统或 OS 隔离。普通 Pi/OpenCode 插件不支持严格模式，不能静默降级。策略按 session 固定，审计失败停止执行，confirm 没有真实批准通道就不执行，Jev 仍只能收紧；这不解除第 12 项对完整原生执行域的 NO-GO。详见 `docs/strict-harness.md`。
+
 ## 当前实现约束
 
 - `opencode.jsonc` 显式传入规则、Schema、日志路径和 `log-only` 模式；Pi 通过 `ctx.cwd` 定位 `.pi/amos.json`，两个适配器都不依赖进程 cwd。

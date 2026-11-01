@@ -85,6 +85,15 @@ export const WORKFLOW_CONFIG_ERROR = 'workflow_config_error';
 export const WORKFLOW_GUIDANCE_SECTION = 'amos-workflow-guidance';
 export const WORKFLOW_REVIEW_CUSTOM_TYPE = 'amos-workflow-review';
 
+/**
+ * Fixed code for an explicit `mode: "strict"` request seen by the ordinary
+ * extension. Strict hosting requires the separate controlled entrypoint; this
+ * extension cannot enforce it, so every tool path fails closed instead of
+ * silently degrading to log-only.
+ */
+export const AMOS_STRICT_REQUIRES_CONTROLLED_HOST =
+  'amos_strict_requires_controlled_host';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -148,6 +157,30 @@ export function readPiConfig(directory: string): PiAmosConfig | null {
     schemaPath: resolve(directory, schemaPath),
     logPath: resolve(directory, logPath),
   };
+}
+
+/**
+ * Detect an explicit `mode: "strict"` request in `.pi/amos.json`.
+ *
+ * Pi has no reliable way for an ordinary extension to stop the host, so a
+ * strict request must never be treated as an inert configuration. Every other
+ * shape (missing file, unreadable or malformed JSON, absent or non-strict mode)
+ * returns false so existing Stage A behavior is unchanged. Nothing here ever
+ * reports the file, path, or raw payload.
+ */
+export function requestsPiStrictMode(directory: string): boolean {
+  if (!isNonBlankString(directory) || !isAbsolute(directory)) {
+    return false;
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(join(directory, '.pi', 'amos.json'), 'utf8'));
+  } catch {
+    return false;
+  }
+
+  return isRecord(raw) && raw.mode === 'strict';
 }
 
 export interface PiWorkflowGateState {
@@ -328,6 +361,18 @@ export default function amosPiLogOnly(
     console.error(
       'Amos Pi adapter: workflow gate configuration error; workflow shell actions stay blocked until the configuration is repaired.',
     );
+  }
+
+  /**
+   * Fail closed for an explicit unsupported strict request. All other shapes
+   * keep the existing log-only / workflow behavior. Never throws.
+   */
+  function strictModeRequested(ctx: ExtensionContext): boolean {
+    try {
+      return requestsPiStrictMode(ctx.cwd);
+    } catch {
+      return false;
+    }
   }
 
   function ensureRecorder(directory: string): LogOnlyRecorder | null {
@@ -1115,6 +1160,13 @@ export default function amosPiLogOnly(
   });
 
   pi.on('tool_call', async (event, ctx) => {
+    // An ordinary extension cannot host strict mode. Block before any audit,
+    // advisory, Jev, or literal-grant path so the request never degrades into
+    // an unguarded log-only run.
+    if (strictModeRequested(ctx)) {
+      return { block: true, reason: AMOS_STRICT_REQUIRES_CONTROLLED_HOST };
+    }
+
     // Normalize once and reuse the result for the audit record and advisory
     // queue. A normalization failure still produces the engine_error record.
     let normalized: ActionNormalization | null = null;
@@ -1202,6 +1254,13 @@ export default function amosPiLogOnly(
   });
 
   pi.on('user_bash', async (event, ctx) => {
+    // Same unsupported-host posture as `tool_call`, but Pi has no block result
+    // for direct user shells, so the fixed code is thrown before any shell
+    // assessment, Jev call, or literal grant.
+    if (strictModeRequested(ctx)) {
+      throw new Error(AMOS_STRICT_REQUIRES_CONTROLLED_HOST);
+    }
+
     recordUserBash(event, ctx);
 
     let command: string | null = null;
