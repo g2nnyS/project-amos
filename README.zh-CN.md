@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Agent 策略匹配与审计原型
+  智能体授权与监督系统
 </p>
 
 <p align="center">
