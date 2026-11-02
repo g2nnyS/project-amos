@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @amos/console",
     "console": "npm run build && node dist/control-plane/cli.js serve",
     "console:init": "npm run build && node dist/control-plane/cli.js init",
-    "console:serve": "node dist/control-plane/cli.js serve"
+    "console:serve": "node dist/control-plane/cli.js serve",
+    "e2e:smoke": "npm run build && node web/e2e/smoke.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",

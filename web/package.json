@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "node scripts/vue-tsc.mjs --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "node scripts/vue-tsc.mjs --noEmit",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build:test && node --test .test-dist/web/tests/*.test.js"
   },
