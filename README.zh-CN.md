@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Agent 策略匹配与审计原型
+  智能体授权与监督系统
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>当前状态：工程硬门已实现（可选启用）；安全运行期强制执行 NO-GO</strong>
+  <strong>当前状态：三块产品 — Approve for me（尚未实现）、内置多维拦截规则并可被人修改、工程规范动态注入；运行期强制执行 NO-GO</strong>
 </p>
 
 <p align="center">
@@ -26,6 +26,16 @@
 
 > **安全边界声明**：安全策略层目前处于 **阶段 A（`log-only` 旁路观察）**，还**不是硬安全边界**。
 > 安全适配器只观察部分文件工具调用，把假设裁决写进 JSONL。另有独立的、显式启用的**工程工作流硬门**，可阻断危险 Shell 命令、注入按会话固定的 advisory 规范、按捕获的人类要求评估动作，并暂缓有问题的变更；它是工作流护栏，不等于全通道中介或 OS 安全边界。“物理锁定”“全局默认拒绝”或“防篡改审计”仍需受信任监督进程、完整动作覆盖与 OS 级执行隔离（详见 [安全模型](docs/security-model.md) 与 [工作流硬门](docs/workflow-gate.md)）。
+
+---
+
+## 目标产品契约（尚未实现）
+
+Approve for me、多维可编辑规则、工程规范动态注入都是一等能力。三者共用**一份可审计的项目激活快照**：全部适用硬规则参与评估，已激活叙事按任务选入上下文。未激活规则既不评估也不新注入；注入失败不改变裁决。
+
+**GUI 阶段，全部 Amos 配置以受保护服务持有的 SQLite 为唯一事实源。** GUI 走认证 API，YAML／JSON／Git 只做导入、导出与归档；harness 必需的原生配置由服务生成。凭据材料独立保护，配置只存引用。这是待实现的迁移，不改变今天的文件配置方式。
+
+设计同时补齐：预授权内的自动收紧与强制 TTL、放宽人批、真实 probe 与逐规则 rollout、结构化语言检查发现、受保护接受门、Agent 不可写的审计。详见[产品设计](docs/product-design.md)和[十一项差距证据与交付计划](docs/product-gap-plan.md)。文档完成不解除运行期强制执行 NO-GO。
 
 ---
 
@@ -77,6 +87,9 @@
 - 抗符号链接（Symlink）、硬链接、Bind Mount 及 TOCTOU 竞争的文件系统安全执行。
 - 绑定具体动作与策略快照的**一次性认证审批**，以及 `scope` / `owner` / `level` 等元数据的运行期权限语义。
 - 安全策略层在任一适配器中的真实 `deny` / `confirm` 拦截。独立的工程工作流硬门不满足这一要求。
+- Approve for me 形态的安全边界：宿主沙箱先停住越界，独立审查者只能批准这一次已停住的升级。目标记录在 [安全形态](docs/security-shape.md)。它不是插件模式，当前 Jev 路径仍然不能批准。
+- 拦截与注入同源的项目激活、可信临时收紧发布、规则 rollout／真实 probe 执行，以及绑定代码版本的语言检查信封。现有 advisory 种子不等于同源激活权威。
+- GUI／SQLite 配置单主迁移及受保护的发布／执行接入。本地治理控制台尚未迁移全部 Amos 配置，也不构成受信执行边界。
 
 ---
 
@@ -122,11 +135,13 @@ npm run console
 - **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 **核心文档索引**：
-- [安全模型与当前保证](docs/security-model.md) · [G0 门禁核验标准](docs/go-no-go.md)
+- [产品设计](docs/product-design.md) · [差距闭环与交付门](docs/product-gap-plan.md)
+- [安全模型与当前保证](docs/security-model.md) · [安全形态](docs/security-shape.md) · [G0 门禁核验标准](docs/go-no-go.md)
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
 - [本地治理控制台](docs/local-governance.md)
+- [受限严格 Harness](docs/strict-harness.md) — 受控 Pi SDK 宿主；只暂存内存变更，不开放原生 Shell/MCP 执行。
 
 ---
 
