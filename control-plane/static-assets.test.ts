@@ -15,6 +15,8 @@ test('closed assets serve exact pinned bytes including lazy chunks and fonts', a
     await writeFile(join(dir, 'font-abc.woff2'), 'font');
     await writeFile(join(dir, 'secret.js'), 'not public');
     await writeFile(join(dir, 'asset-manifest.json'), JSON.stringify(['index.html', 'app.js', 'styles.css', 'lazy-abc.js', 'font-abc.woff2']));
+    const loaded = await loadStaticAssets(dir);
+    assert.equal(loaded.get('/font-abc.woff2')?.body.byteLength, 4);
     harness = await createHarness({ staticDir: dir });
     for (const [path, content, mime] of [['/lazy-abc.js', 'lazy', 'text/javascript'], ['/font-abc.woff2', 'font', 'font/woff2']] as const) {
       const response: Response = await fetch(harness.url + path);

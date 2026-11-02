@@ -6,7 +6,7 @@ import { isPlainRecord, readStoredJson, writeStoredJson } from '../lib/storage.j
 const KEY = 'amos:console:preferences'
 export const usePreferencesStore = defineStore('preferences', () => {
   const stored = readStoredJson(KEY, isPlainRecord)
-  const theme = ref<ThemePreference>(stored?.theme === 'light' || stored?.theme === 'system' ? stored.theme : 'dark')
+  const theme = ref<ThemePreference>(stored?.theme === 'dark' || stored?.theme === 'system' ? stored.theme : 'light')
   const sidebarCollapsed = ref(stored?.sidebarCollapsed === true), compact = ref(stored?.compact === true)
   const systemDark = ref(true)
   let media: MediaQueryList | undefined

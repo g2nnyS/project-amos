@@ -18,7 +18,10 @@ export function values(p: RulePredicate): string[] { return Object.values(p.args
 export function newRule(id: string): DraftRule {
   return { id, dimension: '', level: 0, expressivity: 'deterministic', predicate: [predicate('op_in')], narrative: '', on_hit: 'log', scope: 'project', ttl: null, owner: 'human', source: { repo: '', rev: '', path: '', section: '', lines: '', quote: '' }, probe: '', policy_class: 'security', enforcement: 'runtime' }
 }
-export function clone(candidate: Candidate): DraftCandidate { return structuredClone(candidate) as DraftCandidate }
+export function clone(candidate: Candidate): DraftCandidate {
+  // Reactive proxies cannot be structuredClone'd. Rule records are JSON data.
+  return JSON.parse(JSON.stringify(candidate)) as DraftCandidate
+}
 export function activationIssues(candidate: DraftCandidate): string[] {
   const ids = candidate.rules.map(r => r.id)
   const inc = candidate.activation.includedRuleIds

@@ -2,12 +2,13 @@
 import { computed } from 'vue'
 
 const props = defineProps<{ status: string }>()
+const labels: Record<string, string> = { pending: '待审批', approved: '已批准', rejected: '已拒绝', withdrawn: '已撤回', expired: '已过期' }
 
 type Tone = 'positive' | 'warning' | 'danger' | 'info' | 'neutral'
 
 const tone = computed<Tone>(() => {
   const value = props.status.trim().toLowerCase()
-  if (['completed', 'complete', 'active', 'success', 'connected', 'live'].includes(value)) {
+  if (['completed', 'complete', 'success', 'connected', 'live'].includes(value)) {
     return 'positive'
   }
   if (['pending', 'invited', 'warning', 'paused', 'scheduled'].includes(value)) {
@@ -51,6 +52,6 @@ const dotClass = computed(
     :class="toneClass"
   >
     <span class="size-1 rounded-full" :class="dotClass" aria-hidden="true" />
-    {{ status }}
+    {{ labels[status] ?? status }}
   </span>
 </template>

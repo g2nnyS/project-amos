@@ -99,7 +99,7 @@ export class ApiClient {
     if (epoch !== this.generation) throw stale()
     if (typeof document === 'undefined' || typeof URL.createObjectURL !== 'function') throw new ApiError('download_unavailable', '当前环境无法下载文件。')
     const url = URL.createObjectURL(blob); const link = document.createElement('a')
-    link.href = url; link.download = `amos-policy-${id.replace(/[^a-z0-9_-]/gi, '-')}-v${version}.${format}`; link.style.display = 'none'
+    link.href = url; link.download = `amos-policy-${id.replace(/[^a-z0-9_-]/gi, '-')}-v${version}.${format}`; link.hidden = true
     document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 }
