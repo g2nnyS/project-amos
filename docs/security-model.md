@@ -146,6 +146,12 @@ The following remain open until a separate enforcement milestone:
 Until those are implemented and adversarially tested, the product must be described
 as a policy-matching and observation prototype, not a hard security boundary.
 
+The standalone [local governance console](local-governance.md) adds persistent rule
+proposals, capability-authenticated human governance review, and atomic version
+publication. These are not runtime action approvals: publishing does not change
+harness configuration, enable adapter enforcement, or establish a separate OS
+trust domain. Same-UID processes can still access its credentials and database.
+
 ## Target shape: Approve for me
 
 The target security shape is the Codex Approve for me trio, not a plugin mode
