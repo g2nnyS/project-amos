@@ -6,7 +6,7 @@ import { evaluate, evaluateWithMatches, evaluatePolicy, assertValidTable } from 
 import { createSnapshotStore } from '../storage/snapshot.ts';
 
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
-const SESSION_WORKSPACE = '/home/test-user/projects/project-atmos';
+const SESSION_WORKSPACE = '/home/test-user/projects/project-amos';
 
 const ENGINE_ERROR = {
   verdict: 'deny',
@@ -15,7 +15,7 @@ const ENGINE_ERROR = {
 } as const;
 
 const SOURCE = {
-  repo: 'Termcp',
+  repo: 'fixture',
   rev: '62e060057c79a8c4343ed7452471520a1bb3dcff',
   path: 'docs/api.md',
   section: 'test',
@@ -517,7 +517,7 @@ test('target_outside_glob matches only paths outside every pattern', () => {
 });
 
 test('url_query_key_in checks keys case-insensitively and ignores values', () => {
-  const predicate = [call('url_query_key_in', { keys: ['token', 'x-termcp-password'] })];
+  const predicate = [call('url_query_key_in', { keys: ['token', 'x-example-password'] })];
   const httpAction = (target: string) =>
     action({ tool: 'http', operation: 'http_request', target });
 
@@ -660,10 +660,10 @@ test('non-canonical file targets fail closed instead of bypassing target_glob', 
     predicate: [call('target_glob', { patterns: ['/**/sessions/*/*/log.bin'] })],
   });
   for (const target of [
-    '/var/lib/termcp/sessions/s/1//log.bin',
-    '/var/lib/termcp/sessions/s/1/./log.bin',
-    '/var/lib/termcp/sessions/s/1/../1/log.bin',
-    '/var/lib/termcp/sessions/s/1/log.bin/',
+    '/var/lib/example/sessions/s/1//log.bin',
+    '/var/lib/example/sessions/s/1/./log.bin',
+    '/var/lib/example/sessions/s/1/../1/log.bin',
+    '/var/lib/example/sessions/s/1/log.bin/',
   ]) {
     assert.deepEqual(
       evaluateWithMatches(action({ target }), [globRule], NOW),
@@ -778,7 +778,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'credential plaintext export',
-      action({ tool: 'termcp', operation: 'profile_export_plaintext', target: 'profiles.toml' }),
+      action({ tool: 'batch', operation: 'profile_export_plaintext', target: 'profiles.toml' }),
       'deny',
     ],
     [
@@ -796,7 +796,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
       action({
         tool: 'fs',
         operation: 'file_truncate',
-        target: '/var/lib/termcp/sessions/s/1/log.bin',
+        target: '/var/lib/example/sessions/s/1/log.bin',
       }),
       'deny',
     ],
@@ -812,12 +812,12 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'side effect project write',
-      action({ tool: 'fs', operation: 'file_write', target: '/home/test-user/projects/project-atmos/a.ts' }),
+      action({ tool: 'fs', operation: 'file_write', target: '/home/test-user/projects/project-amos/a.ts' }),
       'confirm',
     ],
     [
       'side effect project read is log only',
-      action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
+      action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-amos/a.ts' }),
       'log',
     ],
     [
@@ -827,7 +827,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     ],
     [
       'advisory-only resource rule never fires',
-      action({ tool: 'termcp', operation: 'bulk_import', target: '/whatever' }),
+      action({ tool: 'batch', operation: 'batch_import', target: '/whatever' }),
       'allow',
     ],
   ];
@@ -846,7 +846,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   assert.ok(secretRead.matched_rule_ids.includes('side_effect-1-3'));
 
   const whitelistedRead = evaluateWithMatches(
-    action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-atmos/a.ts' }),
+    action({ tool: 'fs', operation: 'file_read', target: '/home/test-user/projects/project-amos/a.ts' }),
     rules,
     NOW,
   );

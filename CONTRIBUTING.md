@@ -42,15 +42,15 @@ Use one worktree per task or agent instead of sharing a dirty checkout:
 
 ```bash
 git fetch origin
-git worktree add ../project-atmos-feat-thing -b feat/thing origin/master
-cd ../project-atmos-feat-thing
+git worktree add ../project-amos-feat-thing -b feat/thing origin/master
+cd ../project-amos-feat-thing
 npm ci
 ```
 
 When finished, remove the worktree only after its branch is merged or abandoned:
 
 ```bash
-git worktree remove ../project-atmos-feat-thing
+git worktree remove ../project-amos-feat-thing
 ```
 
 Never switch branches under another agent that is actively working in the same directory.

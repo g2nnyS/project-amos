@@ -17,7 +17,7 @@
         "scope": "project",
         "ttl": "2026-10-25T00:00:00.000Z",
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -43,7 +43,7 @@
         "scope": "project",
         "ttl": "2026-10-25T00:00:00.000Z",
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -69,7 +69,7 @@
         "scope": "project",
         "ttl": "2026-10-25T00:00:00.000Z",
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -95,7 +95,7 @@
         "scope": "project",
         "ttl": null,
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -121,7 +121,7 @@
         "scope": "project",
         "ttl": "2026-10-25",
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],
@@ -147,7 +147,7 @@
         "scope": "project",
         "ttl": "2026-10-25",
         "owner": "human",
-        "source": { "repo": "Termcp", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
+        "source": { "repo": "fixture", "rev": "test-rev", "path": "docs/api.md", "section": "test", "lines": "1", "quote": "test quote" },
         "probe": "read a file"
       }
     ],

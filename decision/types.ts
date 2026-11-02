@@ -6,6 +6,8 @@
  * model can only tighten a verdict.
  */
 
+import type { RequirementFrame } from './requirement.ts';
+
 export interface AssessmentAction {
   tool: string;
   operation: string;
@@ -28,24 +30,41 @@ export type AssessmentIntent =
   | 'docs'
   | 'chore';
 
+/**
+ * Whether the action serves the captured human requirement.
+ *
+ * `unclear` is a first-class answer: a model that cannot relate the action to
+ * the requirement must say so rather than guess `match`.
+ */
+export type RequirementMatch = 'match' | 'partial' | 'mismatch' | 'unclear';
+
 export interface AssessmentFacts {
   intent: AssessmentIntent;
+  requirementMatch: RequirementMatch;
+  /** Digest of the requirement frame these facts were produced from. */
+  requirementFrameDigest: string;
   sensitiveArea: boolean;
   irreversible: boolean;
   /** Normalized risk in [0, 1]. */
   riskScore: number;
-  /** Confidence of the categorical intent answer in [0, 1]. */
+  /** Lowest confidence across the answers that affect the verdict. */
   confidence: number;
   requiresReview: boolean;
   /** Model identifier returned by the provider, for audit. */
   model: string;
 }
 
+export interface AssessmentInput {
+  /** Required: semantic assessment always compares an action to a requirement. */
+  readonly requirement: RequirementFrame;
+  readonly signal?: AbortSignal;
+}
+
 export interface AssessmentProvider {
   assess(
     action: AssessmentAction,
     context: AssessmentContext,
-    signal?: AbortSignal,
+    input: AssessmentInput,
   ): Promise<AssessmentFacts>;
 }
 
@@ -63,7 +82,10 @@ export interface AssessmentThresholds {
 export interface JevConfig {
   apiKey: string;
   model?: string;
+  /** Full System One endpoint. Mutually exclusive with baseUrl. */
   endpoint?: string;
+  /** API root resolved to `<base>/v1/systemone` (or `<base>/systemone` for /v1). */
+  baseUrl?: string;
   timeoutMs?: number;
   thresholds?: Partial<AssessmentThresholds>;
   /** Injectable fetch implementation; defaults to the runtime global fetch. */
@@ -73,6 +95,7 @@ export interface JevConfig {
 export type JevErrorCode =
   | 'config'
   | 'invalid_input'
+  | 'egress_denied'
   | 'auth'
   | 'rate_limited'
   | 'http'

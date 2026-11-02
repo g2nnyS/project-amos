@@ -7,7 +7,14 @@
         "mode": "log-only",
         "rulesPath": "./constraints/rules.yaml",
         "schemaPath": "./constraints/schema.json",
-        "logPath": "./spike/logs/opencode.jsonl"
+        "logPath": "./spike/logs/opencode.jsonl",
+        "workflowGate": {
+          "enabled": true,
+          "guidance": true,
+          "shellGate": true,
+          "completionReview": true,
+          "jevConfigPath": "./decision/jev.local.json"
+        }
       }
     }
   ]

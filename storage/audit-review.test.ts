@@ -82,7 +82,7 @@ function auditLine(overrides: Record<string, unknown> = {}): string {
     action: {
       tool: 'read',
       operation: 'file_read',
-      target: '/home/test-user/projects/project-atmos/README.md',
+      target: '/home/test-user/projects/project-amos/README.md',
     },
     matched_rule_ids: [],
     verdict: 'allow',
@@ -116,7 +116,7 @@ function source(name: string, lines: string[]): ReviewSource {
 }
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'atmos-audit-review-'));
+  return mkdtempSync(join(tmpdir(), 'amos-audit-review-'));
 }
 
 function deepFreeze<T>(value: T): T {
@@ -391,7 +391,7 @@ test('confirm selects every record at the 20-record boundary', () => {
       action: {
         tool: 'read',
         operation: 'file_read',
-        target: `/home/test-user/projects/project-atmos/file-${index}.md`,
+        target: `/home/test-user/projects/project-amos/file-${index}.md`,
       },
       matched_rule_ids: ['one-confirm'],
       verdict: 'confirm',

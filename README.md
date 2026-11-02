@@ -1,12 +1,17 @@
 <h1 align="center">Project-Amos</h1>
 
 <p align="center">
-  <strong>Agent policy matching and audit prototype</strong>
+  <strong>Agent Mandate &amp; Oversight System</strong><br>
+  Agent policy matching and audit prototype
 </p>
 
 <p align="center">
-  <code>Stage A</code> · log-only · OpenCode V2 + Pi<br>
-  <strong>Status: NO-GO for runtime enforcement</strong>
+  Move agent constraints out of wishful prompts and into a deterministic policy engine with a verifiable audit trail.
+</p>
+
+<p align="center">
+  <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
+  <strong>Status: three parts — Approve for me (not implemented), built-in multi-dimensional intercept rules plus user edits, dynamic engineering-norm injection; runtime enforcement NO-GO</strong>
 </p>
 
 <p align="center">
@@ -15,83 +20,93 @@
 
 ---
 
-## What this is
+## What Is Amos?
 
-Amos is an experiment in moving agent constraints out of prompts and into a
-deterministic policy engine with an auditable decision record. It is **not yet a hard
-security boundary**.
+Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
 
-The current adapters observe selected file-tool actions and write hypothetical verdicts
-to JSONL. They do not block, confirm, sandbox, or mediate tool execution. Claims about
-"physical locking", "default deny everywhere", or an "immutable audit log" require a
-trusted supervisor, complete action coverage, and an OS-level execution boundary that
-are not implemented here.
+> **Security Boundary Notice**: The security policy layer is in **Stage A (`log-only` observation)** and is **not yet a hard security boundary**.
+> Security adapters observe selected file-tool actions and log hypothetical verdicts to JSONL. A separate opt-in **engineering workflow gate** can block dangerous shell commands, inject session-pinned advisory rules, assess actions against the captured human requirement, and hold changes for local/Jev review. That gate is a workflow guardrail, not complete mediation or an OS security boundary. True "physical locking," "default deny everywhere," or "tamper-proof auditing" still require an isolated supervisor process, complete action mediation, and OS-level execution boundaries (see [Security Model & Current Guarantees](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md)).
 
-## Implemented today
+---
 
-- A pure TypeScript policy engine with a strict rule schema and content-addressed
-  policy snapshots.
-- A pure Supervisor core for registered session context, hypothetical decisions, and
-  process-local stop fencing; it is not connected to tool execution.
-- Explicit decisions for matched rules, no match, engine error, and not evaluated.
-- `log-only` adapters for OpenCode V2 and Pi covering the file channel.
-- Coverage records for known-but-unsupported tools and opaque shell actions instead of
-  silent skips.
-- Audit records carrying a rule snapshot digest, matched rule metadata, decision kind,
-  schema version, and coverage status.
-- Content-addressed snapshot archives under the log directory, containing the exact
-  rules, schema, schema digest, and effective session workspace for each policy digest.
-- URL value/userinfo/fragment/path redaction before persistence; shell text and file
-  contents are not logged.
-- Review worksheets that use the rule metadata captured at decision time and encode
-  untrusted fields so they cannot inject Markdown or HTML.
-- A provider-neutral Jev integration for typed semantic assessments. Jev is advisory;
-  deterministic policy remains authoritative and model output may only tighten a
-  verdict.
+## Target Product Contract (Not Yet Implemented)
 
-## Not implemented yet
+Approve for me, editable multi-dimensional rules, and dynamic engineering guidance
+remain three first-class capabilities. They share **one auditable project activation
+snapshot**: all applicable hard rules are evaluated, while active narratives are
+selected for context. Inactive rules are neither evaluated nor newly injected;
+injection failure never changes a verdict.
 
-- Complete mediation across shell, patches, network, unknown tools, disabled
-  extensions, and other harness entry points.
-- A trusted supervisor separated from the agent's writable domain.
-- Policy and audit storage the agent cannot modify.
-- Runtime semantics for `scope`, `owner`, `level`, and `policy_class`; they are
-  validated audit metadata, not yet permissions or rule-selection mechanisms.
-- Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
-- Authenticated one-time approval bound to the action and policy snapshot.
-- Tamper-evident remote audit retention.
-- Real `deny`/`confirm` enforcement in either adapter.
+At the GUI stage, **protected-service-owned SQLite is the sole authority for all
+Amos configuration**. The GUI uses an authenticated API; YAML/JSON/Git become
+import/export and archives, and native harness configuration is generated where
+required. Secrets stay outside configuration as protected references. This is a
+target migration, not a change to today's file-based setup.
 
-See [Security model and current guarantees](docs/security-model.md) for the threat model
-and the enforcement architecture required before those claims can be made.
+The design also specifies bounded automatic tightening with mandatory TTL,
+human-approved relaxation, real probes and per-rule rollout, structured language
+check findings, protected acceptance gates and agent-inaccessible audit storage.
+See [Product Design](docs/product-design.md) and the
+[eleven-gap evidence and delivery plan](docs/product-gap-plan.md). None of these
+design updates lifts the runtime-enforcement NO-GO.
 
-## How it works today
+---
+
+## How It Works Today
 
 ```text
 Tool event
    │
    ▼
-Adapter normalization ── unsupported/opaque ──► coverage record (not evaluated)
+Adapter normalization ── unsupported tool / opaque shell ──► coverage record (never silently skipped)
    │
    ▼
-Strict policy snapshot
+Strict policy snapshot (content-addressed by digest)
    │
    ▼
 Deterministic evaluation
    │
-   ├─ matched rule      → hypothetical verdict + matched rule metadata
-   ├─ no match          → explicit no_match (recorder uses hypothetical deny)
+   ├─ matched rule      → hypothetical verdict + pinned rule metadata
+   ├─ no match          → explicit no_match (recorder logs hypothetical deny)
    ├─ validation error  → deny + engine_error
    └─ snapshot failure  → deny + snapshot_error
    │
    ▼
-Sanitized JSONL audit record ──► human review worksheet
+Sanitized JSONL audit log & snapshot archive ──► injection-safe human review worksheet
 ```
 
-The only side effects are writing the audit record and its content-addressed snapshot
-archive. The tool call is never modified.
+In security `log-only` mode, the only side effects are writing the audit record and its content-addressed policy snapshot. The opt-in engineering workflow gate can separately block dangerous shell commands or hold work for review; it does not turn the security layer into a hard boundary.
 
-## Quick start
+---
+
+## Where Things Stand
+
+### What's Built (Stage A Foundation)
+
+- **Pure Policy Engine & Snapshot Archives**: A strict, schema-validated TypeScript engine that cleanly separates *matched*, *no match*, *engine error*, and *not evaluated*. Every policy digest archives its exact rules, schema, and workspace context under the log directory.
+- **In-Memory Supervisor Core**: Manages registered session context, hypothetical decisions, and process-local stop fencing (not yet wired to block live tool execution).
+- **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
+- **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
+- **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
+- **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
+- **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
+- **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
+- **Local Governance Console**: A Chinese browser UI and SQLite service for projects, complete rule editing, immutable proposals, human approval/publication, version history, rollback proposals, exports, and governance audit. This is local governance, not trusted execution or per-tool authorization.
+
+### What's Not Built Yet (Required Before Enforcement)
+
+- Complete mediation across shell commands, patches, network calls, unknown tools, and other harness entry points.
+- A trusted supervisor process and policy/audit storage isolated from the agent's writable domain.
+- Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
+- Authenticated one-time system authorization bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
+- Live security-layer `deny` or `confirm` blocking in either adapter. The separate engineering workflow gate does not satisfy this requirement.
+- The Approve for me security shape: a host sandbox that stops a boundary crossing before a separate reviewer may approve that one escalation. The target is recorded in [Security Shape](docs/security-shape.md). It is not a plugin mode, and today's Jev path still cannot approve.
+- Shared project activation for enforcement and guidance, trusted temporary-tightening publication, rule rollout/probe execution, and version-bound language-check findings. The existing advisory seed is not that shared activation authority.
+- A completed GUI/SQLite single-authority configuration migration and protected publication/dispatch path. The local governance console does not migrate all Amos configuration or provide a trusted execution boundary.
+
+---
+
+## Quick Start
 
 Requires Node.js 26 and npm:
 
@@ -101,10 +116,11 @@ npm run typecheck
 npm test
 ```
 
-OpenCode and Pi usage remains log-only. See [the Pi adapter guide](docs/pi-adapter.md)
-and the root `opencode.jsonc`.
+### 1. Run with OpenCode V2 or Pi
 
-Generate a review worksheet:
+The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md). Engineering gating, Jev configuration, and its honest harness limits are documented in [Workflow Gate](docs/workflow-gate.md).
+
+### 2. Generate a Human Review Worksheet
 
 ```bash
 npm run audit:review -- \
@@ -113,29 +129,35 @@ npm run audit:review -- \
   --output spike/review/new-review.md
 ```
 
-## Delivery conventions
+*(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
 
-- New work uses a `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/`
-  branch.
-- Protected branches, force-push prevention, secret scanning, and release authority
-  must be enforced by the Git host. Local hooks and branch names are not authorization.
-- Security-sensitive changes require human review. Agents do not self-approve, merge,
-  force-push, tag, or release.
-- See [CONTRIBUTING.md](CONTRIBUTING.md).
+### 3. Open the Human Governance Console
 
-## Documentation
+```bash
+npm run console
+```
 
-- [Security model](docs/security-model.md)
-- [Supervisor core](docs/supervisor-core.md)
-- [Jev integration](docs/jev-integration.md)
-- [Product and engineering decisions](docs/decisions.md)
-- [G0 gate criteria](docs/go-no-go.md)
-- [Fixture coverage](docs/fixture-coverage.md)
-- [OpenCode V2 seam notes](spike/README.md)
-- [Pi adapter guide](docs/pi-adapter.md)
+Open `http://127.0.0.1:4310` and use the **human token file** named by the startup output to log in. Tokens are never printed. State defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`, outside the workspace. Do not share the human token with agents; their separate token can read and propose but cannot approve.
+
+Create a project, import the repository seed rules into a candidate, edit and validate, then submit a proposal. **Approve and publish** commits a new local version atomically; rollback also requires a new proposal. Nothing rewrites the current harness configuration or enables runtime security enforcement. Same-user processes can still access the token and database; this is not OS isolation. See [Local Governance Guide](docs/local-governance.md) for startup options, recovery, and limits.
+
+---
+
+## Workflow & Documentation
+
+- **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+**Documentation Index**:
+- [Product Design](docs/product-design.md) · [Gap Closure & Delivery Gates](docs/product-gap-plan.md)
+- [Security Model & Guarantees](docs/security-model.md) · [Security Shape](docs/security-shape.md) · [G0 Gate Criteria](docs/go-no-go.md)
+- [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
+- [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
+- [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
+- [Local Governance Console](docs/local-governance.md)
+- [Restricted Strict Harness](docs/strict-harness.md) — controlled Pi SDK host; memory-only staged changes, no native Shell/MCP executor.
 
 ---
 
 <p align="center">
-  <sub>A policy engine is useful only when its trust boundary, coverage, and audit trail are as explicit as its verdicts.</sub>
+  <sub>A policy engine is useful only when its trust boundary, coverage gaps, and audit trail are as explicit as its verdicts.</sub>
 </p>

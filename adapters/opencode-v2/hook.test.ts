@@ -18,12 +18,12 @@ const SCHEMA = join(ROOT, "constraints", "schema.json");
 // Logical session workspace supplied via the harness location. Rule evaluation
 // uses this instead of process.cwd() so the assertions describe the explicit
 // ${SESSION_WORKSPACE} boundary rather than the clone location.
-const WORKSPACE = "/home/test-user/projects/project-atmos";
+const WORKSPACE = "/home/test-user/projects/project-amos";
 type Event = { tool?: unknown; input?: unknown };
 type Context = Parameters<typeof plugin.setup>[0];
 
 async function setupHook(t: any, optionOverrides: Record<string, unknown> = {}) {
-  const temporary = mkdtempSync(join(tmpdir(), "atmos-hook-"));
+  const temporary = mkdtempSync(join(tmpdir(), "amos-hook-"));
   const logPath =
     typeof optionOverrides.logPath === "string"
       ? optionOverrides.logPath
@@ -205,7 +205,7 @@ test("audit write failure is visible once without leaking path or payload", asyn
     console.error = originalError;
   });
 
-  const root = mkdtempSync(join(tmpdir(), "atmos-hook-failure-"));
+  const root = mkdtempSync(join(tmpdir(), "amos-hook-failure-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const blocker = join(root, "blocker");
   writeFileSync(blocker, "not a directory", "utf8");
@@ -237,4 +237,37 @@ test("missing explicit configuration and non-log-only modes fail setup", async (
     ...base,
     options: { mode: "enforce", rulesPath: RULES, schemaPath: SCHEMA, logPath: "x" },
   } as Context), /Only log-only/);
+});
+
+test("an explicit strict mode rejects setup with the fixed code and registers nothing", async () => {
+  const registrations: string[] = [];
+  const context = {
+    location: { directory: ROOT },
+    options: {
+      mode: "strict",
+      rulesPath: RULES,
+      schemaPath: SCHEMA,
+      logPath: join(tmpdir(), "amos-strict-not-created.jsonl"),
+    },
+    tool: {
+      hook: async (name: string) => {
+        registrations.push(name);
+        return { dispose: async () => {} };
+      },
+    },
+    shell: {
+      hook: async (name: string) => {
+        registrations.push(name);
+        return { dispose: async () => {} };
+      },
+    },
+  } as unknown as Context;
+
+  await assert.rejects(
+    plugin.setup(context),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === "amos_strict_requires_controlled_host",
+  );
+  assert.deepEqual(registrations, []);
 });

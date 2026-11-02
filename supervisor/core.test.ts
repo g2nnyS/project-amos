@@ -8,10 +8,10 @@ import { createSupervisorCore } from './core.ts';
 const NOW = Date.parse('2026-10-28T12:00:00.000Z');
 const DIGEST = '0123456789abcdef'.repeat(4);
 const OTHER_DIGEST = 'fedcba9876543210'.repeat(4);
-const WORKSPACE = '/home/test-user/projects/project-atmos';
+const WORKSPACE = '/home/test-user/projects/project-amos';
 
 const SOURCE = {
-  repo: 'Termcp',
+  repo: 'fixture',
   rev: '62e060057c79a8c4343ed7452471520a1bb3dcff',
   path: 'docs/api.md',
   section: 'supervisor-test',

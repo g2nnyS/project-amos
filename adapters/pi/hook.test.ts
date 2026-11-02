@@ -13,7 +13,11 @@ import { join, resolve } from 'node:path';
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-import atmosPiLogOnly, { readPiConfig } from './index.ts';
+import amosPiLogOnly, {
+  AMOS_STRICT_REQUIRES_CONTROLLED_HOST,
+  readPiConfig,
+  requestsPiStrictMode,
+} from './index.ts';
 
 const ROOT = process.cwd();
 const RULES = join(ROOT, 'constraints', 'rules.yaml');
@@ -40,7 +44,7 @@ function setup(
   t: { after(callback: () => void): void },
   options: { config?: unknown } = {},
 ) {
-  const root = mkdtempSync(join(tmpdir(), 'atmos-pi-hook-'));
+  const root = mkdtempSync(join(tmpdir(), 'amos-pi-hook-'));
   // The explicit session directory is what Pi supplies as ctx.cwd. Keep it
   // separate from the temporary root so configuration and audit output stay
   // inside a workspace that the rule table can describe with
@@ -51,7 +55,7 @@ function setup(
   if (config !== null) {
     mkdirSync(join(directory, '.pi'), { recursive: true });
     writeFileSync(
-      join(directory, '.pi', 'atmos.json'),
+      join(directory, '.pi', 'amos.json'),
       typeof config === 'string' ? config : JSON.stringify(config),
       'utf8',
     );
@@ -64,7 +68,7 @@ function setup(
       return () => {};
     },
   } as unknown as ExtensionAPI;
-  atmosPiLogOnly(pi);
+  amosPiLogOnly(pi);
 
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -399,12 +403,71 @@ test('invalid mode or malformed JSON degrades to a no-op recorder', async (t) =>
   assert.equal(errors.length, 3);
 });
 
+test('explicit strict mode blocks every ordinary tool path and direct user_bash', async (t) => {
+  // No `workflowGate` field: an explicit strict request alone must fail closed.
+  const hook = setup(t, {
+    config: { ...validConfig(), mode: 'strict' },
+  });
+
+  // Sentinel: record which tools would have executed. A block result must keep
+  // the executor from running, not merely emit a diagnostic.
+  const executed: string[] = [];
+  async function attempt(toolName: string, input?: unknown): Promise<unknown> {
+    const result = await hook.toolCall(toolName, input);
+    if (result === undefined) {
+      executed.push(toolName);
+    }
+    return result;
+  }
+
+  const secret = 'STRICT_MODE_SECRET';
+  const cases: ReadonlyArray<readonly [string, unknown]> = [
+    [
+      'write',
+      { path: join(hook.directory, 'docs/generated.md'), content: secret },
+    ],
+    ['read', { path: join(hook.directory, 'src/example.ts') }],
+    ['custom_tool', { command: `${secret} --token=abc`, content: secret }],
+    ['bash', { command: `${secret} --token=abc` }],
+  ];
+
+  for (const [toolName, input] of cases) {
+    assert.deepEqual(await attempt(toolName, input), {
+      block: true,
+      reason: AMOS_STRICT_REQUIRES_CONTROLLED_HOST,
+    });
+  }
+  assert.deepEqual(executed, []);
+  assert.deepEqual(hook.entries(), []);
+
+  await assert.rejects(
+    async () => {
+      await hook.userBash(`${secret} --token=abc`);
+    },
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === AMOS_STRICT_REQUIRES_CONTROLLED_HOST,
+  );
+});
+
+test('strict downgrade does not affect log-only or other configuration shapes', async (t) => {
+  // Log-only stays passive even when the workflow gate is omitted.
+  const hook = setup(t);
+  const target = join(hook.directory, 'src/example.ts');
+  assert.equal(await hook.toolCall('read', { path: target }), undefined);
+  assert.equal(await hook.userBash('LOG_ONLY_COMMAND'), undefined);
+  assert.deepEqual(
+    hook.entries().map((entry) => entry.verdict),
+    ['log', null],
+  );
+});
+
 test('readPiConfig resolves relative paths against the explicit session directory', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'atmos-pi-config-'));
+  const directory = mkdtempSync(join(tmpdir(), 'amos-pi-config-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   mkdirSync(join(directory, '.pi'), { recursive: true });
   writeFileSync(
-    join(directory, '.pi', 'atmos.json'),
+    join(directory, '.pi', 'amos.json'),
     JSON.stringify({
       mode: 'log-only',
       rulesPath: './constraints/rules.yaml',
@@ -423,4 +486,40 @@ test('readPiConfig resolves relative paths against the explicit session director
 
   assert.equal(readPiConfig('relative/directory'), null);
   assert.equal(readPiConfig(''), null);
+});
+
+test('only an explicit strict mode is reported as an unsupported host request', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'amos-pi-strict-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, '.pi'), { recursive: true });
+  const configPath = join(directory, '.pi', 'amos.json');
+  const write = (value: unknown): void => {
+    writeFileSync(
+      configPath,
+      typeof value === 'string' ? value : JSON.stringify(value),
+      'utf8',
+    );
+  };
+
+  write({ ...validConfig(), mode: 'strict' });
+  assert.equal(requestsPiStrictMode(directory), true);
+  // Strict is still not a valid Stage A mode for the ordinary observer.
+  assert.equal(readPiConfig(directory), null);
+
+  write({ mode: 'strict' });
+  assert.equal(requestsPiStrictMode(directory), true);
+
+  for (const value of [
+    validConfig(),
+    { ...validConfig(), mode: 'enforce' },
+    '{"mode":',
+  ]) {
+    write(value);
+    assert.equal(requestsPiStrictMode(directory), false);
+  }
+
+  rmSync(configPath);
+  assert.equal(requestsPiStrictMode(directory), false);
+  assert.equal(requestsPiStrictMode('relative/directory'), false);
+  assert.equal(requestsPiStrictMode(''), false);
 });

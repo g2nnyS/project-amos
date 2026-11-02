@@ -53,6 +53,51 @@ The implementation is being hardened to provide these properties:
 These properties cover the observer pipeline only. They do not stop a tool call in the
 real harness.
 
+## Requirement conformance (semantic layer)
+
+The deterministic engine answers "what does the policy say"; it cannot answer "did the
+human ask for this". Jev supplies that as a typed semantic sensor, never as an
+authority:
+
+| Layer | Question | Authority |
+|---|---|---|
+| Structural | Is the tool mediated, is the target in scope, is it a zero-level action? | Trusted code |
+| Deterministic | What is the policy baseline? | `engine/` |
+| Semantic | Does the action serve the captured requirement? | Jev facts |
+
+A `RequirementFrame` is the only accepted representation of a human requirement. It is
+captured by the harness from a user-input channel. Its `source` is either
+`user_message` or `delegated`; a delegated frame records that the immediate
+instruction came from an agent, and can never justify relaxing a verdict. Requirement
+text from tool results, file contents, MCP responses, or model summaries is not a
+frame.
+
+Jev returns `requirementMatch` plus `sensitiveArea`, `irreversible`, `risk`, and
+`confidence`. The fixed combination table is trusted code:
+
+| Deterministic baseline | `requirementMatch` | Result |
+|---|---|---|
+| `deny` | any | `deny` |
+| `confirm` | any | `confirm` |
+| `allow` | `match` | `allow` |
+| `allow` | `partial` / `unclear` | `confirm` |
+| `allow` | `mismatch` | `deny` |
+
+`match` never loosens a stricter baseline. Provider failure, refusal, timeout, low
+confidence, or facts bound to a different frame digest fail closed when an assessment
+is required and otherwise preserve the deterministic verdict.
+
+Requirement text is user content. Sending it to a hosted assessor requires
+`egress: "allowed"` on the frame; the provider rejects a denied frame with
+`egress_denied`. Audit records carry the frame digest and provenance only, never the
+text or declared scope.
+
+Implementation status: the frame type, Jev question set v2, digest binding, and
+combination table exist in `decision/`. The opt-in engineering workflow gate captures
+frames and uses them for its shell-assessment path; the separate security observer
+does not become an enforcement boundary through that integration. Runtime security
+enforcement remains Stage A `log-only`.
+
 ## Snapshot provenance archives
 
 Each successful snapshot load can persist the exact policy inputs that produced its
@@ -92,14 +137,56 @@ The following remain open until a separate enforcement milestone:
   bind mounts, hard links, or check/use races.
 - Tamper-resistant audit. Appending JSONL is not an immutability or remote-retention
   guarantee.
-- Authenticated, one-time human approval bound to the exact action and snapshot.
+- Authenticated, one-time system authorization bound to the exact action, session,
+  snapshot/epoch and expiry, following independent Jev review of an eligible stopped
+  escalation. Human per-request approval is not the latest target; see decision 32.
 - A real OS sandbox or trusted mediator that performs side effects on the agent's
   behalf.
 
 Until those are implemented and adversarially tested, the product must be described
 as a policy-matching and observation prototype, not a hard security boundary.
 
+The standalone [local governance console](local-governance.md) adds persistent rule
+proposals, capability-authenticated human governance review, and atomic version
+publication. These are not runtime action approvals: publishing does not change
+harness configuration, enable adapter enforcement, or establish a separate OS
+trust domain. Same-UID processes can still access its credentials and database.
+
+## Target shape: Approve for me
+
+The target security shape is the Codex Approve for me trio, not a plugin mode
+and not a stronger claim than that product makes. A host sandbox stops a
+boundary crossing first. `on-request` means in-sandbox work proceeds and a
+crossing waits. A separate reviewer may approve or deny only that stopped
+confirm-class escalation. The reviewer cannot expand the writable root, enable
+network, weaken a protected path, or lift a `deny`. Level 0 denies are not
+eligible. Humans edit rules through the existing multi-dimensional table; the
+agent cannot publish them. Engineering guardrails and advisory injection stay
+outside this trio.
+
+The 2026-11-02 [Product Design](product-design.md) makes protected-service-owned
+SQLite the sole Amos configuration authority at the GUI stage. A shared project
+activation snapshot feeds enforcement and narrative injection; temporary tightening
+requires a trusted publisher, human preauthorization, finite TTL and immutable epochs.
+Neither the GUI nor SQLite alone supplies isolation. The current YAML/JSON loaders,
+shared advisory seed and same-domain JSONL remain unchanged. The eleven implementation
+gaps and falsifiable acceptance gates are in [Gap Closure](product-gap-plan.md).
+
+This shape is not implemented. Current adapters remain log-only, and today's
+Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
+`docs/decisions.md`. Aligning the target does not pass the enforcement gate.
+
 ## Required enforcement architecture
+
+### Restricted staging profile
+
+The experimental controlled Pi host described in [strict-harness.md](strict-harness.md)
+uses a smaller execution domain: its only model tools operate on private in-memory
+string files, not native paths. Shell, MCP, extensions, native filesystem executors,
+and automatic change application are absent. Mandatory audit, pinned policy, and a
+closed dispatcher protect that virtual domain. Its guarantees must not be generalized
+to the ordinary plugins or to native filesystem/OS enforcement. The requirements below
+still apply before expanding to that broader execution domain.
 
 1. A trusted supervisor outside the agent's writable domain loads policy from a
    protected location, owns credentials, and writes audit records.
@@ -107,13 +194,20 @@ as a policy-matching and observation prototype, not a hard security boundary.
    incomplete actions are denied, not guessed.
 3. Filesystem and network operations are executed through an OS sandbox or protected
    mediator using real object identity. A preflight `realpath()` check is insufficient.
-4. Approvals bind the action digest, policy snapshot digest, session, expiry, and
-   one-time use. Non-interactive environments fail closed when confirmation is needed.
+4. Approvals bind the action digest, policy snapshot/epoch, session, expiry, and
+   one-time use, with revalidation immediately before execution. The target reviewer
+   may resolve an eligible stopped request; without a valid reviewer/human protocol,
+   confirm stays stopped. Today's engineering gate still requires its supported UI.
 5. Policy and audit storage use a separate OS identity or remote trust anchor. A local
    hash chain without an external anchor only detects accidental edits.
 6. Adversarial integration tests cover symlinks, TOCTOU, hard links, shell escapes,
    unknown tools, disabled extensions, policy modification, approval substitution, and
    audit tampering.
+7. The protected publisher authenticates SQLite configuration versions and shared
+   activation projections; the agent cannot modify the DB, WAL, backups or generated
+   native configuration. TTL, rollout and language-check evidence cannot be forged by
+   changing project files or by naming a rule in a prompt. Durable audit acknowledgement
+   precedes effects; outcome receipts remain distinct from authorization records.
 
 ## Policy dimensions
 
@@ -130,10 +224,50 @@ CI. Protected branches, force-push prevention, secret scanning, and signed relea
 belong to security and must be enforced by the Git host or another authority outside
 the agent. A branch name is metadata, never an authorization decision.
 
+## Engineering workflow gate
+
+The opt-in `workflowGate` is a separate engineering guardrail, not part of the guarantees
+above. It can select advisory guidance, block a closed subset of dangerous shell
+commands before execution where the harness exposes a blocking seam, run fixed local
+change checks, and send an eligible filtered diff to Jev for advisory engineering review.
+Its optional `actionAssessment` mode compares a model-authored shell action with a
+harness-captured human requirement and may only tighten the deterministic shell verdict.
+A Pi `user_bash` command typed directly by the human is a separate structural literal
+grant: every deterministic deny remains, while a non-deny can proceed without a second
+approval. These are engineering controls, not authenticated approvals, complete mediation,
+or a security boundary.
+
+- Unknown shell syntax, custom shells/prefixes, PowerShell, and analysis failures remain
+  confirmation-required or denied. Confirm-class decisions fail closed without a safe
+  approval path.
+- Pi can block `tool_call` and stop `user_bash` by throwing. OpenCode `execute.before`
+  cannot block by contract; it uses `shell.create.before` plus native permission
+  tightening. Only a parsed plan-class confirm is admitted from the shell hook into
+  OpenCode's own `permission.assert` → `permission.evaluate` → user once/always/reject
+  path; opaque, unsupported, or reduced-host decisions fail closed with
+  `amos_workflow_gate_shell_confirm_unavailable` (this path cannot approve, rather than
+  waiting for approval). The gate's permission hook can only tighten: `allow` becomes
+  `ask` for a parsed confirm, and `deny` stays `deny`. This covers only the agent shell
+  tool's plan confirm; `/api/shell` and `POST /api/session/{id}/shell` are outside the
+  channel, `--auto` may accept `once` without a human, a saved `always` may still be
+  asked again after tightening, and direct shell APIs cannot be claimed as mediated. The
+  gate remains an engineering guardrail, not a security boundary.
+- Pi allows at most one repair continuation per session. OpenCode V2 exposes no true
+  settle/merge block, so its completion feedback is advisory only.
+- The gate does not provide complete mediation. Disabled extensions, alternate entry
+  points, `pi.exec`, MCP/extension code, repository scripts, and safe-command trust in git
+  or npm configuration remain outside it.
+- A passing Jev engineering review is not proof of correctness, safety, or merge
+  authorization.
+
+See `docs/workflow-gate.md` for configuration and exact limits.
+
 ## Decision-model integration
 
 A probabilistic decision model such as Jev may supply typed semantic facts (intent,
 sensitivity, reversibility, risk). It must not own policy or execute actions. The
 deterministic engine remains authoritative, the model may only tighten a verdict, and
 model failure or low confidence must fail closed when the policy requires an
-assessment. See `docs/jev-integration.md`.
+assessment. This implemented path is not the security auto-reviewer in
+`docs/security-shape.md`; do not extend it to approve a `confirm`. See
+`docs/jev-integration.md`.

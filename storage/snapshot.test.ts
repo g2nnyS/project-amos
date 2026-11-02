@@ -16,11 +16,11 @@ import { createSnapshotStore } from './snapshot.ts';
 
 const rulesPath = join(process.cwd(), 'constraints', 'rules.yaml');
 const schemaPath = join(process.cwd(), 'constraints', 'schema.json');
-const WORKSPACE = '/home/test-user/projects/project-atmos';
+const WORKSPACE = '/home/test-user/projects/project-amos';
 const SECOND_WORKSPACE = '/home/test-user/projects/other-project';
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'atmos-snapshot-'));
+  return mkdtempSync(join(tmpdir(), 'amos-snapshot-'));
 }
 
 function expectedDigest(rawRules: string, sessionWorkspace?: string): string {
