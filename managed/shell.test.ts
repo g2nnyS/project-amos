@@ -9,13 +9,16 @@ import { createRequirementFrame } from '../decision/requirement.ts';
 import { createManagedHost } from './host.ts';
 import type { ManagedEnvelope, ManagedInput, ManagedToolGuards } from './contracts.ts';
 import { createManagedShellExecutor } from './shell.ts';
+import { linuxSandboxUnsupportedReason } from '../autonomy/linux-test-support.ts';
+
+const skip = linuxSandboxUnsupportedReason();
 
 const guards: ManagedToolGuards = { maxReadBytes: 65_536, maxWriteBytes: 65_536, maxShellFiles: 32, mayRead: path => !path.endsWith('/secret.txt'), mayList: () => true };
 function envelope(input: ManagedInput): ManagedEnvelope {
   return { format: 'amos-managed-envelope', version: 1, operationId: 'op', capabilityId: 'cap', input, identity: { actorId: 'a', projectId: 'p', sessionId: 's', taskId: 't', snapshotDigest: 'd' }, requirementDigest: 'r', issuedAt: 1 };
 }
 
-test('shell stages authorized inputs and does not commit effects', async () => {
+test('shell stages authorized inputs and does not commit effects', { skip }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'amos-shell-'));
   writeFileSync(join(root, 'main.js'), `const fs=require('node:fs'); let secret='missing'; try { secret=fs.readFileSync('secret.txt','utf8'); } catch {} fs.writeFileSync('out.txt', fs.readFileSync('note.txt','utf8')); fs.writeFileSync('leak.txt', secret);`);
   writeFileSync(join(root, 'note.txt'), 'note');
@@ -40,7 +43,7 @@ test('shell stages authorized inputs and does not commit effects', async () => {
   } finally { await executor.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('preauthorized host commits shell effects; confirmed shell stays stopped', async () => {
+test('preauthorized host commits shell effects; confirmed shell stays stopped', { skip }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'amos-shell-host-'));
   const workspace = join(root, 'workspace');
   mkdirSync(workspace);

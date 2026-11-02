@@ -1,7 +1,36 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
 import { RAW_SCHEMA, rule } from '../activation/test-support.ts';
 import { createRequirementFrame } from '../decision/requirement.ts';
 import type { ManagedCapability, ManagedHostOptions, ManagedInput, ManagedRequest } from './contracts.ts';
+
+/**
+ * A skip is unsupported-host evidence, never a successful cgroup probe.
+ *
+ * The scope tests exercise a real systemd user manager and cgroup filesystem.
+ * GitHub runners and containers do not provide either, so they must skip
+ * explicitly rather than fail or fall back to a weaker executor.
+ */
+export function scopedProcessUnsupportedReason(): string | false {
+  if (process.platform !== 'linux') return 'cgroup scope probe requires Linux';
+  if (!existsSync('/usr/bin/systemctl') || !existsSync('/usr/bin/systemd-run')) {
+    return 'systemd user scope tools unavailable';
+  }
+  if (!existsSync('/proc/self/cgroup') || !existsSync('/sys/fs/cgroup')) {
+    return 'cgroup filesystem unavailable';
+  }
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ['HOME', 'USER', 'LOGNAME', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  const probe = spawnSync('/usr/bin/systemctl', ['--user', '--no-pager', '--no-ask-password', 'show-environment'], {
+    encoding: 'utf8',
+    timeout: 3_000,
+    env,
+  });
+  return probe.status === 0 ? false : 'systemd user manager unavailable; cgroup scope probe unsupported';
+}
 
 export const NOW = Date.parse('2026-11-02T12:00:00.000Z');
 export function fixture(): Pick<ManagedHostOptions, 'compiler' | 'snapshot' | 'expectedSnapshotDigest' | 'identity' | 'requirement' | 'capabilities' | 'protectedPaths'> {

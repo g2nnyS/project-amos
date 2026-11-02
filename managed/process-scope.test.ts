@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { runScopedProcess, ScopedProcessError, type ScopedProcessOptions } from './process-scope.ts';
+import { scopedProcessUnsupportedReason } from './test-support.ts';
 
-const base: ScopedProcessOptions = { command: '/usr/bin/node', args: [], memoryBytes: 128 * 1024 * 1024, maxTasks: 16, timeoutMs: 5000, maxOutputBytes: 8192 };
+const skip = scopedProcessUnsupportedReason();
+const base: ScopedProcessOptions = { command: process.execPath, args: [], memoryBytes: 128 * 1024 * 1024, maxTasks: 16, timeoutMs: 5000, maxOutputBytes: 8192 };
 const failure = (code: string) => (error: unknown) => error instanceof ScopedProcessError && error.code === code;
 
-test('actual scope properties and membership precede job execution', async () => {
+test('actual scope properties and membership precede job execution', { skip }, async () => {
   const result = await runScopedProcess({ ...base, args: ['-e', `const fs=require('fs'); const c=fs.readFileSync('/proc/self/cgroup','utf8').trim().split('0::')[1]; const p='/sys/fs/cgroup'+c; console.log(JSON.stringify({c,m:fs.readFileSync(p+'/memory.max','utf8').trim(),t:fs.readFileSync(p+'/pids.max','utf8').trim()}));`] });
   assert.equal(result.exitCode, 0);
   const observed = JSON.parse(result.stdout.toString());
@@ -18,13 +20,13 @@ test('actual scope properties and membership precede job execution', async () =>
   assert.ok(Number(observed.t) <= base.maxTasks);
 });
 
-test('stdin and explicit environment reach the command', async () => {
+test('stdin and explicit environment reach the command', { skip }, async () => {
   const result = await runScopedProcess({ ...base, args: ['-e', `process.stdin.on('data',x=>process.stdout.write(x)); process.stdin.on('end',()=>console.error(JSON.stringify(process.env)))`], env: { ONLY: 'yes' }, stdin: 'hello' });
   assert.equal(result.stdout.toString(), 'hello');
   assert.deepEqual(JSON.parse(result.stderr.toString()), { ONLY: 'yes' });
 });
 
-test('timeout, cancellation and output limits fail closed', async () => {
+test('timeout, cancellation and output limits fail closed', { skip }, async () => {
   await assert.rejects(runScopedProcess({ ...base, timeoutMs: 300, args: ['-e', 'setInterval(()=>{},1000)'] }), failure('timeout'));
   const controller = new AbortController();
   const job = runScopedProcess({ ...base, args: ['-e', 'setInterval(()=>{},1000)'] }, controller.signal);
@@ -37,11 +39,11 @@ test('invalid resource controls are rejected before execution', async () => {
   await assert.rejects(runScopedProcess({ ...base, maxTasks: 0 }), failure('invalid-options'));
 });
 
-test('timeout kills detached descendants in the scope', async () => {
+test('timeout kills detached descendants in the scope', { skip }, async () => {
   const dir = await mkdtemp('/tmp/opencode/amos-scope-');
   const pidFile = join(dir, 'pid');
   try {
-    await assert.rejects(runScopedProcess({ ...base, timeoutMs: 1000, args: ['-e', `const cp=require('child_process'),fs=require('fs'); const p=cp.spawn('/usr/bin/node',['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'}); fs.writeFileSync(process.argv[1],String(p.pid)); setInterval(()=>{},1000)`, pidFile] }), failure('timeout'));
+    await assert.rejects(runScopedProcess({ ...base, timeoutMs: 1000, args: ['-e', `const cp=require('child_process'),fs=require('fs'); const p=cp.spawn(${JSON.stringify(process.execPath)},['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'}); fs.writeFileSync(process.argv[1],String(p.pid)); setInterval(()=>{},1000)`, pidFile] }), failure('timeout'));
     const pid = Number(await readFile(pidFile, 'utf8'));
     let alive = true;
     try { const stat = await readFile(`/proc/${pid}/stat`, 'utf8'); alive = !/^\d+ \(.*\) Z /.test(stat); } catch { alive = false; }
@@ -51,7 +53,7 @@ test('timeout kills detached descendants in the scope', async () => {
 
 // Fault injection is confined to the Node test process; the public API cannot
 // select or replace control commands.
-test('control failures and pre-release cancellation never start the target', async () => {
+test('control failures and pre-release cancellation never start the target', { skip }, async () => {
   const original = childProcess.execFile;
   const dir = await mkdtemp('/tmp/opencode/amos-fault-');
   try {
@@ -89,7 +91,7 @@ test('control failures and pre-release cancellation never start the target', asy
   } finally { childProcess.execFile = original; syncBuiltinESMExports(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('cgroup.kill reclaims a detached child when systemctl kill fails', async () => {
+test('cgroup.kill reclaims a detached child when systemctl kill fails', { skip }, async () => {
   const original = childProcess.execFile;
   const dir = await mkdtemp('/tmp/opencode/amos-kill-');
   let kills = 0;
@@ -102,7 +104,7 @@ test('cgroup.kill reclaims a detached child when systemctl kill fails', async ()
     syncBuiltinESMExports();
     const pidFile = join(dir, 'pid');
     const started = Date.now();
-    await assert.rejects(runScopedProcess({ ...base, timeoutMs: 1000, args: ['-e', `const cp=require('child_process'),fs=require('fs');const p=cp.spawn('/usr/bin/node',['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync(process.argv[1],String(p.pid));setInterval(()=>{},1000)`, pidFile] }), failure('timeout'));
+    await assert.rejects(runScopedProcess({ ...base, timeoutMs: 1000, args: ['-e', `const cp=require('child_process'),fs=require('fs');const p=cp.spawn(${JSON.stringify(process.execPath)},['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync(process.argv[1],String(p.pid));setInterval(()=>{},1000)`, pidFile] }), failure('timeout'));
     assert.ok(kills > 0); assert.ok(Date.now() - started < 6000);
     const pid = Number(await readFile(pidFile, 'utf8'));
     try { assert.match(await readFile(`/proc/${pid}/stat`, 'utf8'), /^\d+ \(.*\) Z /); }
@@ -110,7 +112,7 @@ test('cgroup.kill reclaims a detached child when systemctl kill fails', async ()
   } finally { childProcess.execFile = original; syncBuiltinESMExports(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('bootstrap command line does not expose target environment', async () => {
+test('bootstrap command line does not expose target environment', { skip }, async () => {
   const original = childProcess.spawn;
   const secret = 'SECRET-BOOTSTRAP-CMDLINE-TEST-918372';
   let cmdline: Promise<string> | undefined;

@@ -12,8 +12,11 @@ import { createManagedHost } from './host.ts';
 import { createManagedExecutor } from './executor.ts';
 import { createManagedProviderProxy } from './provider-proxy.ts';
 import { runManagedHarness } from './entrypoint.ts';
+import { linuxSandboxUnsupportedReason } from '../autonomy/linux-test-support.ts';
 
-test('isolated harness mediates tools without host workspace or network access', { timeout: 180_000 }, async () => {
+const skip = linuxSandboxUnsupportedReason();
+
+test('isolated harness mediates tools without host workspace or network access', { timeout: 180_000, skip }, async () => {
   await runHarness('pi');
 });
 
