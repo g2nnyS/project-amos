@@ -142,6 +142,7 @@ npm run audit:review -- \
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
+- [Restricted Strict Harness](docs/strict-harness.md) — controlled Pi SDK host; memory-only staged changes, no native Shell/MCP executor.
 
 ---
 
