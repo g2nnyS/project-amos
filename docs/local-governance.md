@@ -3,7 +3,7 @@
 ## 范围与边界
 
 本轮实现单机、单人使用的真实治理服务与中文 Web 控制台：项目、规则、不可变提案、人类审批、原子发布、历史版本、回滚提案、YAML 导入导出与审计。
-服务端使用 Node 26 内置 HTTP 与 SQLite，不引入 HTTP 框架或 ORM；`web/` 中的 Vue 控制台在构建时编译为静态资源，由同一服务提供。黑白界面沿用 Neuralyn 的视觉风格，但项目、规则、提案、版本和审计均来自真实治理 API，没有营收、计费或模拟业务数据。
+服务端使用 Node 26 内置 HTTP 与 SQLite，不引入 HTTP 框架或 ORM；`web/` 中的 Vue 治理工作台在构建时编译为静态资源，由同一服务提供。项目边界、规则矩阵、检查器、提案、版本和审计均来自真实治理 API，没有营收、计费或模拟业务数据；界面与数据限制见 [前端交接](../web/FRONTEND-HANDOFF.md)。
 数据库与凭据默认存放于工作区外。它是本地治理产品，不是已完成的受信控制面：同 UID Agent 仍可读取凭据或改写存储。
 安全适配器继续 Stage A `log-only`；发布不修改 YAML、Harness 配置或现有运行时快照，不是工具调用授权。
 
@@ -140,7 +140,7 @@ CSP 禁止内联脚本、外部资源与 frame；不使用 innerHTML 渲染不�
 npm run typecheck
 npm test
 # 仅运行治理服务与控制台的编译后测试：
-npm run build && node --test dist/control-plane/*.test.js dist/console/*.test.js
+npm run build && node --test dist/control-plane/*.test.js
 ```
 
 - 领域测试覆盖规则/TTL/激活校验、持久化重启、回滚新版本、两 SQLite 连接的 stale/重复审批、角色权限、失败事务回滚及 digest 绑定。

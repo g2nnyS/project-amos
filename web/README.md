@@ -1,7 +1,7 @@
 # Amos 本地治理控制台
 
-这是 Amos 的真实治理前端，不是独立的 SaaS 分析演示。界面沿用 Neuralyn
-的黑白视觉风格；项目、规则、提案、版本、审计、观察与模拟均调用现有
+这是 Amos 的真实治理前端，不是独立的 SaaS 分析演示。界面采用浅色优先、
+中性色与蓝色强调的治理工作台；项目、规则、提案、版本、审计、观察与模拟均调用现有
 `control-plane/` HTTP API，没有营收、计费、团队或虚构工作区数据。
 
 ## 安装与启动
@@ -30,6 +30,7 @@ npm run typecheck
 npm test
 npm run build
 npm run console:serve
+npm run e2e:smoke # 可选；需本机 Chromium，见 web/e2e/README.md
 ```
 
 前端源码位于 `web/src/`。根构建先编译服务，再生成 `dist/console/` 的前端
@@ -39,6 +40,7 @@ npm run console:serve
 ## 功能
 
 - 人类会话登录、退出与失效处理；真实项目选择和创建。
+- 项目边界、本地快照、规则矩阵、可分享筛选与分层规则检查器。
 - 已发布规则库、候选编辑、完整规则与激活集合校验、不可变提案。
 - 提案差异、批准与拒绝、撤回、过期与陈旧基准反馈。
 - 历史版本、YAML/JSON 下载、生成回滚提案。
