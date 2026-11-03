@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Status: three parts — Approve for me (not implemented), built-in multi-dimensional intercept rules plus user edits, dynamic engineering-norm injection; runtime enforcement NO-GO</strong>
+  <strong>Offline P1 project catalog and paired projections are implemented; existing adapters are not connected to them.</strong>
 </p>
 
 <p align="center">
@@ -24,31 +24,16 @@
 
 Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
 
-> **Security Boundary Notice**: The security policy layer is in **Stage A (`log-only` observation)** and is **not yet a hard security boundary**.
-> Security adapters observe selected file-tool actions and log hypothetical verdicts to JSONL. A separate opt-in **engineering workflow gate** can block dangerous shell commands, inject session-pinned advisory rules, assess actions against the captured human requirement, and hold changes for local/Jev review. That gate is a workflow guardrail, not complete mediation or an OS security boundary. True "physical locking," "default deny everywhere," or "tamper-proof auditing" still require an isolated supervisor process, complete action mediation, and OS-level execution boundaries (see [Security Model & Current Guarantees](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md)).
+> **Security boundary**: Security adapters observe selected file-tool actions and log hypothetical verdicts. The separate opt-in engineering workflow gate can block some shell commands and hold work, but neither provides complete mediation or an OS boundary. See [Security Model](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md).
 
 ---
 
-## Target Product Contract (Not Yet Implemented)
+## Current Product Scope
 
-Approve for me, editable multi-dimensional rules, and dynamic engineering guidance
-remain three first-class capabilities. They share **one auditable project activation
-snapshot**: all applicable hard rules are evaluated, while active narratives are
-selected for context. Inactive rules are neither evaluated nor newly injected;
-injection failure never changes a verdict.
-
-At the GUI stage, **protected-service-owned SQLite is the sole authority for all
-Amos configuration**. The GUI uses an authenticated API; YAML/JSON/Git become
-import/export and archives, and native harness configuration is generated where
-required. Secrets stay outside configuration as protected references. This is a
-target migration, not a change to today's file-based setup.
-
-The design also specifies bounded automatic tightening with mandatory TTL,
-human-approved relaxation, real probes and per-rule rollout, structured language
-check findings, protected acceptance gates and agent-inaccessible audit storage.
-See [Product Design](docs/product-design.md) and the
-[eleven-gap evidence and delivery plan](docs/product-gap-plan.md). None of these
-design updates lifts the runtime-enforcement NO-GO.
+Amos currently provides a Stage A log-only security observer, an opt-in engineering
+workflow guard, and dynamic advisory guidance. The P1 project rule catalog compiles
+offline projections but is not connected to the adapters. See [Product Scope](docs/product-design.md)
+and [Implementation Status](docs/product-gap-plan.md).
 
 ---
 
@@ -88,20 +73,15 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
+- **P1 Offline Project Rule Catalog**: Imports the current YAML rules and all guidance seeds into versioned records, then derives project-scoped execution and advisory projections. The compiler, TTL filtering, and selection are tested offline; existing adapters still use the current file snapshot and static seed path.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
 - **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
 
-### What's Not Built Yet (Required Before Enforcement)
+### Current Limitations
 
-- Complete mediation across shell commands, patches, network calls, unknown tools, and other harness entry points.
-- A trusted supervisor process and policy/audit storage isolated from the agent's writable domain.
-- Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
-- Authenticated one-time system authorization bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
-- Live security-layer `deny` or `confirm` blocking in either adapter. The separate engineering workflow gate does not satisfy this requirement.
-- The Approve for me security shape: a host sandbox that stops a boundary crossing before a separate reviewer may approve that one escalation. The target is recorded in [Security Shape](docs/security-shape.md). It is not a plugin mode, and today's Jev path still cannot approve.
-- Shared project activation for enforcement and guidance, trusted temporary-tightening publication, rule rollout/probe execution, and version-bound language-check findings. The existing advisory seed is not that shared activation authority.
-- A completed GUI/SQLite single-authority configuration migration and protected publication/dispatch path. The separate governance-console worktree is not a delivered execution boundary.
+- P1 remains an offline compiler; existing adapters still use the legacy policy snapshot and guidance seed.
+- Security adapters do not block tool execution; the opt-in workflow gate remains an engineering guard only.
 
 ---
 
@@ -137,8 +117,8 @@ npm run audit:review -- \
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
-- [Product Design](docs/product-design.md) · [Gap Closure & Delivery Gates](docs/product-gap-plan.md)
-- [Security Model & Guarantees](docs/security-model.md) · [Security Shape](docs/security-shape.md) · [G0 Gate Criteria](docs/go-no-go.md)
+- [Product Scope](docs/product-design.md) · [Implementation Status](docs/product-gap-plan.md)
+- [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)

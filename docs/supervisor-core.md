@@ -43,17 +43,9 @@ Stop state is in-memory and process-local; it is not durable or externally ancho
   human, Agent, or OBO relationship.
 - The caller supplies the policy snapshot. The core checks the current 64-lowercase-hex
   digest shape and propagates it, but does not recompute it or verify it against the table.
-- Session workspaces receive lexical POSIX normalization only. No filesystem object
-  identity, sandbox, symlink, hard-link, bind-mount, or TOCTOU guarantee is provided.
-- No IPC, supervisor process, durable session store, credential broker, human approval,
-  execution mediator, audit writer, or real `deny`/`confirm` integration is implemented.
+- Session workspaces receive lexical POSIX normalization only; this core does not resolve
+  filesystem object identity or protect against link/path races.
+- The core is not connected to live adapter execution and does not enforce `deny` or
+  `confirm` decisions.
 - A decision contains no action digest or execution result and is not sufficient by itself
   for a complete decision/execution audit trail.
-
-## Required next boundaries
-
-Before runtime enforcement can be claimed, a separate trusted process and OS identity must
-own registration, policy, and audit state; a trusted transport must rebind session and fence
-provenance; and a mediated executor must check an action-bound authorization immediately
-before side effects. Unknown or unmediated execution channels must remain disabled or
-outside the explicitly stated protection scope.

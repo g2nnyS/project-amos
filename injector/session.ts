@@ -8,7 +8,7 @@
  */
 
 import { renderAdvisoryBlock } from './render.ts';
-import { matchesPathHint, selectAdvisoryRules } from './select.ts';
+import { matchesPathHint, selectAdvisoryRules, selectAllActiveAdvisoryRules } from './select.ts';
 import type {
   AdvisorySnapshot,
   InjectionChannel,
@@ -38,14 +38,27 @@ export interface InjectionBlock {
   readonly advisoryDigest: string;
   readonly channel: InjectionChannel;
   readonly area: string | null;
+  readonly selectedRefs: readonly { readonly id: string; readonly version: number }[];
+  readonly omittedRefs: readonly { readonly id: string; readonly version: number }[];
+  readonly incomplete: boolean;
+  readonly fallbackReason: 'no_signal_match' | 'routing_error' | null;
 }
 
 export interface InjectorSession {
   selectPrompt(prompt: string): InjectionBlock;
+  /** Select from active project narratives using bounded structured signals. */
+  select(input: Omit<InjectionInput, 'alreadyInjected'>): InjectionBlock;
   /** Returns true only when a write/edit target queued at least one area. */
   queueAction(action: StructuralAction, projectDirectory: string): boolean;
   selectPendingArea(): InjectionBlock | null;
   commit(block: InjectionBlock): void;
+}
+
+export interface InjectorSessionOptions {
+  /** Optional trusted clock for per-selection advisory TTL filtering. */
+  readonly now?: () => number;
+  /** Already sampled creation time, when the caller sampled the same clock. */
+  readonly initialNow?: number;
 }
 
 interface PendingArea {
@@ -59,13 +72,47 @@ interface BlockRecord {
   committed: boolean;
 }
 
-export function createInjectorSession(snapshot: AdvisorySnapshot): InjectorSession {
+/**
+ * Create one deduplicating/budgeted session. When `options.now` is provided,
+ * each new selection filters expired guidance; clock failure/rollback makes
+ * advisory unavailable for the remainder of this process-local session.
+ */
+export function createInjectorSession(
+  snapshot: AdvisorySnapshot,
+  options: InjectorSessionOptions = {},
+): InjectorSession {
   const injectedRuleIds = new Set<string>();
   const injectedAreas = new Set<string>();
   const pendingAreas = new Map<string, PendingArea>();
   const pendingBlocks = new Map<string, InjectionBlock>();
   const blockRecords = new WeakMap<InjectionBlock, BlockRecord>();
   let totalCharacters = 0;
+  let lastObservedTime: number | null = options.initialNow ?? null;
+  let clockInvalidated = lastObservedTime !== null && !Number.isFinite(lastObservedTime);
+
+  const activeSnapshot = (): AdvisorySnapshot => {
+    if (options.now === undefined) return snapshot;
+    try {
+      const now = options.now();
+      if (!Number.isFinite(now) || (lastObservedTime !== null && now < lastObservedTime)) {
+        clockInvalidated = true;
+      } else {
+        lastObservedTime = now;
+      }
+    } catch {
+      clockInvalidated = true;
+    }
+    const rules = clockInvalidated
+      ? []
+      : snapshot.rules.filter((rule) => rule.ttl === null || lastObservedTime! < rule.ttl);
+    const activeIds = new Set(rules.map(({ id }) => id));
+    return {
+      ...snapshot,
+      rules,
+      baselineRuleIds: snapshot.baselineRuleIds.filter((id) => activeIds.has(id)),
+    };
+  };
+  if (options.now !== undefined && options.initialNow === undefined) activeSnapshot();
 
   const makeBlock = (
     channel: InjectionChannel,
@@ -95,22 +142,52 @@ export function createInjectorSession(snapshot: AdvisorySnapshot): InjectorSessi
       advisoryDigest: snapshot.advisoryDigest,
       channel,
       area,
+      selectedRefs: Object.freeze(rendered.ruleIds.flatMap((id) => {
+        const rule = snapshot.rules.find((candidate) => candidate.id === id);
+        return rule === undefined ? [] : [{ id, version: rule.ruleVersion }];
+      })),
+      omittedRefs: Object.freeze(rendered.droppedRuleIds.flatMap((id) => {
+        const rule = snapshot.rules.find((candidate) => candidate.id === id);
+        return rule === undefined ? [] : [{ id, version: rule.ruleVersion }];
+      })),
+      incomplete: rendered.droppedRuleIds.length > 0,
+      fallbackReason: selection.fallbackReason,
     });
     blockRecords.set(block, { channel, area, committed: false });
     return block;
   };
 
-  return {
-    selectPrompt(prompt: string): InjectionBlock {
-      const input: InjectionInput = {
-        prompt: typeof prompt === 'string' ? prompt : '',
+  const selectSignals = (input: Omit<InjectionInput, 'alreadyInjected'>): InjectionBlock => {
+    const current = activeSnapshot();
+    let selection: ReturnType<typeof selectAdvisoryRules>;
+    try {
+      const boundedInput: InjectionInput = {
+        ...input,
         alreadyInjected: [...injectedRuleIds],
       };
-      const selection = selectAdvisoryRules(snapshot, input);
-      const budget = selection.usedFallback
-        ? PROMPT_FALLBACK_CHARACTERS
-        : PROMPT_CHARACTERS;
-      return makeBlock('prompt', null, selection, budget);
+      selection = selectAdvisoryRules(current, boundedInput);
+    } catch {
+      // Do not let a malformed signal payload make the fallback fail too. The
+      // fallback needs only the session's trusted deduplication state.
+      selection = selectAllActiveAdvisoryRules(
+        current,
+        { alreadyInjected: [...injectedRuleIds] },
+        'routing_error',
+      );
+    }
+    const budget = selection.usedFallback
+      ? PROMPT_FALLBACK_CHARACTERS
+      : PROMPT_CHARACTERS;
+    return makeBlock('prompt', null, selection, budget);
+  };
+
+  return {
+    selectPrompt(prompt: string): InjectionBlock {
+      return selectSignals({ prompt: typeof prompt === 'string' ? prompt : '' });
+    },
+
+    select(input: Omit<InjectionInput, 'alreadyInjected'>): InjectionBlock {
+      return selectSignals(input);
     },
 
     queueAction(action: StructuralAction, projectDirectory: string): boolean {
@@ -128,7 +205,7 @@ export function createInjectorSession(snapshot: AdvisorySnapshot): InjectorSessi
 
       // Areas come only from the active snapshot and the lexical target. Any
       // event-supplied area is ignored by construction of StructuralAction.
-      const derived = deriveAreas(snapshot, target);
+      const derived = deriveAreas(activeSnapshot(), target);
       let queued = false;
       for (const area of derived) {
         const key = area.toLowerCase();
@@ -154,15 +231,28 @@ export function createInjectorSession(snapshot: AdvisorySnapshot): InjectorSessi
           pendingBlocks.delete(key);
           continue;
         }
+        const current = activeSnapshot();
         const cached = pendingBlocks.get(key);
         if (cached !== undefined) {
-          return cached;
+          const live = new Set(current.rules.map(({ id, ruleVersion }) => `${id}\0${ruleVersion}`));
+          if (cached.selectedRefs.every(({ id, version }) => live.has(`${id}\0${version}`))) return cached;
+          pendingBlocks.delete(key);
         }
-        const selection = selectAdvisoryRules(snapshot, {
+        const input = {
           areas: [pending.area],
           paths: [...pending.paths],
           alreadyInjected: [...injectedRuleIds],
-        });
+        };
+        let selection: ReturnType<typeof selectAdvisoryRules>;
+        try {
+          selection = selectAdvisoryRules(current, input);
+        } catch {
+          selection = selectAllActiveAdvisoryRules(
+            current,
+            { alreadyInjected: [...injectedRuleIds] },
+            'routing_error',
+          );
+        }
         const block = makeBlock('area', pending.area, selection, AREA_CHARACTERS);
         pendingBlocks.set(key, block);
         return block;
@@ -175,6 +265,8 @@ export function createInjectorSession(snapshot: AdvisorySnapshot): InjectorSessi
       if (record === undefined || record.committed) {
         return;
       }
+      const activeIds = new Set(activeSnapshot().rules.map(({ id }) => id));
+      if (block.ruleIds.some((id) => !activeIds.has(id))) return;
       record.committed = true;
 
       for (const id of block.ruleIds) {

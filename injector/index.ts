@@ -53,5 +53,6 @@ export {
 export type {
   InjectionBlock,
   InjectorSession,
+  InjectorSessionOptions,
   StructuralAction,
 } from './session.ts';

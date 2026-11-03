@@ -17,6 +17,10 @@ export type InjectionChannel = 'prompt' | 'area';
 /** One individually selectable advisory rule. */
 export interface AdvisoryRule {
   readonly id: string;
+  /** Catalog revision. Legacy callers that omit it are normalized from narrativeVersion. */
+  readonly ruleVersion: number;
+  /** Lower values are selected first; this never affects engine decisions. */
+  readonly level: number;
   readonly narrative: string;
   readonly source: string;
   readonly owner: string;
@@ -26,12 +30,15 @@ export interface AdvisoryRule {
   readonly specificity: number;
   readonly priority: number;
   readonly areas: readonly string[];
+  readonly languages: readonly string[];
+  readonly frameworks: readonly string[];
   readonly pathHints: readonly string[];
   readonly taskTags: readonly string[];
   readonly keywords: readonly string[];
   readonly tags: readonly string[];
   /** Non-null only when the pairing is backed by an active enforcement rule. */
   readonly pairedRuleId: string | null;
+  readonly pairedRuleVersion: number | null;
 }
 
 /** One condition set for a routing rule. Undefined fields are not required. */
@@ -58,6 +65,8 @@ export interface InjectionInput {
   readonly prompt?: string;
   readonly paths?: readonly string[];
   readonly areas?: readonly string[];
+  readonly languages?: readonly string[];
+  readonly frameworks?: readonly string[];
   readonly taskTags?: readonly string[];
   readonly alreadyInjected?: readonly string[];
 }
@@ -84,6 +93,8 @@ export interface CompileAdvisorySnapshotOptions {
    * explicit statement from the caller.
    */
   readonly activeEnforcementRuleIds?: readonly string[];
+  /** P1 compiler path: versioned pairing is derived from one activation set. */
+  readonly activeEnforcementRuleRefs?: readonly { readonly id: string; readonly version: number }[];
 }
 
 const SNAPSHOT_KEYS = [
@@ -98,6 +109,8 @@ const SNAPSHOT_KEYS = [
 
 const RULE_KEYS = [
   'id',
+  'ruleVersion',
+  'level',
   'narrative',
   'source',
   'owner',
@@ -106,11 +119,14 @@ const RULE_KEYS = [
   'specificity',
   'priority',
   'areas',
+  'languages',
+  'frameworks',
   'pathHints',
   'taskTags',
   'keywords',
   'tags',
   'pairedRuleId',
+  'pairedRuleVersion',
   'kind',
   'on_hit',
 ] as const;
@@ -239,6 +255,12 @@ function compileRule(
   }
 
   const id = readString(record, 'id', 'snapshot rule', MAX_ID_CHARACTERS);
+  const ruleVersion = hasOwn(record, 'ruleVersion')
+    ? readPositiveInteger(record.ruleVersion, 'snapshot rule.ruleVersion')
+    : Math.max(1, Math.floor(readFiniteNumber(record, 'narrativeVersion', 'snapshot rule')));
+  const level = hasOwn(record, 'level')
+    ? readNonNegativeInteger(record.level, 'snapshot rule.level')
+    : 0;
   const narrative = readString(
     record,
     'narrative',
@@ -261,6 +283,12 @@ function compileRule(
   const priority = readFiniteNumber(record, 'priority', 'snapshot rule');
 
   const areas = readStringArray(record, 'areas', 'snapshot rule');
+  const languages = hasOwn(record, 'languages')
+    ? readStringArray(record, 'languages', 'snapshot rule')
+    : [];
+  const frameworks = hasOwn(record, 'frameworks')
+    ? readStringArray(record, 'frameworks', 'snapshot rule')
+    : [];
   const pathHints = readStringArray(record, 'pathHints', 'snapshot rule');
   const taskTags = readStringArray(record, 'taskTags', 'snapshot rule');
   const keywords = readStringArray(record, 'keywords', 'snapshot rule');
@@ -271,10 +299,17 @@ function compileRule(
   }
 
   let pairedRuleId: string | null = null;
+  let pairedRuleVersion: number | null = null;
+  if (!hasOwn(record, 'pairedRuleId') && hasOwn(record, 'pairedRuleVersion')) {
+    throw new Error('snapshot rule pairedRuleVersion requires pairedRuleId');
+  }
   if (hasOwn(record, 'pairedRuleId')) {
     const paired = record.pairedRuleId;
     if (paired === null) {
       pairedRuleId = null;
+      if (hasOwn(record, 'pairedRuleVersion') && record.pairedRuleVersion !== null) {
+        throw new Error('snapshot rule pairedRuleVersion must be null without a pair');
+      }
     } else if (typeof paired === 'string' && paired.length > 0) {
       if (paired.length > MAX_ID_CHARACTERS) {
         throw new Error('snapshot rule.pairedRuleId is too long');
@@ -285,6 +320,14 @@ function compileRule(
           'snapshot rule.pairedRuleId requires an explicitly active enforcement rule',
         );
       }
+      pairedRuleVersion = hasOwn(record, 'pairedRuleVersion')
+        ? readPositiveInteger(record.pairedRuleVersion, 'snapshot rule.pairedRuleVersion')
+        : ruleVersion;
+      if (options.activeEnforcementRuleRefs !== undefined) {
+        if (!options.activeEnforcementRuleRefs.some((ref) => ref.id === paired && ref.version === pairedRuleVersion)) {
+          throw new Error('snapshot rule pairing revision is not active');
+        }
+      }
       pairedRuleId = paired;
     } else {
       throw new Error('snapshot rule.pairedRuleId must be null or an id');
@@ -293,6 +336,8 @@ function compileRule(
 
   return {
     id,
+    ruleVersion,
+    level,
     narrative,
     source,
     owner,
@@ -301,11 +346,14 @@ function compileRule(
     specificity,
     priority,
     areas: Object.freeze([...areas]),
+    languages: Object.freeze([...languages]),
+    frameworks: Object.freeze([...frameworks]),
     pathHints: Object.freeze([...pathHints]),
     taskTags: Object.freeze([...taskTags]),
     keywords: Object.freeze([...keywords]),
     tags: Object.freeze([...tags]),
     pairedRuleId,
+    pairedRuleVersion,
   };
 }
 
@@ -506,6 +554,20 @@ function assertFiniteNumber(value: unknown, label: string): asserts value is num
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`${label} must be a finite number`);
   }
+}
+
+function readPositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function readNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`);
+  }
+  return value;
 }
 
 function readStringArray(

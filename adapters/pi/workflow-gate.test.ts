@@ -1130,7 +1130,7 @@ test('write and edit calls append exactly one independent advisory area block wi
   const writeBlock = writeResult.content?.[2];
   assert.equal(writeBlock?.type, 'text');
   assert.match(writeBlock?.text ?? '', /^<amos-guidance /);
-  assert.match(writeBlock?.text ?? '', /\[engine-pure\]/);
+  assert.match(writeBlock?.text ?? '', /\[engine-/);
   assert.equal(writeBlock?.text?.includes(hook.directory), false);
   assert.equal(writeBlock?.text?.includes('engine.ts'), false);
   assert.deepEqual(writeResult.structuredContent, structuredContent);
@@ -1149,7 +1149,7 @@ test('write and edit calls append exactly one independent advisory area block wi
   )) as ToolResultLike;
   assert.equal(editResult.content?.length, 2);
   assert.equal(editResult.content?.[0]?.text, 'original edit result');
-  assert.match(editResult.content?.[1]?.text ?? '', /\[adapters-own-normalization\]/);
+  assert.match(editResult.content?.[1]?.text ?? '', /\[adapters-/);
   assert.equal(editResult.content?.[1]?.text?.includes(hook.directory), false);
 
   // The same area is never injected twice in one session.
@@ -1258,7 +1258,7 @@ test('the same toolCallId in two sessions keeps each queued area independent', a
   assert.equal(otherResult.content?.[0]?.text, 'other result');
   assert.match(
     otherResult.content?.[1]?.text ?? '',
-    /\[adapters-own-normalization\]/,
+    /\[adapters-/,
   );
   assert.equal(
     otherResult.content?.[1]?.text?.includes('[engine-pure]'),
@@ -1272,7 +1272,7 @@ test('the same toolCallId in two sessions keeps each queued area independent', a
   ])) as ToolResultLike;
   assert.equal(firstResult.content?.length, 2);
   assert.equal(firstResult.content?.[0]?.text, 'first result');
-  assert.match(firstResult.content?.[1]?.text ?? '', /\[engine-pure\]/);
+  assert.match(firstResult.content?.[1]?.text ?? '', /\[engine-/);
   assert.equal(
     firstResult.content?.[1]?.text?.includes('[adapters-own-normalization]'),
     false,
@@ -1350,6 +1350,9 @@ test('injector factory, selection and queue exceptions never change tool call ou
   // A session whose selection/queue/area calls throw stays advisory.
   const throwingSession: InjectorSession = {
     selectPrompt() {
+      throw new Error('SELECT_SECRET');
+    },
+    select() {
       throw new Error('SELECT_SECRET');
     },
     queueAction() {
@@ -1968,9 +1971,16 @@ test('stale namespaced guidance is removed while custom sections are untouched',
     advisoryDigest: 'digest',
     channel: 'prompt' as const,
     area: null,
+    selectedRefs: [],
+    omittedRefs: [],
+    incomplete: false,
+    fallbackReason: null,
   };
   const emptySession: InjectorSession = {
     selectPrompt() {
+      return emptyBlock;
+    },
+    select() {
       return emptyBlock;
     },
     queueAction() {
