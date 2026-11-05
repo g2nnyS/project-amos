@@ -5,6 +5,7 @@ import { makeSnapshot, makeLease, makeContext, makeRequest, TEST_NOW } from './t
 import { digest } from '../activation/json.ts';
 import type { CapabilityLease } from './contracts.ts';
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
+import { entry } from '../activation/test-support.ts';
 import { RAW_SCHEMA, rule } from '../activation/test-support.ts';
 
 test('capability precedes policy and confirm remains stopped', () => {
@@ -168,12 +169,20 @@ test('non JSON, cycles and unknown request fields are rejected', () => {
 
 test('empty runtime is unavailable, not an engine allow', () => {
   const snapshot = createProjectActivationCompiler({
-    rawSchema: RAW_SCHEMA, libraryVersion: 'test',
-    rules: [{ version: 1, rule: rule('ci-only', { enforcement: 'ci' }), injection: null }],
+    rawSchema: RAW_SCHEMA,
+    catalogVersion: 'autonomy-probe-1',
+    rules: [entry('ci-only', { enforcement: 'ci' }, 'security')],
     mandatoryRuleRefs: [{ id: 'ci-only', version: 1 }],
   }).compile({
-    projectId: 'autonomy-probe', workspace: '/work/demo', policyVersion: 'test',
-    selectedRuleRefs: [], excludedRuleIds: [], advisoryBaselineRuleIds: [], routes: [],
+    projectId: 'autonomy-probe',
+    workspace: '/work/demo',
+    projectConfigVersion: 'test',
+    baseVersion: 'test-base',
+    epoch: 1,
+    selectedRuleRefs: [],
+    excludedRuleIds: [],
+    advisoryBaselineRuleIds: [],
+    routes: [],
   });
   const core = createAuthorizationCore({ snapshot, expectedSnapshotDigest: snapshot.digest, capabilities: [makeLease(snapshot)] });
   const env = core.createEnvelope(makeContext(snapshot), makeRequest(snapshot), TEST_NOW);

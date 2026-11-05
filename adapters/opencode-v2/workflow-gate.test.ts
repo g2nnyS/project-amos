@@ -350,9 +350,14 @@ test("multibyte advisory blocks are appended verbatim without generic truncation
     advisoryDigest: digest,
     channel: "prompt" as const,
     area: null,
+    selectedRefs: [{ id: "custom-multibyte", version: 1 }],
+    omittedRefs: [],
+    incomplete: false,
+    fallbackReason: null,
   };
   const session = {
     selectPrompt: () => block,
+    select: () => block,
     queueAction: () => false,
     selectPendingArea: () => null,
     commit: () => {},
@@ -445,6 +450,9 @@ test("injector exceptions leave tool outcomes, audit, and completion review inta
   let reviewCalls = 0;
   const throwingSession = {
     selectPrompt() {
+      throw new Error(secret);
+    },
+    select() {
       throw new Error(secret);
     },
     queueAction() {

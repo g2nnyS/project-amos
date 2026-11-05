@@ -36,7 +36,7 @@ onMounted(load)
     </PageHeader>
 
     <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      Stage A 为 log-only。覆盖缺口只提供可见性，不提供保护或完整中介。命中规则基于历史快照元数据，不重新评估当前规则表。
+      观察与队列来自历史 JSONL；覆盖缺口只提供可见性，不提供保护或完整中介。受管 Harness 的执行裁决以发布快照为准，本页不回放或重评。
     </div>
 
     <p v-if="loading" class="p-4 text-sm text-muted-foreground" role="status">加载中…</p>

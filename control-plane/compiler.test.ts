@@ -16,6 +16,10 @@ import {
   validateAndCompileCandidate,
 } from './compiler.ts';
 import type { RuleRecord, RulePredicate } from './contracts.ts';
+import {
+  compileProjectActivation,
+  createActivationCatalog,
+} from './activation.ts';
 import { expectDomainError } from './test-helpers.ts';
 import {
   createTestClock,
@@ -305,6 +309,20 @@ test('snapshot digests are versioned, lane-separated, and distinct from the lega
   const compilation = compile(candidate);
   assert.ok(compilation.compiled);
 
+  const activationFor = (
+    version: number,
+    projectId = 'project-1',
+    ws = workspace,
+  ) => {
+    const catalog = createActivationCatalog({ rawSchema: readSchema() });
+    return compileProjectActivation(catalog, {
+      projectId,
+      workspace: ws,
+      version,
+      baseVersion: 0,
+      candidate: compilation.compiled!.candidate,
+    }).snapshot;
+  };
   const makeSnapshot = (version: number, projectId = 'project-1') =>
     buildPolicySnapshot({
       projectId,
@@ -312,6 +330,7 @@ test('snapshot digests are versioned, lane-separated, and distinct from the lega
       version,
       compiled: compilation.compiled!,
       schemaDigest: validator.schemaDigest,
+      activationSnapshot: activationFor(version, projectId),
     });
 
   const first = makeSnapshot(1);
@@ -322,9 +341,10 @@ test('snapshot digests are versioned, lane-separated, and distinct from the lega
   assert.equal(first.schemaVersion, RULE_SCHEMA_VERSION);
   assert.equal(first.compilerVersion, COMPILER_VERSION);
   assert.equal(first.schemaDigest, validator.schemaDigest);
-  assert.match(first.digest, /^[0-9a-f]{64}$/);
-  assert.match(first.enforcement.digest, /^[0-9a-f]{64}$/);
-  assert.match(first.advisory.digest, /^[0-9a-f]{64}$/);
+  assert.match(first.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.match(first.enforcement.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.match(first.advisory.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.match(first.activationDigest, /^sha256:[a-f0-9]{64}$/);
   assert.equal(first.enforcementDigest, first.enforcement.digest);
   assert.equal(first.advisoryDigest, first.advisory.digest);
   assert.notEqual(first.enforcement.digest, first.advisory.digest);
@@ -343,6 +363,7 @@ test('snapshot digests are versioned, lane-separated, and distinct from the lega
       version: 1,
       compiled: compilation.compiled!,
       schemaDigest: validator.schemaDigest,
+      activationSnapshot: activationFor(1, 'project-1', '/workspace/other'),
     }).digest,
   );
 
@@ -358,8 +379,16 @@ test('snapshot digests are versioned, lane-separated, and distinct from the lega
   assert.notEqual(first.digest, legacyDigest);
   assert.notEqual(first.enforcement.digest, legacyDigest);
 
-  assert.deepEqual(first.enforcement.rules, compilation.compiled!.enforcementRules);
-  assert.deepEqual(first.advisory.rules, compilation.compiled!.advisoryRules);
+  assert.deepEqual(
+    first.enforcement.rules.map((rule) => rule.id),
+    compilation.compiled!.enforcementRules.map((rule) => rule.id),
+  );
+  const activation = activationFor(1);
+  assert.deepEqual(first.enforcement.ruleIds, activation.enforcement.runtime.ruleRefs.map((ref) => ref.id));
+  assert.deepEqual(first.advisory.ruleIds, ['adv-1']);
+  assert.ok(activation.advisory.ruleRefs.some((ref) => ref.id === 'det-1'));
+  assert.equal(first.digest, activation.digest);
+  assert.equal(first.activationDigest, activation.activationDigest);
   assert.deepEqual(first.activation, candidate.activation);
 });
 

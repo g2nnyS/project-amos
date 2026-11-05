@@ -12,6 +12,7 @@ export type DomainErrorCode =
   | 'payload_too_large'
   | 'candidate_invalid'
   | 'schema_invalid'
+  | 'catalog_invalid'
   | 'forbidden'
   | 'not_found'
   | 'workspace_conflict'
@@ -31,6 +32,7 @@ export const DOMAIN_ERROR_STATUS: Readonly<Record<DomainErrorCode, number>> = {
   payload_too_large: 413,
   candidate_invalid: 400,
   schema_invalid: 500,
+  catalog_invalid: 500,
   forbidden: 403,
   not_found: 404,
   workspace_conflict: 409,

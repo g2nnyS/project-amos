@@ -235,6 +235,9 @@ test('prompt budgets use 1800 for matches and 1200 for fallback', () => {
   const fallback = fallbackSession.selectPrompt('nothing relevant');
   assert.ok(fallback.text.length <= 1_200);
   assert.ok(fallback.droppedRuleIds.length > 0);
+  assert.equal(fallback.incomplete, true);
+  assert.deepEqual(fallback.omittedRefs.map(({ id }) => id), fallback.droppedRuleIds);
+  assert.deepEqual(fallback.selectedRefs.map(({ id }) => id), fallback.ruleIds);
 
   const matchedSession = createInjectorSession(snapshot);
   const matched = matchedSession.selectPrompt('engine');
@@ -251,4 +254,53 @@ test('prompt budgets use 1800 for matches and 1200 for fallback', () => {
   assert.ok(area);
   assert.ok(area.text.length <= 900);
   assert.ok(area.droppedRuleIds.length > 0);
+});
+
+test('routing errors fall back to all active rules without rereading hostile signals', () => {
+  const snapshot = areaFixture();
+  const session = createInjectorSession(snapshot);
+  const hostile = Object.defineProperty({}, 'prompt', {
+    enumerable: true,
+    get() {
+      throw new Error('do-not-echo-this');
+    },
+  });
+
+  const block = session.select(hostile as never);
+  assert.equal(block.fallbackReason, 'routing_error');
+  assert.equal(block.incomplete, false);
+  assert.deepEqual(block.ruleIds, ['engine-rule', 'workflow-rule']);
+  assert.deepEqual(block.selectedRefs, [
+    { id: 'engine-rule', version: 1 },
+    { id: 'workflow-rule', version: 1 },
+  ]);
+  assert.equal(block.text.includes('do-not-echo-this'), false);
+});
+
+test('cached area selections resample time and never return expired rules', () => {
+  let now = 10;
+  const snapshot = compileAdvisorySnapshot(snapshotInput({ rules: [
+    rule({ id: 'expiring', areas: ['engine'], pathHints: ['engine'], ttl: 20 }),
+    rule({ id: 'live', areas: ['engine'], pathHints: ['engine'] }),
+  ] }));
+  const session = createInjectorSession(snapshot, { now: () => now });
+  session.queueAction({ tool: 'write', operation: 'write', target: '/repo/engine/a.ts' }, '/repo');
+  const first = session.selectPendingArea();
+  assert.ok(first?.ruleIds.includes('expiring'));
+  now = 20;
+  const next = session.selectPendingArea();
+  assert.ok(next);
+  assert.ok(!next.ruleIds.includes('expiring'));
+  assert.ok(next.ruleIds.includes('live'));
+  now = 19;
+  assert.deepEqual(session.selectPendingArea()?.ruleIds, []);
+});
+
+test('generic clock sessions reject rollback before the first selection permanently', () => {
+  let now = 10;
+  const session = createInjectorSession(areaFixture(), { now: () => now });
+  now = 9;
+  assert.deepEqual(session.selectPrompt('engine').ruleIds, []);
+  now = 11;
+  assert.deepEqual(session.selectPrompt('engine').ruleIds, []);
 });

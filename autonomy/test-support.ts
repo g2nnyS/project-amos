@@ -1,35 +1,42 @@
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
 import type { ProjectActivationSnapshot } from '../activation/types.ts';
-import { RAW_SCHEMA, rule } from '../activation/test-support.ts';
+import { RAW_SCHEMA, entry } from '../activation/test-support.ts';
 import type { CapabilityLease, FileCreateRequest, TrustedSessionContext } from './contracts.ts';
 
 export const TEST_NOW = Date.parse('2026-11-02T12:00:00.000Z');
 
 export function makeSnapshot(workspace = '/work/demo'): ProjectActivationSnapshot {
-  const rules = [
-    rule('protected-deny', {
-      level: 0,
-      predicate: [
-        { op: 'op_in', args: { operations: ['file_write'] } },
-        { op: 'target_glob', args: { patterns: ['${SESSION_WORKSPACE}/protected-*'] } },
-      ],
-    }),
-    rule('stopped-review', {
-      on_hit: 'confirm',
-      predicate: [
-        { op: 'op_in', args: { operations: ['file_write'] } },
-        { op: 'target_glob', args: { patterns: ['${SESSION_WORKSPACE}/review-*'] } },
-      ],
-    }),
-  ];
-  return createProjectActivationCompiler({
-    rawSchema: RAW_SCHEMA, libraryVersion: 'autonomy-probe-1',
-    rules: rules.map((item) => ({ version: 1, rule: item, injection: null })),
+  const compiler = createProjectActivationCompiler({
+    rawSchema: RAW_SCHEMA,
+    catalogVersion: 'autonomy-probe-1',
+    rules: [
+      entry('protected-deny', {
+        level: 0,
+        predicate: [
+          { op: 'op_in', args: { operations: ['file_write'] } },
+          { op: 'target_glob', args: { patterns: ['${SESSION_WORKSPACE}/protected-*'] } },
+        ],
+      }, 'security'),
+      entry('stopped-review', {
+        on_hit: 'confirm',
+        predicate: [
+          { op: 'op_in', args: { operations: ['file_write'] } },
+          { op: 'target_glob', args: { patterns: ['${SESSION_WORKSPACE}/review-*'] } },
+        ],
+      }, 'security'),
+    ],
     mandatoryRuleRefs: [{ id: 'protected-deny', version: 1 }],
-  }).compile({
-    projectId: 'autonomy-probe', workspace, policyVersion: 'probe-1',
+  });
+  return compiler.compile({
+    projectId: 'autonomy-probe',
+    workspace,
+    projectConfigVersion: 'probe-1',
+    baseVersion: 'probe-base-1',
+    epoch: 1,
     selectedRuleRefs: [{ id: 'stopped-review', version: 1 }],
-    excludedRuleIds: [], advisoryBaselineRuleIds: [], routes: [],
+    excludedRuleIds: [],
+    advisoryBaselineRuleIds: [],
+    routes: [],
   });
 }
 

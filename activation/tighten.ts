@@ -1,0 +1,499 @@
+/**
+ * Process-local, append-only temporary tightening.
+ *
+ * A publisher may only apply rules from a closed list of approved templates.
+ * Every application recompiles the same project activation with exactly one
+ * additional deterministic, non-zero-layer rule (or `deny`/`confirm`) and then
+ * proves that no pre-existing rule, mandatory membership, project selection or
+ * advisory narrative changed. TTL and quota are derived only from the caller's
+ * trusted clock and the fixed template/quota values; no model or agent text is
+ * accepted.
+ *
+ * Limits (deliberate):
+ * - State is in memory only. A restart loses every applied tightening; restart
+ *   recovery is future work, not a guarantee.
+ * - There is no background cleanup timer and no retry/extension path. `expire()`
+ *   must be called with the trusted clock; `apply()` never renews an entry.
+ * - A template's `ruleDigest` binds the exact compiled (workspace-expanded)
+ *   rule record. The approval artifact must be produced from the same project
+ *   expansion; a raw unexpanded catalog record will not match.
+ * - This is a workflow-level policy composition helper, not authentication,
+ *   not a security boundary, and it does not enable adapter enforcement.
+ */
+
+import { createHash } from 'node:crypto';
+
+import { verifyProjectActivationSnapshot } from './injector.ts';
+import { canonicalJson } from './json.ts';
+import {
+  ActivationError,
+  type ActiveRule,
+  type ProjectActivationCompiler,
+  type ProjectActivationSnapshot,
+  type RuleRef,
+} from './types.ts';
+
+export interface ApprovedTighteningTemplate {
+  readonly id: string;
+  readonly ruleRef: { readonly id: string; readonly version: number };
+  /** Canonical JSON digest of the exact rule record in the catalog. */
+  readonly ruleDigest: string;
+  readonly maxTtlMs: number;
+  readonly maxApplications: number;
+  readonly windowMs: number;
+}
+
+export interface TighteningQuota {
+  readonly maxActive: number;
+  readonly maxApplications: number;
+  readonly windowMs: number;
+}
+
+export interface TemporaryTighteningOptions {
+  readonly compiler: ProjectActivationCompiler;
+  readonly base: ProjectActivationSnapshot;
+  readonly templates: readonly ApprovedTighteningTemplate[];
+  readonly quota: TighteningQuota;
+  readonly now: () => number;
+  /** Caller supplies the next version/base identity; never derived from model text. */
+  readonly newProjectConfigVersion: string;
+  readonly newBaseVersion: string;
+}
+
+export interface AppliedTightening {
+  readonly snapshot: ProjectActivationSnapshot;
+  readonly templateId: string;
+  readonly ruleRef: { readonly id: string; readonly version: number };
+  readonly appliedAt: number;
+  readonly expiresAt: number;
+  readonly epoch: number;
+}
+
+export interface TemporaryTighteningPublisher {
+  apply(templateId: string, ttlMs: number): AppliedTightening;
+  /** Recompute without expired entries; never renews and never adds rules. */
+  expire(): { readonly snapshot: ProjectActivationSnapshot; readonly expired: readonly string[] };
+  active(): readonly AppliedTightening[];
+}
+
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * Digest of one exact rule record. Approval templates must call this with the
+ * project-expanded record that the compiler will actually activate.
+ */
+export function tighteningRuleDigest(rule: Readonly<Record<string, unknown>>): string {
+  return `sha256:${createHash('sha256').update(canonicalJson(rule), 'utf8').digest('hex')}`;
+}
+
+interface PublisherConfig {
+  readonly compiler: ProjectActivationCompiler;
+  readonly base: ProjectActivationSnapshot;
+  readonly templates: ReadonlyMap<string, ApprovedTighteningTemplate>;
+  readonly quota: TighteningQuota;
+  readonly now: () => number;
+  readonly newProjectConfigVersion: string;
+  readonly newBaseVersion: string;
+}
+
+/** Process-local publisher. Restart recovery is explicitly future work. */
+export function createTemporaryTighteningPublisher(
+  options: TemporaryTighteningOptions,
+): TemporaryTighteningPublisher {
+  const config = readPublisherConfig(options);
+  const {
+    compiler,
+    base,
+    templates,
+    quota,
+    now: optionsNow,
+    newProjectConfigVersion,
+    newBaseVersion,
+  } = config;
+  let currentSnapshot = base;
+  let activeEntries: AppliedTightening[] = [];
+  // Trusted-clock observations used only for quota windows. They are never
+  // cleared by apply/expire cycles, so a retry cannot reset the quota.
+  const applicationTimes: number[] = [];
+  const templateTimes = new Map<string, number[]>();
+  let lastObserved: number | null = null;
+
+  function readNow(): number {
+    let value: number;
+    try {
+      value = optionsNow();
+    } catch {
+      throw new ActivationError();
+    }
+    if (!Number.isFinite(value) || (lastObserved !== null && value < lastObserved)) {
+      throw new ActivationError();
+    }
+    lastObserved = value;
+    return value;
+  }
+
+  function compileProject(
+    previous: ProjectActivationSnapshot,
+    selectedRuleRefs: readonly RuleRef[],
+    epoch: number,
+    added: readonly RuleRef[],
+    removed: readonly RuleRef[],
+  ): ProjectActivationSnapshot {
+    let compiled: ProjectActivationSnapshot;
+    try {
+      compiled = verifyProjectActivationSnapshot(compiler.compile({
+        ...previous.project,
+        projectConfigVersion: newProjectConfigVersion,
+        baseVersion: newBaseVersion,
+        epoch,
+        selectedRuleRefs: [...selectedRuleRefs],
+      }));
+    } catch {
+      throw new ActivationError();
+    }
+    assertAppendOnly(previous, compiled, selectedRuleRefs, added, removed, {
+      projectConfigVersion: newProjectConfigVersion,
+      baseVersion: newBaseVersion,
+      epoch,
+    });
+    return compiled;
+  }
+
+  function applyInternal(templateId: string, ttlMs: number): AppliedTightening {
+    const now = readNow();
+    if (typeof templateId !== 'string') throw new ActivationError();
+    const template = templates.get(templateId);
+    if (template === undefined) throw new ActivationError();
+    if (
+      typeof ttlMs !== 'number' || !Number.isSafeInteger(ttlMs) ||
+      ttlMs <= 0 || ttlMs > template.maxTtlMs
+    ) throw new ActivationError();
+    const expiresAt = now + ttlMs;
+    if (!Number.isFinite(expiresAt)) throw new ActivationError();
+
+    const ref = template.ruleRef;
+    // A tightening must add a rule that is not already part of this activation;
+    // re-applying an active rule is not a tightening and cannot extend TTL.
+    if (currentSnapshot.activeRules.some((item) => item.id === ref.id)) {
+      throw new ActivationError();
+    }
+    if (activeEntries.some((entry) => entry.ruleRef.id === ref.id && entry.ruleRef.version === ref.version)) {
+      throw new ActivationError();
+    }
+    if (activeEntries.length + 1 > quota.maxActive) throw new ActivationError();
+    if (countWithin(applicationTimes, now, quota.windowMs) >= quota.maxApplications) {
+      throw new ActivationError();
+    }
+    const perTemplate = templateTimes.get(template.id) ?? [];
+    if (countWithin(perTemplate, now, template.windowMs) >= template.maxApplications) {
+      throw new ActivationError();
+    }
+
+    const selectedRuleRefs = [
+      ...currentSnapshot.project.selectedRuleRefs,
+      { id: ref.id, version: ref.version },
+    ];
+    const compiled = compileProject(
+      currentSnapshot,
+      selectedRuleRefs,
+      currentSnapshot.epoch + 1,
+      [ref],
+      [],
+    );
+
+    const activated = compiled.activeRules.find(
+      (item) => item.id === ref.id && item.version === ref.version,
+    );
+    if (activated === undefined || activated.rule === null) throw new ActivationError();
+    const record = activated.rule;
+    if (activated.mandatory) throw new ActivationError();
+    // Strict tightening: no zero-layer rules, no advisory-only rules, no
+    // relaxation (`log`/`allow`). Deterministic `deny`/`confirm` only.
+    if (record.expressivity !== 'deterministic') throw new ActivationError();
+    if (typeof record.id !== 'string' || record.id !== ref.id) throw new ActivationError();
+    if (
+      typeof record.level !== 'number' || !Number.isSafeInteger(record.level) ||
+      record.level <= 0
+    ) throw new ActivationError();
+    if (record.on_hit !== 'deny' && record.on_hit !== 'confirm') throw new ActivationError();
+    if (tighteningRuleDigest(record) !== template.ruleDigest) throw new ActivationError();
+
+    const applied: AppliedTightening = Object.freeze({
+      snapshot: compiled,
+      templateId: template.id,
+      ruleRef: Object.freeze({ id: ref.id, version: ref.version }),
+      appliedAt: now,
+      expiresAt,
+      epoch: compiled.epoch,
+    });
+    applicationTimes.push(now);
+    templateTimes.set(template.id, [...perTemplate, now]);
+    activeEntries = [...activeEntries, applied];
+    currentSnapshot = compiled;
+    return applied;
+  }
+
+  return Object.freeze({
+    apply(templateId: string, ttlMs: number): AppliedTightening {
+      try {
+        return applyInternal(templateId, ttlMs);
+      } catch {
+        throw new ActivationError();
+      }
+    },
+
+    expire(): { readonly snapshot: ProjectActivationSnapshot; readonly expired: readonly string[] } {
+      try {
+        const now = readNow();
+        const expired = activeEntries.filter((entry) => now >= entry.expiresAt);
+        if (expired.length === 0) {
+          return Object.freeze({
+            snapshot: currentSnapshot,
+            expired: Object.freeze([] as string[]),
+          });
+        }
+        const expiredRefs = expired.map((entry) => entry.ruleRef);
+        const keyOf = (ref: RuleRef): string => `${ref.id}\0${ref.version}`;
+        const expiredKeys = new Set(expiredRefs.map(keyOf));
+        const selectedRuleRefs = currentSnapshot.project.selectedRuleRefs.filter(
+          (ref) => !expiredKeys.has(keyOf(ref)),
+        );
+        // One compile and one epoch increment for the whole expiry batch.
+        const compiled = compileProject(
+          currentSnapshot,
+          selectedRuleRefs,
+          currentSnapshot.epoch + 1,
+          [],
+          expiredRefs,
+        );
+        activeEntries = activeEntries.filter((entry) => now < entry.expiresAt);
+        currentSnapshot = compiled;
+        return Object.freeze({
+          snapshot: compiled,
+          expired: Object.freeze(expired.map((entry) => entry.templateId)),
+        });
+      } catch {
+        throw new ActivationError();
+      }
+    },
+
+    /** Entries not yet retired by `expire()`; TTL is enforced by `expire()`. */
+    active(): readonly AppliedTightening[] {
+      return Object.freeze([...activeEntries]);
+    },
+  });
+}
+
+function countWithin(times: readonly number[], now: number, windowMs: number): number {
+  let count = 0;
+  for (const time of times) {
+    if (now - time < windowMs) count += 1;
+  }
+  return count;
+}
+
+interface ExpectedIdentity {
+  readonly projectConfigVersion: string;
+  readonly baseVersion: string;
+  readonly epoch: number;
+}
+
+function assertAppendOnly(
+  previous: ProjectActivationSnapshot,
+  next: ProjectActivationSnapshot,
+  expectedSelectedRefs: readonly RuleRef[],
+  added: readonly RuleRef[],
+  removed: readonly RuleRef[],
+  expected: ExpectedIdentity,
+): void {
+  if (
+    next.project.projectId !== previous.project.projectId ||
+    next.project.workspace !== previous.project.workspace
+  ) throw new ActivationError();
+  if (canonicalJson(next.project.excludedRuleIds) !== canonicalJson(previous.project.excludedRuleIds)) {
+    throw new ActivationError();
+  }
+  if (canonicalJson(next.project.advisoryBaselineRuleIds) !== canonicalJson(previous.project.advisoryBaselineRuleIds)) {
+    throw new ActivationError();
+  }
+  if (canonicalJson(next.project.routes) !== canonicalJson(previous.project.routes)) {
+    throw new ActivationError();
+  }
+  if (canonicalJson(next.project.selectedRuleRefs) !== canonicalJson(expectedSelectedRefs)) {
+    throw new ActivationError();
+  }
+  if (next.project.projectConfigVersion !== expected.projectConfigVersion) throw new ActivationError();
+  if (next.project.baseVersion !== expected.baseVersion) throw new ActivationError();
+  if (next.epoch !== expected.epoch || next.project.epoch !== expected.epoch) {
+    throw new ActivationError();
+  }
+
+  const keyOf = (ref: RuleRef): string => `${ref.id}\0${ref.version}`;
+  const addedKeys = new Set(added.map(keyOf));
+  const removedKeys = new Set(removed.map(keyOf));
+  const previousRules = new Map(
+    previous.activeRules.map((item): [string, ActiveRule] => [keyOf(item), item]),
+  );
+  const nextRules = new Map(
+    next.activeRules.map((item): [string, ActiveRule] => [keyOf(item), item]),
+  );
+  // A duplicate key would silently drop one record from the map.
+  if (nextRules.size !== next.activeRules.length) throw new ActivationError();
+
+  for (const [key, before] of previousRules) {
+    const after = nextRules.get(key);
+    if (after === undefined) {
+      if (!removedKeys.has(key)) throw new ActivationError();
+      continue;
+    }
+    if (removedKeys.has(key)) throw new ActivationError();
+    if (after.mandatory !== before.mandatory) throw new ActivationError();
+    // Byte-identical rule record, provenance, injection metadata and version.
+    if (canonicalJson(after) !== canonicalJson(before)) throw new ActivationError();
+  }
+  for (const key of nextRules.keys()) {
+    if (!previousRules.has(key) && !addedKeys.has(key)) throw new ActivationError();
+  }
+  for (const key of addedKeys) {
+    const after = nextRules.get(key);
+    if (after === undefined) throw new ActivationError();
+    if (after.mandatory) throw new ActivationError();
+  }
+
+  // The advisory projection may change its identity (epoch/version), but it
+  // must not gain, lose, or rewrite a narrative. A tightening is hard-rule only.
+  const beforeAdvisory = previous.advisory;
+  const afterAdvisory = next.advisory;
+  if (beforeAdvisory.status !== afterAdvisory.status) throw new ActivationError();
+  if (beforeAdvisory.status === 'ready') {
+    if (afterAdvisory.status !== 'ready') throw new ActivationError();
+    if (canonicalJson(afterAdvisory.ruleRefs) !== canonicalJson(beforeAdvisory.ruleRefs)) {
+      throw new ActivationError();
+    }
+    if (canonicalJson(afterAdvisory.snapshot.rules) !== canonicalJson(beforeAdvisory.snapshot.rules)) {
+      throw new ActivationError();
+    }
+    if (canonicalJson(afterAdvisory.snapshot.routes) !== canonicalJson(beforeAdvisory.snapshot.routes)) {
+      throw new ActivationError();
+    }
+    if (
+      canonicalJson(afterAdvisory.snapshot.baselineRuleIds) !==
+      canonicalJson(beforeAdvisory.snapshot.baselineRuleIds)
+    ) throw new ActivationError();
+  } else {
+    if (afterAdvisory.status !== 'empty' || afterAdvisory.snapshot !== null) {
+      throw new ActivationError();
+    }
+  }
+}
+
+function readTemplates(value: unknown): ReadonlyMap<string, ApprovedTighteningTemplate> {
+  if (!Array.isArray(value)) throw new Error('invalid_templates');
+  const result = new Map<string, ApprovedTighteningTemplate>();
+  for (const item of value) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error('invalid_template');
+    }
+    const record = item as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== 'string' || id.trim().length === 0 || id.length > 160 || id.includes('\0')) {
+      throw new Error('invalid_template_id');
+    }
+    if (result.has(id)) throw new Error('duplicate_template');
+    const ruleRef = record.ruleRef;
+    if (ruleRef === null || typeof ruleRef !== 'object' || Array.isArray(ruleRef)) {
+      throw new Error('invalid_template_ref');
+    }
+    const ref = ruleRef as Record<string, unknown>;
+    const refId = ref.id;
+    const version = ref.version;
+    if (typeof refId !== 'string' || refId.trim().length === 0 || refId.length > 160 || refId.includes('\0')) {
+      throw new Error('invalid_template_ref');
+    }
+    if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) {
+      throw new Error('invalid_template_ref');
+    }
+    const ruleDigest = record.ruleDigest;
+    if (typeof ruleDigest !== 'string' || !DIGEST_PATTERN.test(ruleDigest)) {
+      throw new Error('invalid_template_digest');
+    }
+    const maxTtlMs = record.maxTtlMs;
+    if (typeof maxTtlMs !== 'number' || !Number.isSafeInteger(maxTtlMs) || maxTtlMs <= 0) {
+      throw new Error('invalid_template_ttl');
+    }
+    const maxApplications = record.maxApplications;
+    if (typeof maxApplications !== 'number' || !Number.isSafeInteger(maxApplications) || maxApplications < 0) {
+      throw new Error('invalid_template_quota');
+    }
+    const windowMs = record.windowMs;
+    if (typeof windowMs !== 'number' || !Number.isSafeInteger(windowMs) || windowMs <= 0) {
+      throw new Error('invalid_template_window');
+    }
+    result.set(id, Object.freeze({
+      id,
+      ruleRef: Object.freeze({ id: refId, version }),
+      ruleDigest,
+      maxTtlMs,
+      maxApplications,
+      windowMs,
+    }));
+  }
+  return result;
+}
+
+function readQuota(value: unknown): TighteningQuota {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid_quota');
+  }
+  const record = value as Record<string, unknown>;
+  const maxActive = record.maxActive;
+  const maxApplications = record.maxApplications;
+  const windowMs = record.windowMs;
+  if (typeof maxActive !== 'number' || !Number.isSafeInteger(maxActive) || maxActive < 0) {
+    throw new Error('invalid_quota');
+  }
+  if (typeof maxApplications !== 'number' || !Number.isSafeInteger(maxApplications) || maxApplications < 0) {
+    throw new Error('invalid_quota');
+  }
+  if (typeof windowMs !== 'number' || !Number.isSafeInteger(windowMs) || windowMs <= 0) {
+    throw new Error('invalid_quota');
+  }
+  return Object.freeze({ maxActive, maxApplications, windowMs });
+}
+
+function readClock(value: unknown): () => number {
+  if (typeof value !== 'function') throw new Error('invalid_clock');
+  return value as () => number;
+}
+
+function readVersion(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > 160 || value.includes('\0')) {
+    throw new Error('invalid_version');
+  }
+  return value;
+}
+
+function readPublisherConfig(raw: unknown): PublisherConfig {
+  try {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('invalid_options');
+    }
+    const options = raw as Record<string, unknown>;
+    const compiler = options.compiler;
+    if (
+      compiler === null || typeof compiler !== 'object' ||
+      typeof (compiler as { compile?: unknown }).compile !== 'function'
+    ) throw new Error('invalid_compiler');
+    return Object.freeze({
+      compiler: compiler as ProjectActivationCompiler,
+      base: verifyProjectActivationSnapshot(options.base),
+      templates: readTemplates(options.templates),
+      quota: readQuota(options.quota),
+      now: readClock(options.now),
+      newProjectConfigVersion: readVersion(options.newProjectConfigVersion),
+      newBaseVersion: readVersion(options.newBaseVersion),
+    });
+  } catch {
+    throw new ActivationError();
+  }
+}

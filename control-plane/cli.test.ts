@@ -179,7 +179,7 @@ test('serve prints only the loopback URL and credential instructions, never toke
 
     const output = [...io.stdoutLines, ...io.stderrLines].join('\n');
     assert.match(output, /http:\/\/127\.0\.0\.1:[0-9]+/);
-    assert.match(output, /log-only/);
+    assert.match(output, /managed opt-in/);
     assert.match(output, /human\.token/);
     assert.match(output, /agent\.token/);
 

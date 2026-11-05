@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  智能体授权与监督系统
+  Agent 策略匹配与审计原型
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>当前状态：三块产品 — Approve for me（尚未实现）、内置多维拦截规则并可被人修改、工程规范动态注入；运行期强制执行 NO-GO</strong>
+  <strong>Pi Harness 层阻断（显式 opt-in）、独立审查 + 一次性授权、激活注入与审计已实现；默认适配器仍为 log-only。OS 隔离不在本 MVP 范围。</strong>
 </p>
 
 <p align="center">
@@ -24,18 +24,13 @@
 
 把安全规矩写在 `AGENTS.md` 或系统提示词里，本质上是在赌模型的自觉。**Amos 的思路很简单：模型只管提议动作，确定性的策略引擎负责按规则算账，并留下一条干净的审计链。**
 
-> **安全边界声明**：安全策略层目前处于 **阶段 A（`log-only` 旁路观察）**，还**不是硬安全边界**。
-> 安全适配器只观察部分文件工具调用，把假设裁决写进 JSONL。另有独立的、显式启用的**工程工作流硬门**，可阻断危险 Shell 命令、注入按会话固定的 advisory 规范、按捕获的人类要求评估动作，并暂缓有问题的变更；它是工作流护栏，不等于全通道中介或 OS 安全边界。“物理锁定”“全局默认拒绝”或“防篡改审计”仍需受信任监督进程、完整动作覆盖与 OS 级执行隔离（详见 [安全模型](docs/security-model.md) 与 [工作流硬门](docs/workflow-gate.md)）。
+> **安全边界**：安全适配器默认 log-only。Pi `.pi/amos.json` 的 `managed.enabled` 是显式 opt-in 的 Harness 层 gate，可阻断归一化工具调用并审查 confirm；它**不是 OS 沙箱**，不覆盖所有入口/副作用，审计也不防篡改。独立工程工作流门仍是可选护栏。详见[安全模型](docs/security-model.md)、[Harness gate ADR](docs/adr-harness-gate.md)和[工作流硬门](docs/workflow-gate.md)。
 
 ---
 
-## 目标产品契约（尚未实现）
+## 当前产品范围
 
-Approve for me、多维可编辑规则、工程规范动态注入都是一等能力。三者共用**一份可审计的项目激活快照**：全部适用硬规则参与评估，已激活叙事按任务选入上下文。未激活规则既不评估也不新注入；注入失败不改变裁决。
-
-**GUI 阶段，全部 Amos 配置以受保护服务持有的 SQLite 为唯一事实源。** GUI 走认证 API，YAML／JSON／Git 只做导入、导出与归档；harness 必需的原生配置由服务生成。凭据材料独立保护，配置只存引用。这是待实现的迁移，不改变今天的文件配置方式。
-
-设计同时补齐：预授权内的自动收紧与强制 TTL、放宽人批、真实 probe 与逐规则 rollout、结构化语言检查发现、受保护接受门、Agent 不可写的审计。详见[产品设计](docs/product-design.md)和[十一项差距证据与交付计划](docs/product-gap-plan.md)。文档完成不解除运行期强制执行 NO-GO。
+Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1 项目快照，真实 Pi 会话用同一快照执行拦截与 advisory 注入，工具执行前完成 `deny`/`confirm`/`allow` 裁决；`confirm` 由独立 reviewer 审查并通过一次性授权后执行一次。默认适配器仍为 log-only，managed 需显式启用，且不是 OS 沙箱。详见[MVP 交付](docs/mvp-delivery.md)、[产品范围](docs/product-design.md)和[实现状态](docs/product-gap-plan.md)。
 
 ---
 
@@ -75,21 +70,25 @@ Approve for me、多维可编辑规则、工程规范动态注入都是一等能
 - **双端安全 `log-only` 适配器**：支持 **OpenCode V2** 与 **Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
 - **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
+- **P1 离线项目规则目录**：把现有 YAML 规则和全部 guidance seed 导入版本化目录，再按项目生成执行与 advisory 投影。编译、TTL 过滤和选择已通过离线测试；现有适配器仍走当前文件快照和静态 seed 路径。
+- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；deny 在执行前阻断，confirm 先停住并交有界独立审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt。真实 Pi harness 测试覆盖 deny/allow/confirm 与真实文件副作用。不是 OS 沙箱，默认仍 log-only。
+- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成离线端到端测试。Pi managed 已接入 review/grant 路径，OpenCode 仍 log-only；OS 隔离不在本轮范围，无真实模型校准。
+- **SQLite 治理库与 API（部分）**：单主 schema、全量导入预览、baseVersion CAS 提案、human-only 审批/发布、catalog v2 编译 + 审计原子提交、独立宿主回执、回滚新版本、WAL 备份/恢复和 loopback 认证 API。Vue 治理台与真实宿主回执未交付。
+- **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
 - **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
-- **本地治理控制台**：中文浏览器界面与 SQLite 服务，支持项目、完整规则编辑、不可变提案、人类审批与发布、历史版本、回滚提案、导出及治理审计。这是本地治理，不是受信执行层或单次工具放行。
 
-### 尚未实现（进入强制执行前必须补齐的拼图）
+### 当前限制
 
-- 对 Shell、Patch、网络请求、未知工具及扩展入口的**全通道无死角接管**。
-- 与 Agent 可写目录隔离的**受信任监督进程（Trusted Supervisor）**及防篡改存储。
-- 抗符号链接（Symlink）、硬链接、Bind Mount 及 TOCTOU 竞争的文件系统安全执行。
-- 绑定具体动作与策略快照的**一次性认证审批**，以及 `scope` / `owner` / `level` 等元数据的运行期权限语义。
-- 安全策略层在任一适配器中的真实 `deny` / `confirm` 拦截。独立的工程工作流硬门不满足这一要求。
-- Approve for me 形态的安全边界：宿主沙箱先停住越界，独立审查者只能批准这一次已停住的升级。目标记录在 [安全形态](docs/security-shape.md)。它不是插件模式，当前 Jev 路径仍然不能批准。
-- 拦截与注入同源的项目激活、可信临时收紧发布、规则 rollout／真实 probe 执行，以及绑定代码版本的语言检查信封。现有 advisory 种子不等于同源激活权威。
-- GUI／SQLite 配置单主迁移及受保护的发布／执行接入。本地治理控制台尚未迁移全部 Amos 配置，也不构成受信执行边界。
+- Pi/OpenCode 默认适配器仍是 Stage A log-only；Pi `managed.enabled` 是显式 opt-in 的 Harness 门，OpenCode 受管拦截未实现。
+- `managed` 只覆盖归一化 `read/write/edit/ls/find/grep`；Shell、PowerShell、自定义工具、MCP、子进程、绕过路径以及获准 Shell 内部副作用不在保证内。
+- **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介、防篡改审计）本轮不做，不是阻塞项**，不得宣称已具备。
+- 来源认证未实现；快照 verify 是结构/身份一致性检查，不是签名；控制台令牌与 runtime 报告都是同 UID 本地观察。
+- live reviewer 是本地模型 + 合成校准集，不是安全认证；未使用外部 provider 凭据/出境。
+- 完整 rollout、临时收紧持久化、远端 CI 接纳门、跨机器生效回执未实现。
+- SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
+- `strict/`、`autonomy/` 是 dev 线保留的本地实验库，不是本 MVP 受管路径。
 
 ---
 
@@ -118,16 +117,6 @@ npm run audit:review -- \
 
 *(注：`--output` 必须指向尚不存在的新文件，防止覆盖已有的人工审核结论。)*
 
-### 3. 打开人类治理控制台
-
-```bash
-npm run console
-```
-
-打开 `http://127.0.0.1:4310`，从启动信息指定的**人类令牌文件**获取令牌并登录；程序不打印令牌内容。状态默认位于工作区外的 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`。不要把人类令牌交给 Agent；独立的 Agent 令牌只能读取、提案，不能审批。
-
-创建项目后，将仓库规则导入候选，编辑并校验，再提交提案。“批准并发布”会原子生成本地新版本；回滚也必须创建新提案。发布不会改写现有 Harness 配置或开启安全强制执行。同 UID 进程仍能读取令牌或改写数据库，不构成 OS 隔离。启动参数、恢复方法与限制见[本地治理指南](docs/local-governance.md)。
-
 ---
 
 ## 协作规范与延伸文档
@@ -135,13 +124,13 @@ npm run console
 - **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 **核心文档索引**：
-- [产品设计](docs/product-design.md) · [差距闭环与交付门](docs/product-gap-plan.md)
-- [安全模型与当前保证](docs/security-model.md) · [安全形态](docs/security-shape.md) · [G0 门禁核验标准](docs/go-no-go.md)
+- [产品范围](docs/product-design.md) · [实现状态](docs/product-gap-plan.md)
+- [安全模型与当前状态](docs/security-model.md) · [运行期状态](docs/go-no-go.md)
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
+- [交付状态](docs/delivery-status.md) · [AC-01–22 验收矩阵](docs/acceptance-one-shot.md) · [One-shot 验证记录](docs/verification-one-shot.md) · [配置迁移与受管启动](docs/configuration-one-shot.md)
+- 安全 ADR：[来源认证](docs/adr-source-authentication.md) · [受管宿主](docs/adr-managed-file-host.md) · [review 协议](docs/adr-review-protocol.md) · [治理库](docs/adr-governance-store.md) · [CheckBinding](docs/adr-check-binding.md) · [临时收紧](docs/adr-temporary-tightening.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
-- [本地治理控制台](docs/local-governance.md)
-- [受限严格 Harness](docs/strict-harness.md) — 受控 Pi SDK 宿主；只暂存内存变更，不开放原生 Shell/MCP 执行。
 
 ---
 

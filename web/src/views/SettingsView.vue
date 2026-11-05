@@ -50,7 +50,7 @@ const themes = [
           </div>
           <div class="rounded-md border border-warning/30 bg-warning/5 p-3 text-warning">
             <ShieldAlert class="mb-1 inline size-4" />
-            Stage A 安全策略为 log-only，治理发布不改变适配器配置，不授予工具执行权限。
+            默认保留 log-only 观察插件；受管拦截需在项目 .pi/amos.json 中显式启用 managed。该模式只覆盖已接管 Harness 工具入口，不是 OS 沙箱。
           </div>
           <p class="text-muted-foreground">本地数据库和凭据与同 UID 进程共享可访问域，不构成可信隔离。会话在退出或服务重启后失效。</p>
           <Button variant="outline" size="sm" @click="auth.logout()"><LogOut class="mr-1 size-3.5" />退出登录</Button>

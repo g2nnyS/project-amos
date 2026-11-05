@@ -261,8 +261,9 @@ test('Host is unique, numeric, and bound to the actual loopback port', async () 
 
     const status = await fetchJson(harness, '/api/status');
     assert.deepEqual(status.body, {
-      mode: 'log-only',
-      enforcement: false,
+      mode: 'managed-opt-in',
+      enforcement: true,
+      defaultEnabled: false,
       trustBoundary: false,
       projectCount: 0,
     });

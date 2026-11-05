@@ -37,7 +37,7 @@ async function submit() {
     </section>
     <div class="mt-5 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs leading-relaxed text-warning">
       <ShieldAlert class="mb-1 inline size-4" />
-      Stage A 仅记录观察，治理发布不授予工具执行权限。同 UID 访问不构成可信隔离。
+      默认插件仍为观察模式；受管拦截需在项目中显式启用 managed，且不是 OS 沙箱。同 UID 访问不构成可信隔离。
     </div>
   </main>
 </template>

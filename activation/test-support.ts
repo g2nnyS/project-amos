@@ -18,18 +18,30 @@ export function rule(id: string, overrides: Record<string, unknown> = {}): Recor
 
 export function injection(area = 'typescript'): InjectionMetadata {
   return {
+    level: 1,
     areas: [area], pathHints: [], taskTags: [], keywords: [area], tags: [],
+    languages: area === 'typescript' || area === 'python' ? [area] : [],
+    frameworks: [],
     specificity: 1, priority: 0,
   };
 }
 
 export function entry(id: string, overrides: Record<string, unknown> = {}, area = 'typescript'): VersionedRule {
-  return { version: 1, rule: rule(id, overrides), injection: injection(area) };
+  const legacyRule = rule(id, overrides);
+  const metadata = { ...injection(area), level: legacyRule.level as number };
+  return {
+    id,
+    version: 1,
+    rule: legacyRule,
+    narrative: null,
+    provenance: { kind: 'legacy-constraints-yaml', sourceDigest: `sha256:${'a'.repeat(64)}` },
+    injection: metadata,
+  };
 }
 
 export function options(): ActivationCompilerOptions {
   return {
-    rawSchema: RAW_SCHEMA, libraryVersion: 'standard-1',
+    rawSchema: RAW_SCHEMA, catalogVersion: 'test-catalog-v2',
     rules: [
       entry('baseline', { level: 0, predicate: [{ op: 'op_in', args: { operations: ['file_delete'] } }] }, 'security'),
       entry('typescript', {
@@ -55,7 +67,8 @@ export function options(): ActivationCompilerOptions {
 
 export function project(overrides: Partial<ProjectActivationInput> = {}): ProjectActivationInput {
   return {
-    projectId: 'typescript-project', workspace: '/work/typescript', policyVersion: 'policy-1',
+    projectId: 'typescript-project', workspace: '/work/typescript',
+    projectConfigVersion: 'policy-1', baseVersion: 'base-1', epoch: 1,
     selectedRuleRefs: [{ id: 'typescript', version: 1 }], excludedRuleIds: [],
     advisoryBaselineRuleIds: ['baseline'], routes: [], ...overrides,
   };

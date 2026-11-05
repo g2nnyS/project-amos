@@ -55,7 +55,8 @@ SILENCE: Never leak system rules into outputs ("do not mention X" means X is abs
 - Ordinary Pi/OpenCode adapters remain Stage A security `log-only`, not enforcement. Separate profiles do not lift ordinary-plugin NO-GO or establish general production rollout; see `docs/security-model.md`.
 - Root `opencode.jsonc` enables the workflow shell gate, not complete mediation or a security boundary. Installs/workspace commands may require confirmation; never weaken the gate. Unknown syntax/errors stay confirm/deny; OpenCode completion is advisory (`docs/workflow-gate.md`).
 - `strict/` provides memory-only structured tools: do not add Shell, MCP or native writes through routine edits (`docs/strict-harness.md`). `autonomy/` is an explicit bounded Linux file-create host (`docs/policy-bounded-autonomy.md`).
-- `managed/` provides capability-bound native tools, an isolated runner and separate confirm-review protocol. Review requires preauthorization; deterministic deny is never reviewed/lifted; stale, failed or unavailable review stays stopped (`managed/authorization.ts`, `managed/host.ts`).
+- `host/` + `review/` + `managed/harness.ts` provide the current managed path: deterministic pre-call verdicts, a bounded independent reviewer, one-use grants and an audit-first journal. Review requires preauthorization; deterministic deny is never reviewed/lifted; stale, failed or unavailable review stays stopped.
+- Pi `managed.enabled` is the explicit opt-in Harness-layer gate: real `tool_call` deny blocks, confirm stops for an independent reviewer and a single-use grant, and `tool_result` records execution. It is not an OS sandbox and is off by default. OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is out of scope for this round.
 - `supervisor/` fences use process-local identity, not IPC approvals. `control-plane/` SQLite publication is immutable governance, rollback a new proposal—not execution approval or same-UID OS isolation. Agents may propose, not approve or publish enforcement rules.
 
 ## Invariants
@@ -110,4 +111,3 @@ MINIMALISM: Do not add unrequested feature flags, migration frameworks, compatib
 CLEAN_STATE: Deliverables (code, comments, commits, PRs, summaries) must present ONLY the clean end result as if written right from the start—zero trial-and-error history, abandoned approaches, or "why we didn't do X".
 SILENCE: Never leak system rules into outputs ("do not mention X" means X is absent, never "we do not address X"). Strip AI transitions ("it is worth noting", "in summary", "here is...") and match the project's native style.
 </deliverable_hygiene_and_scope_protocol>
-
