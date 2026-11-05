@@ -553,12 +553,19 @@ function buildExecution(
     throw new ManagedHostError();
   }
 
+  const rules = materializeRules(execution.rules, workspace);
+  // A legal empty runtime projection is an explicit state, not a normal
+  // checkpoint. The managed host refuses to construct rather than calling the
+  // engine with `[]` and presenting the resulting engine_error as a rule deny.
+  if (rules.length === 0) {
+    throw new ManagedHostError();
+  }
   return {
     projectId: execution.projectId,
     epoch,
     digest: execution.digest,
     activationDigest: execution.activationDigest,
-    rules: materializeRules(execution.rules, workspace),
+    rules,
   };
 }
 

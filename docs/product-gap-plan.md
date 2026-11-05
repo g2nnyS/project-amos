@@ -17,7 +17,7 @@
 - `check/`：精确 tree 的 CheckBinding/FindingBatch + 真实 TypeScript 检查。
 - `rollout/`：版本/宿主/环境/检查绑定证据门；无真实 probe。
 - `activation/tighten.ts`：已批准模板的附加型临时收紧、TTL/配额/epoch。
-- 验证：`npm run typecheck`、`npm test`（实际 682 pass / 0 fail / 0 skip）、
+- 验证：`npm run typecheck`、`npm test`（实际 686 pass / 0 fail / 0 skip）、
   `git diff --check` 通过。详见
   `docs/delivery-status.md` 与 `docs/verification-one-shot.md`。
 - 限制：Pi/OpenCode 默认仍读旧策略快照/guidance seed；没有真实 OS 隔离、

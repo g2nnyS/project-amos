@@ -95,6 +95,16 @@
 不得把 `.pi/amos.json` 或项目内可写文件指向任意 activation snapshot 作为
 受信来源；在 O5 未决前，受管入口保持离线/未启用。
 
+advisory 的可选迁移接线（不涉及执行授权）：
+
+- OpenCode 插件 options 增加 `activation: { snapshotPath, projectId }`；
+- Pi `.pi/amos.json` 增加同名字段；
+- 配置存在时 snapshot 必须通过 `createActivationRuntime` 的 project/
+  workspace/epoch/投影一致性检查；无效时使用空 advisory session，不回退
+  global seed；未配置时保持原 seed 行为。
+- 该路径不是来源认证；默认配置未启用，gate 开关未改。项目内可写 snapshot
+  仍可能注入任意 advisory 文本，因此启用前需 O5 来源/写域决定。
+
 ## 6. 未完成/阻塞
 
 - Vue 治理台、浏览器登录→项目→规则→发布→回滚流程（AC-12）。

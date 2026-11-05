@@ -65,6 +65,12 @@ CAND-09 的 `.git/hooks`、`.git/config` 持久化面已纳入默认保护，但
 若效果执行中抛错，追加 `outcome_unknown`，不自动重试。授权记录与结果
 分开，授权不等于执行成功。
 
+已知顺序限制：`write(overwriteDigest)`/`edit` 的只读 preflight 会在授权行
+之前读取现有文件内容以核对 digest/oldText；它只返回布尔并在内存中处理，
+不把内容返回给 Agent 或写日志，但严格来说这是授权前的数据访问。生产启用
+前应把内容相关检查移到授权之后，或把该读取显式纳入受审计披露。`read`
+的内容读取本身发生在授权行之后。
+
 ## 5. 能力与配额
 
 能力绑定 tools、resourceRoots、maxReadBytes、maxWriteBytes、
@@ -77,7 +83,9 @@ maxOperations、expiresAt。过期、越根、工具不允许、超字节、超�
 - 没有独立 OS 身份、挂载域、cgroup、bwrap 或受信监督进程；真实隔离
   blocked。
 - bind mount、TOCTOU 设备身份、网络文件系统不在声明范围；写操作只做
-  保守 `nlink`/`O_NOFOLLOW` 检查。
+  保守 `nlink`/`O_NOFOLLOW` 检查。`read` 没有 `nlink === 1` 限制：工作区内
+  既有的硬链接到外部文件可能被读取；本宿主不提供外部 `file_link` 工具，
+  但没有对预置硬链接做完整对象身份证明。
 - 审计不可用时不执行；但审计被攻破后的历史重写无法检测（无外部锚定）。
 - 没有真实 Pi/OpenCode 受管入口接线；没有 reviewer 时 confirm 全部停止。
 

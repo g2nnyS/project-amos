@@ -41,10 +41,10 @@
 | RULE-03 | `deny > confirm > log > allow`、同层 deny、fail-closed | 无 | AC-01 | P0 | 已保留 | passed | — |
 | RULE-04 | 纯引擎/注入时钟；`${SESSION_WORKSPACE}` 仅 glob；digest 绑定 workspace | 词法身份不是真实 FS 身份（由 host 单独处理） | AC-01 | P0/P2A | 已保留 | passed | — |
 | RULE-05 | 0 层拒绝不可排除；`deny` 不进入 review | 运行期强制仍 NO-GO | AC-02/07 | P1/P2 | 已保留 + host 测试 | passed（离线） | 未启用 |
-| RULE-06 | L/A/I 分离；catalog v2 以 ID+version 激活 | 适配器默认仍读旧 YAML | AC-02/03 | P1 | 部分 | passed（runtime 绑定） | 仅离线 |
+| RULE-06 | L/A/I 分离；catalog v2 以 ID+version 激活；managed 消费 execution，Pi/OpenCode 可选消费 advisory | 适配器默认仍读旧 YAML/seed；来源未认证 | AC-02/03 | P1 | 部分（消费者已接） | passed（runtime + 115 adapter 回归） | 仅离线 |
 | RULE-07 | 检测只产建议；删除清单不减少激活 | 项目检测发布闭环未接 | AC-02 | P1/P3 | 部分 | passed（离线） | 仅离线 |
-| RULE-08 | 同一 snapshot 编译 runtime/ci/server 与 advisory | 适配器未默认消费 execution 投影 | AC-03 | P1 | 已实现（绑定） | passed | 仅离线 |
-| RULE-09 | 硬规则 narrative 与执行同源；未激活不评估/不注入 | 无 | AC-03 | P1 | 已实现 | passed | 仅离线 |
+| RULE-08 | 同一 snapshot 编译 runtime/ci/server 与 advisory；managed/适配器消费 | 适配器默认未切 execution（安全层仍 log-only） | AC-03 | P1 | 已实现（绑定+消费） | passed | 仅离线 |
+| RULE-09 | 硬规则 narrative 与执行同源；未激活不评估/不注入；invalid activation advisory 不回退 seed | 无 | AC-03 | P1 | 已实现 | passed | 仅离线 |
 | RULE-10 | shadow/实拦分轴；空投影显式 `empty` | rollout 未接运行期 | AC-03/16 | P1/P4 | 已实现（离线） | passed | 未启用 |
 | RULE-11 | 编译确定、深冻结、verify 重编译；伪造/混投影拒绝 | verify 不是来源认证（见 ADR O5） | AC-03 | P1 | 已实现 | passed | pending-human-review |
 | RULE-12 | 同项目 last-good；失败不续 TTL；时钟倒退停止 | 持久 last-good 未接治理发布 | AC-04 | P1/P3 | 已保留 | passed（现有测试） | 仅离线 |
@@ -91,7 +91,7 @@
 
 | ID | 当前实现 | 缺口 | AC | 切片/依赖 | 实现 | 证据 | 审查/启用 |
 |---|---|---|---|---|---|---|---|
-| INJ-01 | 现有 guidance seed 注入保留；activation runtime 提供同源 advisory | 适配器默认未切到 activation advisory | AC-13 | P1 | 部分 | passed（runtime 测试） | 仅离线 |
+| INJ-01 | 现有 guidance seed 注入保留；activation runtime 提供同源 advisory；Pi/OpenCode 显式 `activation` 配置时可切到 activation advisory | 默认仍 seed；配置的快照无来源认证 | AC-13 | P1 | 部分（可选接线） | passed（runtime + adapter 测试） | 仅离线 |
 | INJ-02 | level-first、去重、预算、遗漏报告 | 无 | AC-13 | P1/P2 | 已保留 | passed | — |
 | INJ-03 | 宿主接受才 commit；注入失败不改裁决 | 持久接受回执未接 | AC-13 | 全程 | 部分 | passed（现有测试） | 未启用 |
 | INJ-04 | 注入携带 activation/epoch/advisory digest | 重启重建持久化未实现 | AC-13 | P2/P3 | 部分 | passed（离线） | 未启用 |
@@ -154,6 +154,20 @@
 - B 的 strict/autonomy/managed 原型未整条移植；只借鉴其边界概念。
 - 未启用任何安全 deny/confirm；未改 NO-GO；未 push/merge/tag/deploy。
 
+## 3.0 其他分支原型的处置（来源提交 `29c748a`）
+
+本轮**没有整条合入** B；以下只记录审阅结论与来源，B 的测试存在/skip 不
+作为本分支证据。
+
+| B 来源 | 本分支处置 | 原因 |
+|---|---|---|
+| `control-plane/*` | 未复制；借鉴 loopback auth/Host/Origin/CSRF/角色分离与 CAS 概念 | B 发布 `amos-governance-snapshot` v1，不能强转/改名成 H catalog v2；已用 H store/API 原生实现 |
+| `managed/*` | 未合入；借鉴“先宿主后 review、最小投影、grant 单次消费”概念 | B 接受 legacy/unified activation v1；H 用 catalog v2 + 自己的 host/review 合同 |
+| `autonomy/*` | 未合入 | 单文件原型不覆盖 H 的审计前置/能力闭集/崩溃恢复要求 |
+| `strict/*` | 未合入 | 内存虚拟文件宿主不是 OS 边界；本轮不声称 strict |
+| `web/*`（Vue 控制台） | 未移植 | AC-12 浏览器流程仍 blocked；只交付 API 与本地测试 |
+| B 的 `opencode.jsonc`/AGENTS/package | 未采用 | 不带入 `workflowGate.enabled=true`，不全量覆盖 H 配置 |
+
 ## 3.1 受管文件端到端（离线）
 
 `managed/flow.ts` 把现有模块接成一条可测试链路：
@@ -173,7 +187,19 @@
 证据：`node --test dist/managed/*.test.js` → 9 pass / 0 fail。它不证明真实
 provider、真实 OS 隔离或生产启用；这些仍是 blocked。
 
-## 3.2 治理库与 API（离线/部分）
+## 3.2 P1 消费者接线（advisory）
+
+- `managed/` 使用 activation runtime 的 runtime execution 投影做受管裁决。
+- Pi/OpenCode 增加显式可选字段 `activation: { snapshotPath, projectId }`：
+  配置存在时读取并验证 catalog v2 snapshot，使用
+  `createProjectInjectorSession`；snapshot 的 project/workspace 必须匹配
+  当前 session 目录。配置存在但无效时使用**空 advisory session**，不回退
+  global seed；未配置时保持现有 seed 行为。
+- 该接线只影响 advisory 注入，不改变工具裁决、审计或 log-only 状态。
+- 配置的 snapshot 路径不是来源认证；来源认证仍按 O5 pending。默认配置
+  未启用该字段，`opencode.jsonc`/`.pi/amos.json` 的 gate 开关未改。
+
+## 3.3 治理库与 API（离线/部分）
 
 `governance/` 已实现：SQLite schema v1（WAL、FULL、owner-only、非符号链接、
 未知/损坏版本不重置）、全量导入预览与候选、不可变提案/baseVersion CAS、
@@ -208,7 +234,7 @@ human-only 审批与发布、发布事务内编译 catalog v2 + verify + audit +
 - GOVERNANCE：`npm run typecheck`、`npm run build`、`node --test
   dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip（真实临时 SQLite +
   loopback HTTP；无真实宿主/UI）；已合入。
-- 整合后全套：`npm run typecheck` 通过；`npm test` → 682 tests / 682 pass /
+- 整合后全套：`npm run typecheck` 通过；`npm test` → 686 tests / 686 pass /
   0 fail / 0 skip；`git diff --check` 通过。
 
 最终整合后本文件会更新为实际全套结果。

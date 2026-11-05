@@ -28,7 +28,8 @@
 | REVIEW | 同上，`dist/review/*.test.js` | 42 pass / 0 fail / 0 skip；loopback stub，无真实 provider |
 | HOST | 同上，`dist/host/*.test.js` | 17 pass / 0 fail / 0 skip；真实临时文件系统 |
 | GOVERNANCE | 同上，`dist/governance/*.test.js` | 39 pass / 0 fail / 0 skip；真实临时 SQLite + loopback HTTP |
-| MANAGED（整合者） | `node --test dist/managed/*.test.js` | 9 pass / 0 fail / 0 skip；端到端离线 |
+| MANAGED（整合者） | `node --test dist/managed/*.test.js` | 10 pass / 0 fail / 0 skip；端到端离线 |
+| ADAPTER WIRING（整合者） | `node --test dist/adapters/pi/*.test.js dist/adapters/opencode-v2/*.test.js dist/adapters/shared/*.test.js` | 115 pass / 0 fail / 0 skip；含可选 activation advisory 3 项 |
 
 ## 整合后全套（交付分支）
 
@@ -43,7 +44,7 @@ git diff --check
 实际结果：
 
 - `npm run typecheck` → exit 0。
-- `npm test` → `tests 682`, `pass 682`, `fail 0`, `cancelled 0`,
+- `npm test` → `tests 686`, `pass 686`, `fail 0`, `cancelled 0`,
   `skipped 0`, `todo 0`；`npm test` 先删除并重建 `dist/`。
 - `git diff --check` → 无输出，exit 0。
 

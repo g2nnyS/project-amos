@@ -5,6 +5,7 @@ import { after, describe, it } from 'node:test';
 
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
 import { createActivationRuntime } from '../activation/runtime.ts';
+import { createManagedFileHost } from '../host/index.ts';
 import { options as compilerOptions, project as projectInput } from '../activation/test-support.ts';
 import { createRequirementFrame } from '../decision/requirement.ts';
 import { createManagedFlow, type ManagedFlow, type ManagedFlowOptions } from './flow.ts';
@@ -338,6 +339,40 @@ describe('managed file flow', () => {
         sessionId: 'ses_1',
         requirement: null,
         review: null,
+        now: () => NOW,
+      }),
+    );
+  });
+
+  it('refuses an empty execution projection instead of evaluating an empty table', () => {
+    mkdirSync('/tmp/opencode', { recursive: true });
+    const root = mkdtempSync(join('/tmp/opencode', 'amos-managed-empty-'));
+    roots.push(root);
+    const workspace = join(root, 'workspace');
+    const auditDir = join(root, 'audit');
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(auditDir, { recursive: true });
+    assert.throws(() =>
+      createManagedFileHost({
+        workspace,
+        capability: {
+          id: 'cap_1',
+          tools: ['read'],
+          resourceRoots: [workspace],
+          maxReadBytes: 1024,
+          maxWriteBytes: 1024,
+          maxOperations: 1,
+          expiresAt: NOW + 500_000,
+        },
+        execution: {
+          projectId: 'project_1',
+          workspace,
+          epoch: 1,
+          activationDigest: `sha256:${'a'.repeat(64)}`,
+          digest: `sha256:${'b'.repeat(64)}`,
+          rules: [],
+        },
+        auditPath: join(auditDir, 'host.jsonl'),
         now: () => NOW,
       }),
     );

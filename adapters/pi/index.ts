@@ -62,6 +62,10 @@ import {
   createLogOnlyRecorder,
   type LogOnlyRecorder,
 } from '../shared/log-only.ts';
+import {
+  createEmptyAdvisorySession,
+  loadActivationGuidance,
+} from '../shared/activation-guidance.ts';
 import type { ActionNormalization } from '../shared/types.ts';
 import {
   normalizePiToolCall,
@@ -150,6 +154,64 @@ export function readPiConfig(directory: string): PiAmosConfig | null {
   };
 }
 
+interface PiActivationGuidanceConfig {
+  readonly snapshotPath: string;
+  readonly projectId: string;
+}
+
+type PiActivationGuidanceState =
+  | { readonly status: 'absent' }
+  | { readonly status: 'enabled'; readonly config: PiActivationGuidanceConfig }
+  | { readonly status: 'error' };
+
+/**
+ * Optional `.pi/amos.json` `activation` field. Missing means the legacy seed;
+ * present-but-invalid means an empty advisory session (never a seed fallback).
+ * The security recorder is independent and is never disabled by this field.
+ */
+function readPiActivationGuidanceConfig(
+  directory: string,
+): PiActivationGuidanceState {
+  if (!isNonBlankString(directory) || !isAbsolute(directory)) {
+    return { status: 'absent' };
+  }
+  const configPath = join(directory, '.pi', 'amos.json');
+  if (!existsSync(configPath)) {
+    return { status: 'absent' };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configPath, 'utf8'));
+  } catch {
+    return { status: 'error' };
+  }
+  if (!isRecord(raw) || raw.activation === undefined) {
+    return { status: 'absent' };
+  }
+  try {
+    if (!isRecord(raw.activation)) return { status: 'error' };
+    const keys = Object.keys(raw.activation);
+    if (keys.some((key) => key !== 'snapshotPath' && key !== 'projectId')) {
+      return { status: 'error' };
+    }
+    const snapshotPath = raw.activation.snapshotPath;
+    const projectId = raw.activation.projectId;
+    if (
+      !isNonBlankString(snapshotPath) ||
+      !isNonBlankString(projectId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(projectId)
+    ) {
+      return { status: 'error' };
+    }
+    return {
+      status: 'enabled',
+      config: { snapshotPath: resolve(directory, snapshotPath), projectId },
+    };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
 export interface PiWorkflowGateState {
   readonly status: 'absent' | 'enabled' | 'error';
   readonly config: WorkflowGateConfig | null;
@@ -212,8 +274,12 @@ export interface PiShellSettings {
  * model. UI access still comes from Pi's `ctx`, which tests also supply.
  */
 export interface PiWorkflowDependencies {
-  /** Create one advisory injector session; production uses the seed snapshot. */
-  createSession(): InjectorSession;
+  /**
+   * Create one advisory injector session for the explicit session directory.
+   * Production uses the legacy seed unless `.pi/amos.json` configures an
+   * activation snapshot.
+   */
+  createSession(directory: string): InjectorSession;
   assessShellCommand(
     command: string,
     options: AssessShellOptions,
@@ -243,7 +309,20 @@ function block(code: string): GateDecision {
 
 function createDefaultDependencies(pi: ExtensionAPI): PiWorkflowDependencies {
   return {
-    createSession: () => createInjectorSession(getProjectSeedSnapshot()),
+    createSession(directory: string): InjectorSession {
+      const activation = readPiActivationGuidanceConfig(directory);
+      if (activation.status === 'enabled') {
+        return loadActivationGuidance({
+          snapshotPath: activation.config.snapshotPath,
+          projectId: activation.config.projectId,
+          workspace: directory,
+        }).createSession();
+      }
+      if (activation.status === 'error') {
+        return createEmptyAdvisorySession();
+      }
+      return createInjectorSession(getProjectSeedSnapshot());
+    },
     assessShellCommand,
     createChangeReview,
     loadJevConfig,
@@ -394,13 +473,16 @@ export default function amosPiLogOnly(
   }
 
   /** One advisory injector session per real session key. */
-  function guidanceSession(key: string): GuidanceSessionState {
+  function guidanceSession(
+    key: string,
+    directory: string,
+  ): GuidanceSessionState {
     const existing = guidanceSessions.get(key);
     if (existing !== undefined) {
       return existing;
     }
     return rememberGuidanceSession(key, {
-      injector: dependencies.createSession(),
+      injector: dependencies.createSession(directory),
       committedRuleIds: new Set<string>(),
     });
   }
@@ -473,7 +555,7 @@ export default function amosPiLogOnly(
         return;
       }
       const key = sessionKey(ctx);
-      const state = guidanceSession(key);
+      const state = guidanceSession(key, ctx.cwd);
       if (state.injector.queueAction({ tool, operation, target }, ctx.cwd)) {
         rememberQueuedCall(key, toolCallId);
       }
@@ -1091,7 +1173,7 @@ export default function amosPiLogOnly(
         return undefined;
       }
 
-      const guidance = guidanceSession(key);
+      const guidance = guidanceSession(key, ctx.cwd);
       const block = guidance.injector.selectPrompt(
         typeof event.prompt === 'string' ? event.prompt : '',
       );
