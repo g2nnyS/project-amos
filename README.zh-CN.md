@@ -30,7 +30,7 @@
 
 ## 当前产品范围
 
-Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护栏和动态 advisory 规范注入。P1 项目规则目录仅离线编译投影；受管文件宿主、reviewer/一次性授权、SQLite 治理库、精确 tree 检查、rollout 证据门与临时收紧均为离线库/API，默认适配器未接入。详见[产品范围](docs/product-design.md)、[实现状态](docs/product-gap-plan.md)和[交付状态](docs/delivery-status.md)。
+Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1 项目快照，真实 Pi 会话用同一快照执行拦截与 advisory 注入，工具执行前完成 `deny`/`confirm`/`allow` 裁决；`confirm` 由独立 reviewer 审查并通过一次性授权后执行一次。默认适配器仍为 log-only，managed 需显式启用，且不是 OS 沙箱。详见[MVP 交付](docs/mvp-delivery.md)、[产品范围](docs/product-design.md)和[实现状态](docs/product-gap-plan.md)。
 
 ---
 

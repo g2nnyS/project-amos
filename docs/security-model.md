@@ -48,7 +48,7 @@ Agent 同写域、无防篡改。OS 隔离（独立 UID/挂载域/bwrap/cgroup�
   managed 对 confirm 使用本地确定性 reviewer 或 loopback HTTP reviewer，
   无真实模型校准时不得称已校准；grant 是进程内单次 HMAC，重启拒绝而非
   持久授权。见 [review ADR](adr-review-protocol.md)。
-- `governance/` 的 SQLite/API 提供单主、CAS、审计和回执契约；SQLite/0600/
+- `control-plane/` 的 SQLite/API 提供单主、CAS、审计和版本契约；SQLite/0600/
   同 UID 不是隔离，发布不等于宿主接收或生效。见
   [治理 ADR](adr-governance-store.md)。
 - `check/`、`rollout/`、`activation/tighten.ts` 是库级合同/证据门；没有

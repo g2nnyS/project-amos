@@ -42,7 +42,8 @@
 - 错 digest、错 project、未知 publication 的 receipt 拒绝。
 - 状态 API 必须分别显示 published/received/effective，并明确
   `unsupported`/`unmanaged`；没有回执不能显示“已生效”。
-- 本轮没有真实宿主进程回执接线；只交付记录契约与本地测试，标 blocked。
+- 本轮宿主回执由 Pi 写 `.pi/runtime.json`；控制台读取并显示
+  loaded/stale/never。它是 same-UID 本地观察，不是跨机器/防篡改回执。
 
 ## 4. 备份与恢复
 
@@ -61,7 +62,7 @@
 - 人/Agent 会话由服务端构造，不信任客户端 role/actor；Agent 调用
   decision/publish/receipt 一律拒绝。
 - 无任意 SQL/ORM/JS 逃生舱；GET 不写治理状态。
-- 静态资产/浏览器 UI：**本轮未交付**。B 的 Vue 治理台未移植；不声称
+- 静态资产/浏览器 UI：**已由复用的 Vue 控制台交付**（2026-11-05 MVP）。不声称
   AC-12，不以 API 存在冒充 GUI 完成。
 
 ## 6. 明确未完成

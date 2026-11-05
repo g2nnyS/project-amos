@@ -200,6 +200,12 @@ async function runPrompt(
   return { session, systemSections: system.sections ?? {} };
 }
 
+function runtimeReport(fixture: Fixture): Record<string, unknown> | null {
+  const path = join(fixture.project, '.pi', 'runtime.json');
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+}
+
 function journal(path: string): Array<Record<string, unknown>> {
   if (!existsSync(path)) return [];
   return readFileSync(path, 'utf8')
@@ -472,6 +478,22 @@ describe('real Pi harness managed interception', () => {
     assert.match(guidance, /amos-guidance/);
     assert.match(guidance, /ts-advice/);
     assert.doesNotMatch(guidance, /python/);
+    const report = runtimeReport(fixture);
+    assert.ok(report, 'expected the real harness runtime report');
+    assert.equal(report.format, 'amos-harness-runtime');
+    assert.equal(report.projectId, 'harness-project');
+    assert.equal(report.policyVersion, 'policy-1');
+    assert.equal(report.mode, 'enforcing');
+    assert.match(String(report.activationDigest), /^sha256:[a-f0-9]{64}$/);
+    // The injected section and the runtime report must name the same snapshot.
+    assert.ok(guidance.includes(String(report.activationDigest)));
+    assert.deepEqual(report.capabilities, {
+      enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
+      blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
+      preCallStop: true,
+      injection: 'system-prompt-and-tool-result',
+      singleUseReview: true,
+    });
     session.dispose();
   });
 

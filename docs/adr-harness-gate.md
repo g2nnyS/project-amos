@@ -29,6 +29,7 @@ deny/confirm/allow，而无需假装 OS 沙箱。默认行为仍是 Stage A log-
   "managed": {
     "enabled": true,
     "auditPath": "/var/lib/amos/managed-audit.jsonl",
+    "requirementEgress": "denied",
     "review": {
       "endpoint": "http://127.0.0.1:PORT/review",
       "model": "local-reviewer",
@@ -47,6 +48,8 @@ deny/confirm/allow，而无需假装 OS 沙箱。默认行为仍是 Stage A log-
   `amos_managed_config_error`（fail closed）。
 - `review` 缺省：confirm 一律阻断 `amos_managed_review_unavailable`。
 - `auditPath` 必须在工作区外；否则配置错误、阻断。
+- `requirementEgress` 缺省 `denied`；只有显式 `allowed` 且 review policy
+  允许时才发送用户要求原文到 reviewer，digest 始终绑定。
 - snapshot 必须是 catalog v2 的 workspace/epoch/双投影一致内容；这不是
   来源认证。
 
@@ -75,6 +78,13 @@ managed 模式启用 activation advisory，即使独立 workflow gate 未开启�
 空 advisory，不回退 global seed。注入不参与执行裁决。
 
 ## 5. 真实证据（非 mock 的 Harness/副作用）
+
+`npm run probe:live` 使用真实本地 llama.cpp `gemma-4-e4b`、真实 Pi
+AgentSession、真实扩展、真实文件副作用和独立模型 reviewer：8 个合成校准
+场景 0 false allow；confirm 只执行一次；deny 无文件；system prompt 注入与
+runtime report 使用同一 activationDigest；reviewer 收到 requirement 原文
+与 digest。证据在 `/tmp/opencode/amos-live-probe-*/evidence.json`。
+
 
 `managed/pi-harness.test.ts`（7 pass）使用：
 

@@ -5,7 +5,33 @@
 不能算通过。**MVP 限定为 Harness 层工具拦截；OS 隔离本轮不做，不是阻塞
 项。** 全表不改变 G0/NO-GO。
 
-全套命令与环境见 `docs/verification-one-shot.md`。整合后实际：
+
+> **2026-11-05 当前修订**：用户将 MVP 限定为 Harness 层拦截，明确不做 OS
+> 隔离，并要求复用现有 Vue 控制台、真实浏览器与真实模型 probe。以下旧表
+> 保留为历史记录；当前判定以本节和 [MVP 交付](mvp-delivery.md) 为准。
+
+| AC | 当前状态（2026-11-05） | 证据 |
+|---|---|---|
+| AC-01/02/03/04 | passed（本地/离线） | engine/fixtures/schema/activation 全套；两项目隔离、必选基线、TTL/last-good、合法空投影 |
+| AC-05/06 | passed（Harness 层；OS 隔离非目标） | 真实 Pi `tool_call` deny/confirm/allow；未知/Shell/自定义工具阻断；同 UID/无 OS 沙箱限制明确记录 |
+| AC-07/08 | passed（本地 + 真实本地模型 reviewer） | 一次性授权/重放/过期/错目标/错快照测试；live probe 真实模型 8 场景 0 false allow；requirement 原文/摘要绑定 |
+| AC-09/10/11 | passed（本地 SQLite + loopback HTTP；真实浏览器） | `control-plane` 单主、CAS/提案/发布/回滚；浏览器登录→发布→回滚；CSP/角色/请求上限 |
+| AC-12 | **passed（真实浏览器）** | `node web/e2e/smoke.mjs` 18 项 PASS：登录→项目→规则→校验→发布→YAML 导出/导入→runtime loaded/stale→回滚 v2 |
+| AC-13 | passed（同快照注入） | system prompt + tool_result area guidance；任务路由 `live-ts`/`live-python`；注入失败不改裁决 |
+| AC-14 | passed（回归） | workflow shell/change review/Jev 既有测试全过 |
+| AC-15 | out-of-scope（本轮） | 临时收紧持久化不在本轮；历史实现保留 |
+| AC-16 | out-of-scope（本轮） | 完整自动 rollout/真实 probe 阈值不在本轮 |
+| AC-17 | **passed（本地真实模型）** | 本地 llama.cpp `gemma-4-e4b` 真实调用 + 8 场景校准；外部 provider 未运行 |
+| AC-18 | out-of-scope（本轮） | 远端 CI 接纳/跳 hook 不在本轮 |
+| AC-19 | partial（Harness 层） | 放行前 authorization/fsync，结果另记；不含内容/命令；同 UID 非防篡改 |
+| AC-20 | partial | 显式 managed opt-in；runtime report 为 same-UID 本地观察；来源认证未实现 |
+| AC-21 | passed（保留） | 未改写历史 JSONL/审核结论/archive v1 |
+| AC-22 | partial | 正常执行不逐次人工批准；误放行/误拒/完成率指标未实现 |
+
+当前全套：Node 732 tests / 731 pass / 1 skipped；Web 5 pass；浏览器 18 项
+PASS；live probe 通过。历史表如下。
+
+全套命令与环境见 `docs/verification-one-shot.md`。历史（2026-11-04）实际：
 `npm run typecheck` exit 0；`npm test` 698 pass / 0 fail / 0 skip；
 `git diff --check` exit 0。
 

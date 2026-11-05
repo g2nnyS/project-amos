@@ -1,9 +1,10 @@
 # ADR：独立安全 reviewer 与一次授权（P2B）
 
-- 状态：**协议实现草案 + Harness MVP 实际接线，pending-human-review；
-  无真实模型校准，不启用生产 confirm**。
-- MVP 范围：Harness 层 confirm 使用独立**本地确定性 reviewer**或 loopback
-  HTTP reviewer；真实模型校准不是本轮 OS 隔离替代，也不伪装为已校准。
+- 状态：**协议实现 + Harness MVP 实际接线，pending-human-review；未启用
+  日常生产 confirm**。
+- MVP 范围：Harness 层 confirm 使用独立 loopback HTTP reviewer；测试使用
+  本地确定性 reviewer，live probe 使用真实本地模型 reviewer（8 个合成
+  校准场景，0 false allow）。这不是生产安全认证，也不替代 OS 隔离。
 - 范围：`review/` 的最小有界投影、独立 reviewer、校准门、one-shot grant。
 - 关联：HOST-05–08、ENG-05–08、AC-07/08/17/22；PRD §5.2。
 

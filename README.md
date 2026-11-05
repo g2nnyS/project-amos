@@ -30,10 +30,13 @@ Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. 
 
 ## Current Product Scope
 
-Amos currently provides a Stage A log-only security observer, an opt-in engineering
-workflow guard, and dynamic advisory guidance. The P1 project rule catalog compiles
-offline projections but is not connected to the adapters. See [Product Scope](docs/product-design.md)
-and [Implementation Status](docs/product-gap-plan.md).
+Amos now provides a limited Harness-layer MVP: a real Vue governance console publishes
+P1 project snapshots, a real Pi session loads the same snapshot for enforcement and
+advisory injection, and `deny`/`confirm`/`allow` are decided before the harness tool
+runs. `confirm` is held for an independent reviewer and a single-use grant. The default
+adapter remains log-only; managed mode is explicit opt-in and is not an OS sandbox.
+See [MVP delivery](docs/mvp-delivery.md), [Product Scope](docs/product-design.md), and
+[Implementation Status](docs/product-gap-plan.md).
 
 ---
 
@@ -73,10 +76,10 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
-- **P1 Offline Project Rule Catalog**: Imports the current YAML rules and all guidance seeds into versioned records, then derives project-scoped execution and advisory projections. The compiler, TTL filtering, and selection are tested offline; existing adapters still use the current file snapshot and static seed path.
-- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt. Real Pi harness tests exercise deny/allow/confirm and actual file side effects. Not an OS sandbox; default remains log-only.
+- **P1 Project Rule Catalog + Publication**: Imports the repository YAML rules and guidance seeds, compiles project execution/advisory projections, and publishes a catalog-v2 artifact from the console. The Pi managed path consumes the same artifact for enforcement and injection.
+- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent model review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. A live probe uses a real local model, real Pi session, real reviewer, and real file effects. Not an OS sandbox; default remains log-only.
 - **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Pi managed mode now wires the review/grant path; OpenCode remains log-only. OS isolation is out of scope and there is no live model calibration.
-- **SQLite Governance Store & API (Partial)**: Single-primary SQLite with versioned schema, full import preview, baseVersion CAS proposals, human-only approval/publish, atomic catalog-v2 compilation + audit, separate host receipts, rollback-as-new-version, WAL backup/restore, and a loopback authenticated API. The Vue console and real host receipt integration are not delivered.
+- **Vue Governance Console & SQLite API**: Reuses the existing Vue console for login, projects, rule editing/import, validation, proposals, human approval/publish, versions, rollback, audit, and observations. SQLite remains the single primary; publication compiles catalog-v2 and writes the harness artifact. A real browser test covers login→publish→YAML export/import→runtime status→rollback. Host receipt is a same-UID runtime report, not remote attestation.
 - **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.

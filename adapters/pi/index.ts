@@ -68,6 +68,11 @@ import {
   loadActivationGuidance,
   loadActivationRuntime,
 } from '../shared/activation-guidance.ts';
+import {
+  PI_MANAGED_CAPABILITIES,
+  writeHarnessRuntimeReport,
+} from '../shared/runtime-report.ts';
+import type { ActivationRuntime } from '../../activation/runtime.ts';
 import { createHarnessGate, type HarnessGate } from '../../managed/harness.ts';
 import {
   createHttpReviewProvider,
@@ -233,6 +238,7 @@ interface PiManagedReviewConfig {
 
 interface PiManagedConfig {
   readonly auditPath: string;
+  readonly requirementEgress: 'allowed' | 'denied';
   readonly review: PiManagedReviewConfig | null;
 }
 
@@ -275,16 +281,32 @@ function readPiManagedState(directory: string): PiManagedState {
         : { status: 'error' };
     }
     const keys = Object.keys(raw.managed);
-    if (keys.some((key) => key !== 'enabled' && key !== 'auditPath' && key !== 'review')) {
+    if (
+      keys.some(
+        (key) =>
+          key !== 'enabled' &&
+          key !== 'auditPath' &&
+          key !== 'requirementEgress' &&
+          key !== 'review',
+      )
+    ) {
       return { status: 'error' };
     }
     const auditPath = raw.managed.auditPath;
     if (!isNonBlankString(auditPath)) return { status: 'error' };
+    const requirementEgress = raw.managed.requirementEgress ?? 'denied';
+    if (requirementEgress !== 'allowed' && requirementEgress !== 'denied') {
+      return { status: 'error' };
+    }
     const review = readPiManagedReview(raw.managed.review);
     if (review === undefined) return { status: 'error' };
     return {
       status: 'enabled',
-      config: { auditPath: resolve(directory, auditPath), review },
+      config: {
+        auditPath: resolve(directory, auditPath),
+        requirementEgress,
+        review,
+      },
     };
   } catch {
     return { status: 'error' };
@@ -500,7 +522,12 @@ interface GuidanceSessionState {
 type ManagedGateState =
   | { readonly status: 'absent' }
   | { readonly status: 'error' }
-  | { readonly status: 'ready'; readonly gate: HarnessGate };
+  | {
+      readonly status: 'ready';
+      readonly gate: HarnessGate;
+      readonly runtime: ActivationRuntime;
+      readonly loadedAt: string;
+    };
 
 /**
  * Pi log-only extension plus an optional engineering workflow gate.
@@ -520,6 +547,7 @@ export default function amosPiLogOnly(
 
   const recorders = new Map<string, LogOnlyRecorder>();
   const managedGates = new Map<string, ManagedGateState>();
+  const runtimeUsed = new Set<string>();
   const managedPending = new Map<
     string,
     { readonly gate: HarnessGate; readonly callId: string }
@@ -669,8 +697,23 @@ export default function amosPiLogOnly(
         review,
         now: () => Date.now(),
       });
-      const state: ManagedGateState = { status: 'ready', gate };
+      const loadedAt = new Date().toISOString();
+      const state: ManagedGateState = {
+        status: 'ready',
+        gate,
+        runtime: loaded.runtime,
+        loadedAt,
+      };
       managedGates.set(cacheKey, state);
+      writeHarnessRuntimeReport({
+        directory,
+        projectId: loaded.runtime.projectId,
+        activationDigest: loaded.runtime.activationDigest,
+        epoch: loaded.runtime.epoch,
+        policyVersion: loaded.runtime.snapshot.project.projectConfigVersion,
+        loadedAt,
+        capabilities: PI_MANAGED_CAPABILITIES,
+      });
       while (managedGates.size > MAX_GUIDANCE_SESSIONS) {
         const oldest = managedGates.keys().next().value;
         if (oldest === undefined || oldest === cacheKey) break;
@@ -731,6 +774,20 @@ export default function amosPiLogOnly(
         gate: state.gate,
         callId,
       });
+      const cacheKey = `${ctx.cwd.length}:${ctx.cwd}${key}`;
+      if (!runtimeUsed.has(cacheKey)) {
+        runtimeUsed.add(cacheKey);
+        writeHarnessRuntimeReport({
+          directory: ctx.cwd,
+          projectId: state.runtime.projectId,
+          activationDigest: state.runtime.activationDigest,
+          epoch: state.runtime.epoch,
+          policyVersion: state.runtime.snapshot.project.projectConfigVersion,
+          loadedAt: state.loadedAt,
+          lastToolAt: new Date().toISOString(),
+          capabilities: PI_MANAGED_CAPABILITIES,
+        });
+      }
       return { action: 'allow' };
     } catch {
       return { action: 'block', code: 'amos_managed_error' };
@@ -777,6 +834,27 @@ export default function amosPiLogOnly(
     return state;
   }
 
+  /**
+   * Managed mode binds execution and injection to the same loaded activation
+   * runtime. Tests and legacy callers can still inject `createSession`.
+   */
+  function createSessionFor(directory: string, key: string): InjectorSession {
+    if (overrides?.createSession !== undefined) {
+      return dependencies.createSession(directory);
+    }
+    const managed = readPiManagedState(directory);
+    if (managed.status === 'enabled') {
+      const state = ensureManagedGate(directory, key);
+      return state.status === 'ready'
+        ? state.runtime.injectorSession(Date.now)
+        : createEmptyAdvisorySession();
+    }
+    if (managed.status === 'error') {
+      return createEmptyAdvisorySession();
+    }
+    return dependencies.createSession(directory);
+  }
+
   /** One advisory injector session per real session key. */
   function guidanceSession(
     key: string,
@@ -787,7 +865,7 @@ export default function amosPiLogOnly(
       return existing;
     }
     return rememberGuidanceSession(key, {
-      injector: dependencies.createSession(directory),
+      injector: createSessionFor(directory, key),
       committedRuleIds: new Set<string>(),
     });
   }
@@ -848,11 +926,11 @@ export default function amosPiLogOnly(
       }
       const { tool, operation, target } = normalized.action;
       const normalizedTool = tool.toLowerCase();
+      const managedMode = readPiManagedState(ctx.cwd).status === 'enabled';
       if (
-        operation !== 'file_write' ||
-        (normalizedTool !== 'write' &&
-          normalizedTool !== 'edit' &&
-          normalizedTool !== 'file_write')
+        !operation.startsWith('file_') ||
+        !['read', 'write', 'edit', 'grep', 'find', 'ls'].includes(normalizedTool) ||
+        (!managedMode && operation !== 'file_write')
       ) {
         return;
       }
@@ -1429,6 +1507,15 @@ export default function amosPiLogOnly(
     } catch {
       // A failed reset leaves the previous advisory state in place.
     }
+    try {
+      // Load and report the session-pinned snapshot before the first prompt.
+      // A load failure stays fail-closed on the first tool call.
+      if (readPiManagedState(ctx.cwd).status === 'enabled') {
+        ensureManagedGate(ctx.cwd, sessionKey(ctx));
+      }
+    } catch {
+      // The runtime report is an observation; it never changes a verdict.
+    }
   });
 
   pi.on('before_agent_start', (event, ctx) => {
@@ -1461,7 +1548,22 @@ export default function amosPiLogOnly(
         state.config.actionAssessment
           ? state.config
           : null;
-      if (actionAssessmentConfig === null) {
+      const managedState = readPiManagedState(ctx.cwd);
+      const managedGuidance = managedState.status === 'enabled';
+      if (managedGuidance && managedState.status === 'enabled') {
+        // Managed mode captures the direct user turn for the independent
+        // reviewer. The default egress is denied; only an explicit
+        // requirementEgress: "allowed" sends the text.
+        try {
+          requirementStore.captureUserMessage(
+            key,
+            typeof event.prompt === 'string' ? event.prompt : '',
+            managedState.config.requirementEgress,
+          );
+        } catch {
+          requirementStore.clear(key);
+        }
+      } else if (actionAssessmentConfig === null) {
         requirementStore.clear(key);
       } else {
         try {
@@ -1474,9 +1576,6 @@ export default function amosPiLogOnly(
           requirementStore.clear(key);
         }
       }
-
-      const managedGuidance =
-        readPiManagedState(ctx.cwd).status === 'enabled';
       if (
         !managedGuidance &&
         (state.status !== 'enabled' ||

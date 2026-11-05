@@ -1,155 +1,158 @@
-# 配置迁移、治理发布与受管启动说明（one-shot）
+# 配置、发布与受管启动（当前 MVP）
 
-状态：本地实现说明。SQLite 治理库与 loopback API 已实现并通过本地测试；
-Pi Harness 层 managed 模式已接真实 `tool_call`；**Vue 治理台未交付**，
-真实宿主接收/生效回执未接入，来源认证未实现。**OS 隔离（独立 UID/挂载域/
-bwrap/cgroup）本轮不做，不是阻塞项。** 不得把本文当作 OS 沙箱或生产部署
-批准。
+状态：本地 Harness 层 MVP。控制台、SQLite、P1 快照发布和 Pi managed 拦截
+已接通；**不是 OS 沙箱**，默认 managed 关闭，安全敏感实现仍
+`pending-human-review`。范围与证据见 [MVP 交付](mvp-delivery.md)。
 
 ## 1. 单一事实源
 
-- 入口：`openGovernanceDatabase({ path })`（`governance/database.ts`）。
-- SQLite schema v1；`journal_mode=WAL`、`synchronous=FULL`、
-  `foreign_keys=ON`、`trusted_schema=OFF`。
-- 文件必须是绝对路径、普通文件、owner-only `0600`、非符号链接；DB/WAL/
-  SHM 同样检查。未知/更高 schema、损坏库、错误权限拒绝打开，不自动删除、
-  不重置、不回退项目 YAML。
-- 公共 API 不暴露任意 SQL；只有 typed store。
-- 秘密只保存 `{env:NAME}` / `env:NAME` 引用；出现字面凭据即拒绝导入/候选。
+- 控制台/治理存储：`control-plane/`，SQLite `node:sqlite`，WAL、
+  `synchronous=FULL`、`foreign_keys=ON`；数据库文件 owner-only `0600`、
+  非符号链接；未知/损坏/权限不符拒绝打开，不自动重置。
+- 规则/项目/激活/注入配置的持久权威是已发布版本（SQLite 中的不可变
+  snapshot）。
+- YAML/JSON 只用于编辑、导入、导出；导入必须经过同一
+  `validateCandidate` → `createProposal` → 人类审批 → `decideProposal`
+  流水线，不能直接成为运行期权威。
+- 运行期配置从已发布版本派生：发布时编译 P1 `amos-unified-rule-catalog`
+  v2 快照并原子写入 `<workspace>/.pi/activation.json`。
+- 旧的观察模式仍可读取 `constraints/rules.yaml` / 旧 seed；它不是新受管
+  入口的静默 fallback。受管入口只读 activation snapshot。
 
-## 2. 导入预览与迁移
+## 2. 版本化 YAML 文档
 
-入口：
+导出格式（`GET /api/projects/:id/versions/:v/export?format=yaml`）：
 
-- 库：`previewImport(sources, current?)`、`buildImportCandidate(sources)`。
-- HTTP：`POST /api/import/preview`（human + CSRF）、
-  `POST /api/import/apply`（human + CSRF；只创建提案，不发布）。
+```yaml
+format: amos-project-policy
+version: 1
+project:
+  id: <uuid>
+  workspace: /abs/workspace
+published:
+  version: 3
+  snapshotDigest: sha256:...
+  activationDigest: sha256:...
+activation:
+  includedRuleIds: null      # null = 选中全局 + 项目规则；显式数组 = 只选这些
+  excludedRuleIds: []
+injection:
+  baselineRuleIds: []
+  routes: []                 # 可选 task/path 路由
+rules:                       # 项目候选中的规则定义
+  - id: ...
+    dimension: ...
+    level: 1
+    expressivity: deterministic
+    predicate: [...]
+    narrative: ...
+    on_hit: deny|confirm|log
+    scope: project|session
+    ttl: null|ISO
+    owner: human|agent
+    source: {...}
+    probe: ...
+    policy_class: security|engineering
+    enforcement: runtime|ci|server|advisory
+```
 
-`ImportSources`：`rulesYaml`、`ruleSchema`、`guidance`，以及可选
-`piConfig`、`opencodeOptions`、`jevConfig`（非秘密设置）。
+导入：`POST /api/projects/:id/import`，body `{ "yaml": "<text>" }`，返回
+`{valid, issues, candidate}`。GUI 的“导入 YAML/JSON”使用同一端点；导入成功
+后仍需“校验候选→提交提案→人工批准并发布”。
 
-规则：
+规则约束：
 
-- 全量等价：YAML 全部规则 + 全部 guidance seeds + 映射的非秘密设置；
-  重复 ID、未知字段、非法谓词/表、秘密字面量、非法配置都拒绝；不静默
-  丢弃或补默认。
-- 预览是确定性的，候选 digest 与发布时编译的候选一致。
-- 旧 YAML/JSON 只作为导入/导出/fixture/归档；切换后不读取旧文件作为
-  回退，不做双主同步。
+- 仓库全局 catalog（`constraints/rules.yaml` + `guidance/packs.ts`）在服务
+  启动时构建一次；必选基线固定，显式进入每个激活集，不能排除。
+- 项目可新增规则 ID；不能修改/重定义全局规则 ID
+  （`global_rule_conflict`），不能排除必选基线（`mandatory_exclusion`）。
+- 同 ID 重复、未知字段、非法谓词、空激活、项目无法覆盖全局 hard deny 均
+  在发布前拒绝。
+- `${SESSION_WORKSPACE}` 只允许出现在 `target_glob` /
+  `target_outside_glob` 模式中，编译时展开为项目 workspace。
+- `level` 只影响 advisory 排序/审计优先级，不改变
+  `deny > confirm > log > allow`。
 
-迁移步骤（人执行，可逆前先备份）：
+## 3. 控制台启动
 
-1. 停止写入旧配置的进程；用现有 `backupDatabase` 或文件系统快照保留现状。
-2. 调用 preview，逐项审阅 `issues`；修复拒绝项后重新预览。
-3. 注册项目：`POST /api/projects`（human）。
-4. `POST /api/import/apply` 生成提案；不要在同一请求里发布。
-5. `POST /api/proposals/:id/decision`（human）批准；审阅 baseVersion/
-   candidateDigest/范围/期限。
-6. `POST /api/projects/:id/publish`（human）；服务端用现有
-   `amos-unified-rule-catalog` v2 编译器编译并 verify，在**一个事务**内写
-   审计、不可变 publication、snapshot 并推进 currentVersion。
-7. 宿主接收后调用受信 `POST /api/internal/receipts`（host bearer，非
-   Agent/human UI），单独记录 receipt；`published` 不等于 `received` 或
-   `effective`。
-8. 用 `GET /api/projects/:id/status` 核对三个阶段；没有 receipt 不得显示
-   已生效。
-9. 回滚：`POST /api/projects/:id/rollback`（human，`{toVersion}`）生成新
-   版本；旧指针不移动，历史不删除。
+```bash
+npm ci
+npm run build
+npm run console:init      # 初始化 SQLite、human.token、agent.token（0600）
+npm run console:serve     # 127.0.0.1:4310；可用 --data-dir/--workspace/--port
+```
 
-## 3. HTTP 安全边界
+- 人类令牌文件默认 `~/.local/state/amos-governance/human.token`；浏览器
+  登录使用该令牌，令牌不会打印。
+- 项目 workspace 必须是已存在的绝对路径；发布时写入
+  `<workspace>/.pi/activation.json`。写入失败不会回滚数据库版本，控制台
+  runtime 状态会显示 `never`/`stale`，不会伪装成已生效。
+- `GET /api/projects/:id/runtime` 读取 `<workspace>/.pi/runtime.json`；
+  状态：`loaded`/`stale`/`never`/`invalid`/`unpublished`。
 
-- 仅绑定 `127.0.0.1`；精确 Host/Origin allowlist；变更请求要求 CSRF
-  header；HttpOnly SameSite=Lax 会话 cookie；JSON content-type；请求体
-  上限；`default-src 'none'` CSP；稳定 `{error:{code}}`。
-- human/agent 会话由服务端构造；Agent 可提交提案和读脱敏视图，但不能
-  decision/publish/receipt；单人自批不称四眼审批。
-- GET 不写治理状态；无静态资产/GUI 路由、无任意 SQL。
-- 这只是 loopback 传输/角色框架，不是独立 UID、来源认证或宿主隔离。
+## 4. Pi managed 配置
 
-## 4. 备份与恢复
+`.pi/extensions/amos.js`：
 
-- `backupDatabase(db, destination)`：先 WAL checkpoint，再以独占方式复制到
-  新目标（目标已存在拒绝），`0600`，返回 `sha256` 与字节数；不覆盖。
-- `restoreDatabase(source, destination)`：源必须普通 `0600` 文件、无未
-  checkpoint 的 WAL；先 `quick_check`、schema 版本与必需表校验，再独占
-  复制到新目标；损坏/未知/权限不符拒绝，不自动重置，不回退 YAML。
-- 跨配置库/审计库不是天然事务；拆分存储前必须另行设计审计先行/恢复。
+```js
+export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
+```
 
-## 5. Harness 层 MVP（Pi managed）
-
-Pi 的 `.pi/amos.json` 增加显式 `managed` 字段：
+`.pi/amos.json`：
 
 ```jsonc
 {
   "mode": "log-only",
-  "rulesPath": "./constraints/rules.yaml",
-  "schemaPath": "./constraints/schema.json",
-  "logPath": "./spike/logs/pi.jsonl",
-  "activation": { "snapshotPath": ".pi/activation.json", "projectId": "my-project" },
+  "rulesPath": "/abs/constraints/rules.yaml",
+  "schemaPath": "/abs/constraints/schema.json",
+  "logPath": "/abs/audit/shadow.jsonl",
+  "activation": { "snapshotPath": ".pi/activation.json", "projectId": "<uuid>" },
   "managed": {
     "enabled": true,
-    "auditPath": "/var/lib/amos/managed-audit.jsonl",
+    "auditPath": "/abs/audit/managed.jsonl",
+    "requirementEgress": "denied",
     "review": {
-      "endpoint": "http://127.0.0.1:PORT/review",
-      "model": "local-reviewer",
+      "endpoint": "http://127.0.0.1:<port>/review",
+      "model": "<reviewer-model-id>",
       "apiKeyEnv": "AMOS_REVIEW_KEY",
       "policy": { /* ReviewerPolicy */ },
       "calibration": { /* CalibrationEvidence | null */ },
-      "ceilingDigest": "sha256:…",
+      "ceilingDigest": "sha256:<64 hex>",
       "grantTtlMs": 20000
     }
   }
 }
 ```
 
-- 缺省/`enabled:false`：保持原 log-only + workflow gate；不静默改变。
-- `managed` 非法：所有归一化工具调用阻断 `amos_managed_config_error`。
-- `review` 缺省：confirm 阻断 `amos_managed_review_unavailable`。
+- `managed` 缺省/`enabled:false`：保持 log-only + 可选 workflow gate。
+- `managed` 存在但非法：所有归一化工具调用阻断
+  `amos_managed_config_error`（fail closed）。
+- `review` 缺省：confirm 一律阻断 `amos_managed_review_unavailable`；
+  不提供“审查失败后人工点一下继续”的日常回退。
+- `requirementEgress` 缺省 `denied`；显式 `allowed` 且 review policy
+  `requirementEgress: "allowed"` 时才把用户要求原文放进最小投影。
 - `auditPath` 必须在工作区外；否则配置错误、阻断。
-- `activation` 必须匹配当前 session workspace；accepted snapshot 不是来源
-  认证。
-- 真实门禁顺序与证据见 [Harness gate ADR](adr-harness-gate.md)。
+- 受管工具：`read`/`write`/`edit`/`ls`/`find`/`grep`；bash/powershell/
+  自定义工具在 managed 模式阻断（覆盖缺口），不静默放行。
+- 会话启动/首次工具调用加载快照并写 `.pi/runtime.json`；执行与注入使用
+  同一个 `ActivationRuntime`。新发布只由后续会话加载，不热切换。
 
-## 6. 受管文件宿主启动（离线，可选）
+## 5. 真实探针
 
-`managed/flow.ts` 的组合方式（尚无 harness 默认入口）：
+```bash
+npm run build
+AMOS_LOCAL_LLAMA_URL=http://127.0.0.1:8080/v1 \
+AMOS_LOCAL_LLAMA_KEY_FILE=/path/to/llama-server-api-key \
+AMOS_LOCAL_LLAMA_MODEL=gemma-4-e4b \
+npm run probe:live
+```
 
-1. 加载并 `createActivationRuntime(snapshot, { projectId, workspace })`；
-   snapshot 必须来自 catalog v2 编译且通过结构/identity 校验。该验证不是
-   来源认证。
-2. 配置 `capability`（闭集 tools、resourceRoots、读写上限、操作上限、
-   到期时间）和 `auditPath`；audit 必须在工作区外，否则宿主构造失败。
-3. 配置 `sessionId`、可选 `RequirementFrame`、以及 reviewer provider/
-   policy/calibration/ceiling（可为 null；null 时 confirm 全部停止）。
-4. `createManagedFlow(...)` 后：
-   - `execute`：无 grant 时 confirm 先停；
-   - `authorize`：只对 confirm 发最小投影给 reviewer，approved 才发一次性
-     grant；
-   - `executeReviewed`：先停，再走一次 authorize + execute（便利方法）。
-5. 真实启用还需要：独立 OS 身份/挂载域、来源认证、真实 provider 校准、
-   rollout 阈值/预授权、宿主接收回执。当前均未满足。
+探针使用真实本地模型、真实 Pi AgentSession、真实文件副作用和独立模型
+reviewer；8 个合成校准场景 0 false allow。没有本地模型时以固定错误退出，
+不伪造响应。外部 provider 凭据/费用/出境授权不是本轮前提。
 
-不得把 `.pi/amos.json` 或项目内可写文件指向任意 activation snapshot 作为
-受信来源；O5 来源认证仍未决。Harness MVP 用显式配置的快照作输入，不把
-digest/路径当作认证；`host/` 的离线受管文件入口仍是可选路径。
+## 6. 不在本轮
 
-advisory 的可选迁移接线（不涉及执行授权）：
-
-- OpenCode 插件 options 增加 `activation: { snapshotPath, projectId }`；
-- Pi `.pi/amos.json` 增加同名字段；
-- 配置存在时 snapshot 必须通过 `createActivationRuntime` 的 project/
-  workspace/epoch/投影一致性检查；无效时使用空 advisory session，不回退
-  global seed；未配置时保持原 seed 行为。
-- 该路径不是来源认证；默认配置未启用，gate 开关未改。项目内可写 snapshot
-  仍可能注入任意 advisory 文本，因此启用前需 O5 来源/写域决定。
-
-## 7. 未完成/阻塞
-
-- Vue 治理台、浏览器登录→项目→规则→发布→回滚流程（AC-12）。
-- 真实宿主接收/生效回执；当前只有记录契约与本地测试。
-- 全配置文件的自动发现/一次性切换证据；调用方需显式提供 sources。
-- 来源认证/秘密存储/引导（O5）、真实模型 reviewer 校准（O3，非 MVP 必需）、
-  rollout 预授权（O4）。
-- OS 隔离（O2）本轮明确不做，不是阻塞；不得宣称 OS 沙箱/全副作用/防篡改。
-- 默认适配器未启用 managed；Pi managed 是显式 opt-in，可在声明范围内
-  deny/confirm；G0/NO-GO 未改变。
+OS 隔离（独立 UID/挂载域/bwrap/cgroup）、防篡改审计/远程锚定、完整
+rollout、临时收紧持久化、远端 CI 接纳、OpenCode 受管拦截、运行中热切换。
+这些是明确范围外，不是隐藏阻塞。

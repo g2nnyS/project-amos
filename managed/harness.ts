@@ -17,7 +17,7 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ActivationRuntime } from '../activation/runtime.ts';
-import { evaluatePolicy } from '../engine/engine.ts';
+import { evaluatePolicy, type PolicyDecision } from '../engine/engine.ts';
 import type { RequirementFrame } from '../decision/requirement.ts';
 import {
   buildReviewProjection,
@@ -143,8 +143,8 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
     typeof workspace !== 'string' ||
     !isAbsolute(workspace) ||
     execution.workspace !== workspace ||
-    execution.status !== 'ready' ||
-    execution.rules.length === 0
+    (execution.status !== 'ready' && execution.status !== 'empty') ||
+    (execution.status === 'ready' ? execution.rules.length === 0 : execution.rules.length !== 0)
   ) {
     throw new HarnessGateError();
   }
@@ -291,16 +291,24 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
       };
     }
 
-    const decision = evaluatePolicy(
-      {
-        tool: call.action.tool,
-        operation: call.action.operation,
-        target: call.action.target,
-      },
-      execution.rules,
-      safeNow(now),
-      { defaultVerdict: 'allow' },
-    );
+    const decision: PolicyDecision =
+      execution.rules.length === 0
+        ? {
+            verdict: 'allow',
+            matched_rule_ids: [],
+            matched_rules: [],
+            decision: 'no_match',
+          }
+        : evaluatePolicy(
+            {
+              tool: call.action.tool,
+              operation: call.action.operation,
+              target: call.action.target,
+            },
+            execution.rules,
+            safeNow(now),
+            { defaultVerdict: 'allow' },
+          );
     const matched = [...decision.matched_rule_ids];
 
     if (decision.error !== undefined || decision.verdict === 'deny') {

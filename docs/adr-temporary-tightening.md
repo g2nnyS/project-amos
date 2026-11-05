@@ -1,6 +1,7 @@
 # ADR：附加型临时收紧（P6）
 
 - 状态：**进程内实现草案，pending-human-review；未启用自动发布**。
+- 本轮范围：**不做临时收紧持久化/真实宿主原子切换**；保留离线实现与测试。
 - 范围：`activation/tighten.ts` 的已批准模板、TTL/配额、双投影 epoch。
 - 关联：LIFE-01–03、INJ-05、RULE-14、AC-15；PRD §5.5。
 

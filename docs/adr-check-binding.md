@@ -2,6 +2,7 @@
 
 - 状态：**格式与库实现草案，pending-human-review；无真实受管提交/CI 门**。
 - 范围：一个真实 TypeScript 检查、精确 tree 绑定、FindingBatch 接纳校验。
+- 本轮范围：**不接入远端 CI/受管提交接纳平台**；保留离线库与测试。
 - 关联：CHECK-01–05、ENG-03、AC-18；PRD §5.6；O6。
 
 ## 1. 为什么不改旧规则格式

@@ -15,8 +15,9 @@
 - `host/`：可选闭集文件宿主、能力/资源根、路径/审计检查；不是 MVP 默认。
 - `review/` + `managed/`：最小有界投影、校准门、独立 reviewer（本地确定性/
   HTTP）、一次性 HMAC grant、端到端确认/执行。
-- `governance/`：SQLite 单主、导入预览、CAS 提案/发布、审计、独立 receipt、
-  回滚、WAL 备份/恢复、loopback 认证 API。Vue GUI 未交付。
+- `control-plane/`：SQLite 单主、GUI/YAML 导入、CAS 提案/发布、审计、
+  版本/回滚、loopback 认证 API；Vue 控制台与真实浏览器闭环已接通。
+  `governance/` 实验副本未并入交付分支。
 - `check/`：精确 tree 的 CheckBinding/FindingBatch + 真实 TypeScript 检查。
 - `rollout/`：版本/宿主/环境/检查绑定证据门；无真实 probe。
 - `activation/tighten.ts`：已批准模板的附加型临时收紧、TTL/配额/epoch。
@@ -24,7 +25,7 @@
   `git diff --check` 通过。详见
   `docs/delivery-status.md` 与 `docs/verification-one-shot.md`。
 - 限制：Pi/OpenCode 默认仍读旧策略快照/guidance seed；没有真实 OS 隔离、
-  provider 校准、宿主回执、生产 rollout、Vue 浏览器流程或来源认证。
+  外部 provider 校准、跨机器宿主回执、生产 rollout 或来源认证。
 
 ## P1 离线项目规则目录
 

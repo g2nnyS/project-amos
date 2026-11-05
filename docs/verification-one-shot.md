@@ -1,90 +1,113 @@
-# One-shot 验证记录
+# 验证记录（当前交付分支）
 
-环境：Linux，Node `v26.8.2`，npm `11.19.1`；工作树
-`.slim/worktrees/amos-one-shot`（分支 `feat/amos-one-shot-delivery`，
-目标文档与交付文档未提交，原工作树未被覆盖）。基线 HEAD `7236c77`。
+本记录只列实际运行结果。完整范围、证据路径与限制见
+[MVP 交付](mvp-delivery.md)。
 
-本记录只报告实际运行结果；不固定“通过测试数”作为长期承诺。skip/blocked
-单列，不计入通过。
+环境：Linux，Node `v26.8.2`，npm `11.19.1`；分支 `feat/amos-mvp`，工作树
+`.slim/worktrees/amos-mvp`。所有测试从仓库根运行，使用临时目录/loopback
+HTTP/真实本地 SQLite；不向外部 provider 发请求。
 
-## P0 基线（原始工作树，未修改）
-
-| 命令 | 结果 |
-|---|---|
-| `npm run typecheck` | exit 0 |
-| `npm test` | exit 0；node:test 报告 526 tests / 526 pass / 0 fail / 0 skip |
-| `git diff --check` | 通过 |
-
-原始工作树有用户未提交的 README 修改与三份未跟踪文档；未覆盖、未提交。
-开发在独立工作树进行，PRD/需求台账/one-shot 指令已显式复制。
-
-## 各 lane focused 结果（合并前在其工作树运行）
-
-| Lane | 命令 | 结果 |
-|---|---|---|
-| CHECK | `npm run typecheck`；`npm run build`；`node --test dist/check/*.test.js` | 23 pass / 0 fail / 0 skip；真实 tsc 正反例 |
-| ROLLOUT | 同上，`dist/rollout/*.test.js` | 28 pass / 0 fail / 0 skip |
-| ACTIVATION | 同上，`dist/activation/*.test.js` | 46 pass / 0 fail / 0 skip（含既有测试） |
-| REVIEW | 同上，`dist/review/*.test.js` | 47 pass / 0 fail / 0 skip；含本地确定性 reviewer；无真实模型 provider |
-| HOST | 同上，`dist/host/*.test.js` | 17 pass / 0 fail / 0 skip；真实临时文件系统 |
-| GOVERNANCE | 同上，`dist/governance/*.test.js` | 39 pass / 0 fail / 0 skip；真实临时 SQLite + loopback HTTP |
-| MANAGED（整合者） | `node --test dist/managed/*.test.js` | 17 pass / 0 fail / 0 skip（10 协议流 + 7 真实 Pi harness） |
-| ADAPTER WIRING（整合者） | `node --test dist/adapters/pi/*.test.js dist/adapters/opencode-v2/*.test.js dist/adapters/shared/*.test.js` | 115 pass / 0 fail / 0 skip；含可选 activation advisory 3 项 |
-| REAL PI HARNESS（整合者） | `node --test dist/managed/pi-harness.test.js` | 7 pass / 0 fail / 0 skip；真实 Pi AgentSession/扩展/write 工具/文件副作用 + loopback reviewer + system prompt 注入 |
-
-## 整合后全套（交付分支）
-
-工作树根运行：
+## 1. 全套命令
 
 ```bash
 npm run typecheck
 npm test
 git diff --check
+git diff --cached --check
 ```
 
 实际结果：
 
-- `npm run typecheck` → exit 0。
-- `npm test` → `tests 698`, `pass 698`, `fail 0`, `cancelled 0`,
-  `skipped 0`, `todo 0`；`npm test` 先删除并重建 `dist/`。
-- `git diff --check` → 无输出，exit 0。
+- `npm run typecheck` → exit 0（根 TS + `web` vue-tsc）。
+- `npm test` → Node **732 tests / 731 pass / 0 fail / 1 skipped**；
+  Web **5 pass / 0 fail**。跳过项是“外来 UID 数据库文件”测试，需要 root
+  才能创建，仍然 skip 而非伪通过。
+- `git diff --check` → exit 0。
+- `git diff --cached --check` → exit 0（提交前运行）。
 
-覆盖包括既有 engine/storage/adapters/decision/supervisor/guidance/injector/
-activation/catalog/workflow 回归，以及新增 check/rollout/review/host/
-governance/managed 测试。新增测试均使用本地临时目录、loopback HTTP 或
-真实临时 SQLite；没有向外部 provider 发请求。
+`npm test` 先删除并重建 `dist/`，然后运行编译后的 Node 测试与 `web`
+测试；不新增独立 TS test runner。
 
-## 真实外部条件 / blocked
+## 2. 浏览器真实闭环（AC-12）
 
-| 项 | 状态 | 原因 / 补验入口 |
+```bash
+npm run build
+node web/e2e/smoke.mjs
+```
+
+结果：**18 项检查全部 PASS**，无 console error、runtime exception、CSP
+violation 或同源 4xx/5xx。证据目录
+`/tmp/opencode/amos-governance-e2e-*/`（`evidence.txt` + 截图）。
+
+关键检查：
+
+- 人类令牌登录、项目创建、仓库种子、新增项目规则、服务端校验；
+- 不可变提案、批准并发布；
+- `.pi/activation.json` 为 catalog v2 且 workspace/project 匹配；
+- `/api/projects/:id/runtime` 初始 `never`；写入真实格式报告后控制台显示
+  `loaded`；回滚 v2 后旧报告显示 `stale`，更新后 `loaded`；
+- 版本 YAML 下载（`format: amos-project-policy`）→ 同文件导入 → 服务端
+  校验通过；
+- 回滚创建版本 2；规则矩阵/检查器/移动端/筛选/导出/登录失效均通过。
+
+浏览器 runtime 报告由 e2e 按真实 `.pi/runtime.json` 文件协议写入，用于
+验证控制台读取/展示；报告生产者由下一节真实 Harness 证据覆盖。
+
+## 3. 真实 Pi Harness（faux 模型）
+
+```bash
+node --test dist/managed/pi-harness.test.js
+node --test dist/managed/harness-empty.test.js
+```
+
+- `pi-harness.test.js`：7 pass。真实 Pi `AgentSession`、真实扩展加载、真实
+  `write` 工具与临时文件副作用；deny 无文件、log 写入、confirm 无 review
+  停止、reviewer approved 恰好一次、reviewer mismatch 停止、system prompt
+  注入、审计路径在工作区内 fail closed。模型响应由 faux provider 脚本化，
+  不冒充真实模型校准。
+- `harness-empty.test.js`：1 pass。合法空 runtime 投影按 no-match allow
+  并写审计，不调用空表引擎。
+
+## 4. 真实模型 + 真实 reviewer + 真实副作用
+
+```bash
+npm run build
+npm run probe:live
+```
+
+使用本机已授权的本地 llama.cpp OpenAI-compatible 端点（默认
+`http://127.0.0.1:8080/v1`，`gemma-4-e4b`）；不访问外部 provider、不打印
+密钥。结果（`/tmp/opencode/amos-live-probe-*/evidence.json`）：
+
+- 真实编译后的 `control-plane` CLI HTTP 服务（人类令牌登录→项目→提案→
+  批准→发布）写 catalog v2 artifact；
+- 独立 reviewer 对 8 个合成场景调用真实模型：6 unsafe / 2 safe，
+  `falseAllows: 0`；
+- 真实 Pi 会话读取 `src/input.txt`，confirm 写 `src/confirm.txt` 仅执行
+  一次，内容匹配；reviewer 收到 requirement 原文与 digest；
+- 真实 Pi 会话写 `src/deny.txt` 被 deny，文件不存在；
+- 第三个会话按任务选择 `live-python` guidance，未出现 `live-ts`；
+- system prompt guidance 含同一 activationDigest；`.pi/runtime.json`
+  `loaded`；同一控制台 HTTP `GET /api/projects/:id/runtime` 返回
+  `loaded` 且 digest 匹配；managed journal confirm 仅 1 条 allow，deny
+  记录存在。
+
+## 5. 针对性模块结果（用于定位失败）
+
+| 范围 | 命令 | 结果 |
 |---|---|---|
-| 真实模型 reviewer 校准 | **非 MVP 必需 / blocked** | MVP 使用本地确定性 reviewer；无真实模型凭据/出境/费用授权；未发请求 |
-| 真实 OS 执行身份/挂载域隔离（bwrap/cgroup） | **本轮不做（非目标）** | 用户将 MVP 限定为 Harness 层；不是阻塞项。不得宣称 OS 沙箱 |
-| 真实流量 probe、生产 rollout | **blocked** | 无真实 ProbeRun/阈值预授权；`rollout/` 只做证据门 |
-| 真实宿主接收/生效回执 | **blocked** | 只有 `Receipt` 契约与本地 API；无宿主进程接线 |
-| Vue 治理台浏览器流程（AC-12） | **blocked/partial** | B 的 `web/` 未移植；只有 SQLite/API 测试 |
-| 远端 CI/受管提交接纳点（AC-18 后半） | **blocked/partial** | 无服务端保护接线；`check/` 是库级合同 |
-| 来源认证/O5、秘密后端、引导 | **blocked** | ADR 已写；未实现签名/HMAC/独立密钥域 |
-| 真实 Jev/OpenRouter 费用与 usage | **blocked** | 未调用；不能确认扣费 |
+| 控制面/发布/YAML/runtime | `node --test dist/control-plane/publication.test.js` | 6 pass |
+| Harness gate | `node --test dist/managed/harness-empty.test.js` | 1 pass |
+| 真实 Pi Harness | `node --test dist/managed/pi-harness.test.js` | 7 pass |
+| Activation/Injector | `node --test dist/activation/*.test.js dist/injector/*.test.js` | 全过 |
+| Review/Authority | `node --test dist/review/*.test.js` | 全过 |
+| Engine/Fixtures 兼容 | `node --test dist/engine/*.test.js` | 全过 |
 
-精确补验步骤见 `docs/one-shot-blocked-verification.md`。
+## 6. 未运行/不在本轮
 
-## 未覆盖范围
-
-- Pi/OpenCode 默认受管入口；仍是 Stage A log-only；未改
-  `opencode.jsonc` 的 `workflowGate.enabled=false`。
-- 多用户/云/跨进程共享预算/新 harness/正则 DSL/第八谓词。
-- 外部审计锚定、真实秘密存储、来源签名认证。
-- **OS 隔离（独立 UID/挂载域/bwrap/cgroup/内核沙箱）本轮不做**；不宣称
-  OS 沙箱、全副作用覆盖或防篡改审计。
-- 默认适配器未启用 managed；Pi managed 是显式 opt-in，可在声明范围内
-  deny/confirm；G0/NO-GO 未改变。
-- 真实浏览器（AC-12）、移动端、跨浏览器、完整 WCAG。
-
-## 复现注意
-
-- `npm ci` 已在工作树执行；`node_modules` 为共享安装目录的符号链接仅用于
-  lane 并行开发，不影响源码/构建。
-- 测试必须从工作树根运行（`fixtures/`、`constraints/` 通过
-  `process.cwd()` 解析）。
-- 构建会删除并重建 `dist/`；没有手改 `dist`，没有新增 TS 测试 runner。
+- 外部 provider（OpenAI/Anthropic/xAI/Kimi Code）真实调用：本机凭据不可用
+  或订阅无权限；live probe 使用本地模型，未产生外部费用/出境。
+- OS 隔离、bwrap/cgroup、独立 UID、挂载域：本轮明确不做。
+- 完整自动 rollout、临时收紧持久化、远端 CI 接纳：本轮明确不做。
+- 真实宿主“生效回执”（跨机器签名/远程锚定）：未实现；runtime report 是
+  same-UID 本地文件观察。

@@ -5,6 +5,17 @@
 `.slim/worktrees/amos-one-shot`。原始脏工作树（README 修改与三份未跟踪文档）
 未被覆盖、未被提交。
 
+
+> **2026-11-05 当前状态（优先于下表）**：本轮范围已修订为 Harness 层 MVP。
+> 已完成真实浏览器治理闭环、P1 快照发布、Pi `tool_call` 前拦截、独立本地
+> 模型 reviewer + 一次性授权、同快照动态注入、runtime 加载报告与回滚新版本。
+> 当前证据：Node 731 pass / 1 skip、Web 5 pass、浏览器 18 项 PASS、真实本地
+> 模型 live probe 通过。**OS 隔离、完整 rollout、临时收紧持久化、远端 CI
+> 接纳、OpenCode 受管拦截明确不在本轮**，不再列为人工阻塞。详见
+> [MVP 交付](mvp-delivery.md) 与 [验证记录](verification-one-shot.md)。
+> 下表为 one-shot 阶段历史记录；其中“Vue 未交付”“无真实模型校准”
+> “GUI blocked”等判断已被本轮取代。
+
 逐项 AC 状态见 [AC-01–AC-22 验收矩阵](acceptance-one-shot.md)；本文记录
 需求 ID 的实现/缺口/依赖。
 
@@ -76,7 +87,7 @@
 
 | ID | 当前实现 | 缺口 | AC | 切片/依赖 | 实现 | 证据 | 审查/启用 |
 |---|---|---|---|---|---|---|---|
-| GOV-01 | `governance/` SQLite 单主（node:sqlite）；Git/YAML 仅导入 | 运行期接管/旧文件失效未部署 | AC-09 | P3 | 部分（store/API 已实现） | passed（39 项本地测试） | 未启用 |
+| GOV-01 | `control-plane/` SQLite 单主（node:sqlite）；GUI/YAML 导入/发布/回滚；`governance/` 实验副本未并入交付分支 | 运行期接管需人工启用 managed | AC-09/12 | P3 | 已实现（控制台 MVP） | passed（local + 浏览器） | pending-human-review |
 | GOV-02 | 规则/项目/激活/非秘密设置导入映射；全量预览 | 全配置字段的逐项生产切换证据 | AC-09 | P3 | 部分 | passed（store/import 测试） | 未启用 |
 | GOV-03 | 秘密仅存 `{env:NAME}` 引用；测试扫描无字面秘密 | 无真实秘密后端 | AC-09 | P3 | 已实现（引用约束） | passed | pending-human-review |
 | GOV-04 | 认证 loopback API；人/Agent 能力分离；无任意 SQL；项目注册 | Vue UI 未接 | AC-10/12 | P3 | 已实现（API） | passed（HTTP 测试） | 未启用 |

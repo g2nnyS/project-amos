@@ -12,8 +12,8 @@
 
 - 引擎保持纯函数并使用注入时钟；裁决优先级为 `deny > confirm > log > allow`，异常按既定 fail-closed 语义处理。
 - 现有七种谓词操作符保持不变。只有 `predicate`、`on_hit` 与 `ttl` 参与规则裁决；其他字段是经校验的元数据。
-- `constraints/rules.yaml` 仍是运行期规则输入；Pi 与 OpenCode 适配器仍记录假设裁决。`guidance/packs.ts` 仍是现有动态注入种子。
-- P1 catalog v2 只离线编译项目激活集及 enforcement/advisory 投影，尚未替换适配器的运行期输入或改变运行行为。
+- `constraints/rules.yaml` + `guidance/packs.ts` 是全局 catalog 的仓库输入；项目发布版本是受管入口的运行期权威。旧观察模式仍可读旧文件，但不是 managed 的静默 fallback。
+- P1 catalog v2 由控制面在发布时编译；Pi managed 入口消费同一 activation snapshot，执行与注入同源。默认适配器仍 log-only，未启用 managed 时不改变运行行为。
 - Jev 是可选语义传感器，输出类型化事实，只能收紧确定性结果，不能授权执行。requirement 文本仅在 harness 捕获的 frame 显式允许时出境；caller-supplied `context` 不会自动脱敏。
 - 文件目标只进行词法规范化；JSONL 追加和摘要归档不提供防篡改保证。不得记录文件内容、Shell 命令文本、URL secret 值或原始 hostile payload。
 
@@ -23,9 +23,9 @@
   结构验证、身份绑定和 runtime/execution 视图；不是来源认证。
 - `host/`：可选闭集文件执行器、能力/路径检查、审计前置；不是 MVP 默认
   路径，OS 隔离不是本轮要求。
-- `review/`、`managed/`：最小有界投影、独立 reviewer（本地确定性/HTTP）、
+- `review/`、`managed/`：最小有界投影、独立 reviewer（本地确定性/HTTP/真实本地模型）、
   一次性 HMAC 授权；Pi `managed` 是显式 opt-in 的真实 Harness 层拦截。
-  默认仍 log-only；没有真实模型校准。
+  默认仍 log-only；live probe 已对真实本地模型做 8 场景校准。
 - `check/`、`rollout/`、`activation/tighten.ts`：精确 tree 检查合同、
   证据绑定晋升门、附加型临时收紧；均只在本地测试中使用。
 - 治理 SQLite/API 的实现状态见 [交付状态](delivery-status.md)；Vue 治理台
@@ -48,5 +48,5 @@ log-only recorder 的 `defaultVerdict: deny`。Harness MVP 可在声明范围内
 
 ## 配置
 
-运行期配置仍为文件式；SQLite 治理库/API 是离线实现，尚未接管运行期配置。
+控制台通过 SQLite 管理发布版本；Pi managed 运行期读取发布产物 `.pi/activation.json`。旧文件配置仅用于观察模式/兼容，不是 managed 的回退。
 安全适配器和工程工作流门的实现状态见[运行期状态](go-no-go.md)、[安全模型](security-model.md)及[工作流门](workflow-gate.md)。
