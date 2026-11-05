@@ -40,7 +40,7 @@ export function createProjectInjectorSession(
     const readNow = typeof now === 'function' ? now : () => now;
     const initialTime = readNow();
     if (!Number.isFinite(initialTime)) throw new Error('invalid_time');
-    const snapshot = validateProjectSnapshot(value);
+    const snapshot = verifyProjectActivationSnapshot(value);
     const live = snapshot.advisory.status === 'ready'
       ? snapshot.advisory.snapshot.rules.filter((rule) => rule.ttl === null || initialTime < rule.ttl)
       : [];
@@ -115,9 +115,16 @@ export function createProjectInjectorSession(
   }
 }
 
-function validateProjectSnapshot(value: ProjectActivationSnapshot): ProjectActivationSnapshot {
+/**
+ * Structural consistency check for one compiled activation snapshot: format
+ * identity, content digests, projection completeness/pairing, advisory
+ * reproduction and deep freezing. This is not a signature or source
+ * authentication; it only proves the value is internally consistent.
+ */
+export function verifyProjectActivationSnapshot(input: unknown): ProjectActivationSnapshot {
+  if (input === null || typeof input !== 'object') throw new Error('invalid_snapshot');
+  const value = input as ProjectActivationSnapshot;
   if (
-    value === null || typeof value !== 'object' ||
     value.format !== 'amos-unified-rule-catalog' || value.formatVersion !== 2 ||
     value.compilerVersion !== 'amos-unified-rule-catalog-v2' || value.mode !== 'offline-shadow' ||
     !isDeepFrozen(value)
