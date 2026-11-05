@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>受管文件宿主、reviewer 协议、SQLite 治理库、catalog/check/rollout 库已离线实现；默认适配器均未启用。</strong>
+  <strong>Pi Harness 层阻断（显式 opt-in）、独立审查 + 一次性授权、激活注入与审计已实现；默认适配器仍为 log-only。OS 隔离不在本 MVP 范围。</strong>
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 把安全规矩写在 `AGENTS.md` 或系统提示词里，本质上是在赌模型的自觉。**Amos 的思路很简单：模型只管提议动作，确定性的策略引擎负责按规则算账，并留下一条干净的审计链。**
 
-> **安全边界**：安全适配器只观察部分文件工具并记录假设裁决。独立的可选工程工作流硬门可以阻断部分 Shell 命令或暂缓工作；二者都不等于全通道中介或 OS 安全边界。详见[安全模型](docs/security-model.md)和[工作流硬门](docs/workflow-gate.md)。
+> **安全边界**：安全适配器默认 log-only。Pi `.pi/amos.json` 的 `managed.enabled` 是显式 opt-in 的 Harness 层 gate，可阻断归一化工具调用并审查 confirm；它**不是 OS 沙箱**，不覆盖所有入口/副作用，审计也不防篡改。独立工程工作流门仍是可选护栏。详见[安全模型](docs/security-model.md)、[Harness gate ADR](docs/adr-harness-gate.md)和[工作流硬门](docs/workflow-gate.md)。
 
 ---
 
@@ -71,7 +71,8 @@ Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护�
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
 - **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
 - **P1 离线项目规则目录**：把现有 YAML 规则和全部 guidance seed 导入版本化目录，再按项目生成执行与 advisory 投影。编译、TTL 过滤和选择已通过离线测试；现有适配器仍走当前文件快照和静态 seed 路径。
-- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成离线端到端测试。未接入 Pi/OpenCode，无 OS 隔离或真实 provider 校准。
+- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；deny 在执行前阻断，confirm 先停住并交有界独立审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt。真实 Pi harness 测试覆盖 deny/allow/confirm 与真实文件副作用。不是 OS 沙箱，默认仍 log-only。
+- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成离线端到端测试。Pi managed 已接入 review/grant 路径，OpenCode 仍 log-only；OS 隔离不在本轮范围，无真实模型校准。
 - **SQLite 治理库与 API（部分）**：单主 schema、全量导入预览、baseVersion CAS 提案、human-only 审批/发布、catalog v2 编译 + 审计原子提交、独立宿主回执、回滚新版本、WAL 备份/恢复和 loopback 认证 API。Vue 治理台与真实宿主回执未交付。
 - **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
@@ -82,7 +83,8 @@ Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护�
 
 - P1 仍是离线编译器；现有适配器继续使用旧策略快照与 guidance seed。受管宿主/reviewer 流程是库，不是默认宿主入口。
 - 安全适配器不阻止工具执行；可选工作流门仍只是工程护栏。安全运行期仍是 **NO-GO**。
-- 来源认证、独立 OS 身份/挂载域、真实 reviewer 校准、真实 probe/rollout、宿主接收/生效回执、Vue 治理台、远端 CI 接纳门均未交付。
+- **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介）本轮不做，不是阻塞项**，不得宣称已具备。
+- 来源认证、真实模型 reviewer 校准、真实 probe/rollout、宿主接收/生效回执、Vue 治理台、远端 CI 接纳门均未交付。
 - SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
 
 ---

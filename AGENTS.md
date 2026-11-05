@@ -14,7 +14,8 @@
 
 ## Current security boundary
 
-- The security policy layer is Stage A `log-only`: its verdicts are hypothetical and the security engine does not block tools. Do not describe it as a hard security boundary or enable security `deny`/`confirm` without the architecture and adversarial evidence required by `docs/security-model.md`.
+- The default security policy layer is Stage A `log-only`: its verdicts are hypothetical and the security engine does not block tools. Pi `.pi/amos.json` `managed.enabled` is an explicit opt-in Harness-layer gate (real `tool_call` deny/confirm/review/grant); it is not an OS sandbox and is not enabled by default. Do not describe either as a hard security boundary or enable broader security `deny`/`confirm` without the architecture and adversarial evidence required by `docs/security-model.md`.
+- MVP scope: Harness-layer interception only. Independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation and tamper-proof audit are **out of scope for this round** and are not human blockers; do not claim them.
 - A separate opt-in engineering workflow gate may block dangerous shell commands and hold work. It is a workflow guardrail, not complete mediation, a security boundary, or merge authority; see `docs/workflow-gate.md`.
 - Coverage records make unsupported actions visible; they do not mediate or protect those actions.
 - Policy, audit, and snapshot files still share the Agent's writable domain. Append-only JSONL and owner-only modes are not tamper-proof guarantees.

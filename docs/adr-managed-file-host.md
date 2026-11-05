@@ -1,6 +1,10 @@
 # ADR：受管受限文件宿主（P2A）
 
 - 状态：**实现草案，pending-human-review；未在 Pi/OpenCode 默认启用**。
+- 范围裁决（2026-11-05）：MVP 采用 Harness 层拦截（见
+  [Harness gate ADR](adr-harness-gate.md)）；本文件的受限文件执行器是
+  可选库/未来受管入口，不是默认 MVP 路径。**独立 UID、挂载域、
+  bwrap/cgroup、内核沙箱本轮不做，不是人工阻塞**。
 - 范围：`host/` 的一个封闭文件执行面、能力闭集、真实路径检查、审计前置与
   崩溃恢复语义。不改变 Stage A log-only 适配器，不解除 NO-GO。
 - 关联：HOST-01–04/08/09、AUD-02/03、AC-05/06/19；CAND-09 风险面；PRD §5.2。
@@ -80,8 +84,8 @@ maxOperations、expiresAt。过期、越根、工具不允许、超字节、超�
 ## 6. 残余风险（明确）
 
 - 同 UID 的 Agent 仍可改写审计/策略/快照；jsonl 的 `0600` 不是防篡改。
-- 没有独立 OS 身份、挂载域、cgroup、bwrap 或受信监督进程；真实隔离
-  blocked。
+- 没有独立 OS 身份、挂载域、cgroup、bwrap 或受信监督进程；这些是
+  **本轮明确非目标**，不是 MVP 阻塞项。不得把本宿主描述为 OS 沙箱。
 - bind mount、TOCTOU 设备身份、网络文件系统不在声明范围；写操作只做
   保守 `nlink`/`O_NOFOLLOW` 检查。`read` 没有 `nlink === 1` 限制：工作区内
   既有的硬链接到外部文件可能被读取；本宿主不提供外部 `file_link` 工具，

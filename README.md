@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Offline managed file host, reviewer protocol, SQLite governance store, catalog/check/rollout libraries exist; none are enabled in the default adapters.</strong>
+  <strong>Pi harness-layer blocking (explicit opt-in), independent review + one-shot grant, activation injection and audit are implemented; default adapters remain log-only. OS isolation is out of scope for this MVP.</strong>
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
 
-> **Security boundary**: Security adapters observe selected file-tool actions and log hypothetical verdicts. The separate opt-in engineering workflow gate can block some shell commands and hold work, but neither provides complete mediation or an OS boundary. See [Security Model](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md).
+> **Security boundary**: Security adapters are log-only by default. Pi `.pi/amos.json` `managed.enabled` is an explicit opt-in Harness-layer gate that can block normalized tool calls and review confirms; it is **not an OS sandbox**, does not cover every entry/side effect, and its audit is not tamper-proof. The separate engineering workflow gate remains an opt-in guard. See [Security Model](docs/security-model.md), [Harness Gate ADR](docs/adr-harness-gate.md), and [Workflow Gate](docs/workflow-gate.md).
 
 ---
 
@@ -74,7 +74,8 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
 - **P1 Offline Project Rule Catalog**: Imports the current YAML rules and all guidance seeds into versioned records, then derives project-scoped execution and advisory projections. The compiler, TTL filtering, and selection are tested offline; existing adapters still use the current file snapshot and static seed path.
-- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Not enabled in Pi/OpenCode, no OS isolation or live provider calibration.
+- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt. Real Pi harness tests exercise deny/allow/confirm and actual file side effects. Not an OS sandbox; default remains log-only.
+- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Pi managed mode now wires the review/grant path; OpenCode remains log-only. OS isolation is out of scope and there is no live model calibration.
 - **SQLite Governance Store & API (Partial)**: Single-primary SQLite with versioned schema, full import preview, baseVersion CAS proposals, human-only approval/publish, atomic catalog-v2 compilation + audit, separate host receipts, rollback-as-new-version, WAL backup/restore, and a loopback authenticated API. The Vue console and real host receipt integration are not delivered.
 - **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
@@ -85,8 +86,9 @@ In security `log-only` mode, the only side effects are writing the audit record 
 
 - P1 remains an offline compiler; existing adapters still use the legacy policy snapshot and guidance seed. The managed host/reviewer flow is a library, not a default harness entry.
 - Security adapters do not block tool execution; the opt-in workflow gate remains an engineering guard only. The security runtime is still **NO-GO**.
-- No source authentication, independent OS identity/mount domain, live reviewer calibration, real probe/rollout, host receipt/effective acknowledgement, Vue console, or remote CI acceptance gate.
-- SQLite owner-only files, HMAC in the same process, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
+- OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation) is **out of scope for this MVP**, not a blocker; do not claim it.
+- No source authentication, live model reviewer calibration, real probe/rollout, host receipt/effective acknowledgement, Vue console, or remote CI acceptance gate.
+- SQLite owner-only files, in-process HMAC, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
 
 ---
 

@@ -59,15 +59,15 @@
 
 | ID | 当前实现 | 缺口 | AC | 切片/依赖 | 实现 | 证据 | 审查/启用 |
 |---|---|---|---|---|---|---|---|
-| HOST-01 | `host/` 真实文件执行、workspace 边界、受保护路径、审计前置 | 无 OS 身份/挂载域隔离 | AC-05/19 | P2A | 已实现（受限切片） | passed（真实 FS）；隔离 blocked | pending-human-review / 未启用 |
-| HOST-02 | 宿主闭集工具；无 Shell/MCP/子进程入口；未知工具无执行器 | Pi/OpenCode 受管入口未接 | AC-05/06 | P2A | 部分 | passed（host 测试）；adapter 未接 | 未启用 |
-| HOST-03 | 宿主构造 action/identity；不信 Agent 的 approved/version | 无 | AC-05 | P2A | 已实现 | passed | pending-human-review |
-| HOST-04 | 已知无命中可执行；deny 停止；confirm 先停；log-only recorder 语义不变 | 受管入口默认关闭 | AC-05 | P2A | 已实现 | passed（host 测试 + 原 recorder 回归） | 未启用 |
-| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝；`managed/` 端到端消费 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议+离线端到端） | passed（10 项 managed 测试） | pending-human-review |
-| HOST-06 | 独立 reviewer、最小有界投影、不扩大权限；`managed/` 只在 confirm 后调用 | 无真实 provider/校准 | AC-08 | P2B | 已实现（协议+离线端到端） | passed（loopback stub）；live blocked | pending-human-review |
+| HOST-01 | **Pi managed `tool_call` 前阻断** + `host/` 受限文件库；真实 deny/confirm 停止 | OS 身份/挂载域隔离**本轮不做**；OpenCode 受管未接 | AC-05/19 | P2A | 已实现（Harness MVP） | passed（真实 Pi 7 项）；OS 隔离非目标 | pending-human-review / 默认关闭 |
+| HOST-02 | Harness 归一化工具闭集；unknown/coverage 在 managed 模式阻断；无 Shell/MCP/子进程中介 | 不宣称全入口/全副作用覆盖 | AC-05/06 | P2A | 部分（Harness 层） | passed（Pi 真实工具） | 未启用 |
+| HOST-03 | Harness 自己构造 action/identity；不信 Agent 的 approved/version | 无 | AC-05 | P2A | 已实现 | passed（真实 Pi） | pending-human-review |
+| HOST-04 | 已知无命中可执行；deny 停止；confirm 先停；log-only recorder 语义不变 | 默认未启用 managed | AC-05 | P2A | 已实现 | passed（真实 Pi + recorder 回归） | 未启用 |
+| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝；`managed/` 协议流 + Pi 真实调用消费 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议 + Harness MVP） | passed（17 项 managed；含真实 Pi） | pending-human-review |
+| HOST-06 | 独立 reviewer（本地确定性/loopback HTTP）、最小有界投影、不扩大权限；只在 confirm 后调用 | 无真实模型校准（非 MVP 必需） | AC-08 | P2B | 已实现（Harness MVP） | passed（Pi 真实 confirm + 投影）；live model out-of-scope/blocked | pending-human-review |
 | HOST-07 | pending/approved/denied/failed/timed_out/expired/cancelled/consumed 状态；拒绝/低置信/无校准均停止 | 人重试精确动作的 UI/编排未接 | AC-07 | P2B | 部分 | passed（状态机 + managed 拒绝路径） | 未启用 |
 | HOST-08 | 不允许任意沙箱外 Shell；host 无网络/子进程 | 网络/外部文件例外未实现 | AC-05/08 | P2 | 部分 | passed（闭集） | 未启用 |
-| HOST-09 | 真实 FS 词汇路径/符号链接/硬链接检查；同 UID 仍不是隔离 | 无独立 OS 身份/挂载域/cgroup/bwrap 证据 | AC-05/06 | P2A | 部分 | passed（本地 FS）；隔离 blocked | pending-human-review |
+| HOST-09 | 真实 FS 词汇路径/符号链接/硬链接检查（可选 host 库） | **OS 隔离本轮明确不做**；不是 MVP 阻塞；不得宣称 OS 沙箱 | AC-05/06 | 非目标 | 不做本轮 | not_run（非目标） | 未来方向 |
 | HOST-10 | B 的 strict 闭集原型未移植 | 本轮不声称 strict 能力 | AC-20 | 复用材料 | 候选 | not_run | 不做本轮 |
 | HOST-11 | B 的能力委托/预算/撤销原型未移植 | 协议边界未验证 | AC-07 | P2 | 候选 | not_run | 不做本轮 |
 | HOST-12 | 外层 ALLOW/DENY/AUTO_REVIEW/DEFER 未成为新 verdict | 无 | AC-07 | P2 | 已保留（不引入） | passed（设计） | — |
@@ -187,8 +187,9 @@
 6. 第二次执行、换 target、错 epoch/snapshot/凭据、拒绝/低置信/无校准、
    审计路径在工作区内均无副作用。
 
-证据：`node --test dist/managed/*.test.js` → 10 pass / 0 fail。它不证明真实
-provider、真实 OS 隔离或生产启用；这些仍是 blocked。
+证据：`node --test dist/managed/*.test.js` → 17 pass / 0 fail（10 协议流 +
+7 真实 Pi harness）。它证明真实 Harness 工具调用/阻断/副作用；不证明真实
+模型校准、OS 隔离或生产启用。OS 隔离本轮不做，不是阻塞。
 
 ## 3.2 P1 消费者接线（advisory）
 
@@ -216,6 +217,24 @@ human-only 审批与发布、发布事务内编译 catalog v2 + verify + audit +
 证据：`node --test dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip；
 使用真实临时 SQLite 文件与 loopback HTTP。
 
+## 3.4 Harness MVP（Pi 真实调用）
+
+- `managed/harness.ts`：Harness 层 gate；规则引擎裁决 → deny 阻断 / confirm
+  最小投影 + 独立 reviewer + HMAC 一次性 grant → 写 authorization 并 fsync
+  → 放行 → `tool_result` 写 result；同 callId 重放阻断。
+- `adapters/pi/index.ts`：`.pi/amos.json` 显式 `managed.enabled` 时在真实
+  `tool_call` 前调用 gate；归一化失败/未知工具/缺 call id 阻断；默认仍
+  log-only；malformed shared config 不误判为 managed。
+- `review/local-provider.ts`：独立本地确定性 reviewer，只看有界投影。
+- `before_agent_start`：managed 模式启用 activation advisory 注入，即使
+  workflow gate 未开启；未激活规则不注入。
+- 真实证据：`node --test dist/managed/pi-harness.test.js` → 7 pass；真实
+  Pi `AgentSession`、真实扩展、真实 write 工具/文件副作用、loopback HTTP
+  reviewer。模型响应由 faux provider 脚本化，不冒充真实模型校准。
+- 限制：**不是 OS 沙箱**；不防 symlink/hardlink/bind mount/TOCTOU；不中介
+  子进程/插件/MCP；不宣称全副作用覆盖；审计同域、无防篡改。OS 隔离
+  （独立 UID/挂载域/bwrap/cgroup）本轮不做，不是阻塞。
+
 ## 4. 验证记录
 
 见 `docs/verification-one-shot.md`（命令、环境、结果、blocked 项）。
@@ -230,14 +249,14 @@ human-only 审批与发布、发布事务内编译 catalog v2 + verify + audit +
 - HOST：`npm run typecheck`、`npm run build`、`node --test
   dist/host/*.test.js` → 17 pass / 0 fail / 0 skip（真实临时文件系统）；已合入。
 - REVIEW：`npm run typecheck`、`npm run build`、`node --test
-  dist/review/*.test.js` → 42 pass / 0 fail / 0 skip（loopback stub，无真实
-  provider）；已合入。
-- MANAGED：`node --test dist/managed/*.test.js` → 10 pass / 0 fail（端到端
-  离线）；已合入。
+  dist/review/*.test.js` → 47 pass / 0 fail / 0 skip（本地确定性 reviewer；
+  无真实模型 provider）；已合入。
+- MANAGED：`node --test dist/managed/*.test.js` → 17 pass / 0 fail（10 协议 +
+  7 真实 Pi harness）；已合入。
 - GOVERNANCE：`npm run typecheck`、`npm run build`、`node --test
   dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip（真实临时 SQLite +
   loopback HTTP；无真实宿主/UI）；已合入。
-- 整合后全套：`npm run typecheck` 通过；`npm test` → 686 tests / 686 pass /
+- 整合后全套：`npm run typecheck` 通过；`npm test` → 698 tests / 698 pass /
   0 fail / 0 skip；`git diff --check` 通过。
 
 最终整合后本文件会更新为实际全套结果。

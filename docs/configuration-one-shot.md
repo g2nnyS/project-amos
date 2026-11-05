@@ -1,8 +1,10 @@
 # 配置迁移、治理发布与受管启动说明（one-shot）
 
-状态：离线/本地实现说明。SQLite 治理库与 loopback API 已实现并通过本地
-测试；**Vue 治理台未交付**，真实宿主接收/生效回执未接入，来源认证未实现。
-不得把本文当作生产部署或安全启用批准。
+状态：本地实现说明。SQLite 治理库与 loopback API 已实现并通过本地测试；
+Pi Harness 层 managed 模式已接真实 `tool_call`；**Vue 治理台未交付**，
+真实宿主接收/生效回执未接入，来源认证未实现。**OS 隔离（独立 UID/挂载域/
+bwrap/cgroup）本轮不做，不是阻塞项。** 不得把本文当作 OS 沙箱或生产部署
+批准。
 
 ## 1. 单一事实源
 
@@ -73,7 +75,42 @@
   复制到新目标；损坏/未知/权限不符拒绝，不自动重置，不回退 YAML。
 - 跨配置库/审计库不是天然事务；拆分存储前必须另行设计审计先行/恢复。
 
-## 5. 受管文件宿主启动（离线）
+## 5. Harness 层 MVP（Pi managed）
+
+Pi 的 `.pi/amos.json` 增加显式 `managed` 字段：
+
+```jsonc
+{
+  "mode": "log-only",
+  "rulesPath": "./constraints/rules.yaml",
+  "schemaPath": "./constraints/schema.json",
+  "logPath": "./spike/logs/pi.jsonl",
+  "activation": { "snapshotPath": ".pi/activation.json", "projectId": "my-project" },
+  "managed": {
+    "enabled": true,
+    "auditPath": "/var/lib/amos/managed-audit.jsonl",
+    "review": {
+      "endpoint": "http://127.0.0.1:PORT/review",
+      "model": "local-reviewer",
+      "apiKeyEnv": "AMOS_REVIEW_KEY",
+      "policy": { /* ReviewerPolicy */ },
+      "calibration": { /* CalibrationEvidence | null */ },
+      "ceilingDigest": "sha256:…",
+      "grantTtlMs": 20000
+    }
+  }
+}
+```
+
+- 缺省/`enabled:false`：保持原 log-only + workflow gate；不静默改变。
+- `managed` 非法：所有归一化工具调用阻断 `amos_managed_config_error`。
+- `review` 缺省：confirm 阻断 `amos_managed_review_unavailable`。
+- `auditPath` 必须在工作区外；否则配置错误、阻断。
+- `activation` 必须匹配当前 session workspace；accepted snapshot 不是来源
+  认证。
+- 真实门禁顺序与证据见 [Harness gate ADR](adr-harness-gate.md)。
+
+## 6. 受管文件宿主启动（离线，可选）
 
 `managed/flow.ts` 的组合方式（尚无 harness 默认入口）：
 
@@ -93,7 +130,8 @@
    rollout 阈值/预授权、宿主接收回执。当前均未满足。
 
 不得把 `.pi/amos.json` 或项目内可写文件指向任意 activation snapshot 作为
-受信来源；在 O5 未决前，受管入口保持离线/未启用。
+受信来源；O5 来源认证仍未决。Harness MVP 用显式配置的快照作输入，不把
+digest/路径当作认证；`host/` 的离线受管文件入口仍是可选路径。
 
 advisory 的可选迁移接线（不涉及执行授权）：
 
@@ -105,11 +143,13 @@ advisory 的可选迁移接线（不涉及执行授权）：
 - 该路径不是来源认证；默认配置未启用，gate 开关未改。项目内可写 snapshot
   仍可能注入任意 advisory 文本，因此启用前需 O5 来源/写域决定。
 
-## 6. 未完成/阻塞
+## 7. 未完成/阻塞
 
 - Vue 治理台、浏览器登录→项目→规则→发布→回滚流程（AC-12）。
 - 真实宿主接收/生效回执；当前只有记录契约与本地测试。
 - 全配置文件的自动发现/一次性切换证据；调用方需显式提供 sources。
-- 来源认证/秘密存储/引导（O5）、真实 reviewer 校准（O3）、rollout 预授权
-  （O4）、独立 OS 隔离（O2）。
-- 安全 deny/confirm 未启用；NO-GO 未改变。
+- 来源认证/秘密存储/引导（O5）、真实模型 reviewer 校准（O3，非 MVP 必需）、
+  rollout 预授权（O4）。
+- OS 隔离（O2）本轮明确不做，不是阻塞；不得宣称 OS 沙箱/全副作用/防篡改。
+- 默认适配器未启用 managed；Pi managed 是显式 opt-in，可在声明范围内
+  deny/confirm；G0/NO-GO 未改变。

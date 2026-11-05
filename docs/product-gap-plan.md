@@ -8,16 +8,19 @@
 
 - `activation/runtime.ts`：验证 catalog v2 snapshot、绑定 project/workspace/
   epoch/execution digest，并提供 runtime/ci/server 视图与 advisory session。
-- `host/`：闭集文件宿主、能力/资源根、真实路径/符号链接/硬链接检查、
-  审计先于副作用、崩溃 unknown 不重放。
-- `review/` + `managed/`：最小有界投影、校准门、独立 reviewer、一次性
-  HMAC grant、端到端离线确认/执行。
+- **Harness 层 MVP**：Pi `.pi/amos.json managed.enabled` 在真实 `tool_call`
+  前阻断 deny、confirm 经独立 reviewer + 一次性 HMAC grant、`tool_result`
+  记录、activation advisory 注入。真实 Pi 工具/文件副作用测试通过。
+  默认仍 log-only；不是 OS 沙箱，OS 隔离本轮不做。
+- `host/`：可选闭集文件宿主、能力/资源根、路径/审计检查；不是 MVP 默认。
+- `review/` + `managed/`：最小有界投影、校准门、独立 reviewer（本地确定性/
+  HTTP）、一次性 HMAC grant、端到端确认/执行。
 - `governance/`：SQLite 单主、导入预览、CAS 提案/发布、审计、独立 receipt、
   回滚、WAL 备份/恢复、loopback 认证 API。Vue GUI 未交付。
 - `check/`：精确 tree 的 CheckBinding/FindingBatch + 真实 TypeScript 检查。
 - `rollout/`：版本/宿主/环境/检查绑定证据门；无真实 probe。
 - `activation/tighten.ts`：已批准模板的附加型临时收紧、TTL/配额/epoch。
-- 验证：`npm run typecheck`、`npm test`（实际 686 pass / 0 fail / 0 skip）、
+- 验证：`npm run typecheck`、`npm test`（实际 698 pass / 0 fail / 0 skip）、
   `git diff --check` 通过。详见
   `docs/delivery-status.md` 与 `docs/verification-one-shot.md`。
 - 限制：Pi/OpenCode 默认仍读旧策略快照/guidance seed；没有真实 OS 隔离、
