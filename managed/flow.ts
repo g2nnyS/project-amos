@@ -353,14 +353,22 @@ function buildFlow(options: ManagedFlowOptions): ManagedFlow {
     } catch {
       outcome = { status: 'outcome_unknown', code: 'execution_unknown' };
     }
-    const operationId =
-      typeof (request as { operationId?: unknown } | null)?.operationId === 'string'
-        ? (request as { operationId: string }).operationId
-        : null;
+    let operationId: string | null = null;
+    try {
+      const candidate = (request as { operationId?: unknown } | null)?.operationId;
+      operationId = typeof candidate === 'string' ? candidate : null;
+    } catch {
+      // A hostile getter cannot leave a stale grant behind.
+      operationId = null;
+    }
     if (operationId !== null) {
       // A stop consumes no grant; never keep a stale grant for a later retry.
       // A successful consume already removed it inside the host callback.
       pending.delete(operationId);
+    } else {
+      // The request could not name an operation, so no pending grant can be
+      // matched safely anymore.
+      pending.clear();
     }
     return outcome;
   }

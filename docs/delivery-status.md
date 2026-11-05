@@ -60,9 +60,9 @@
 | HOST-02 | 宿主闭集工具；无 Shell/MCP/子进程入口；未知工具无执行器 | Pi/OpenCode 受管入口未接 | AC-05/06 | P2A | 部分 | passed（host 测试）；adapter 未接 | 未启用 |
 | HOST-03 | 宿主构造 action/identity；不信 Agent 的 approved/version | 无 | AC-05 | P2A | 已实现 | passed | pending-human-review |
 | HOST-04 | 已知无命中可执行；deny 停止；confirm 先停；log-only recorder 语义不变 | 受管入口默认关闭 | AC-05 | P2A | 已实现 | passed（host 测试 + 原 recorder 回归） | 未启用 |
-| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议） | passed（离线） | pending-human-review |
-| HOST-06 | 独立 reviewer、最小有界投影、不扩大权限 | 无真实 provider/校准 | AC-08 | P2B | 已实现（协议） | passed（loopback stub）；live blocked | pending-human-review |
-| HOST-07 | pending/approved/denied/failed/timed_out/expired/cancelled/consumed 状态 | 人重试精确动作的 UI/编排未接 | AC-07 | P2B | 部分 | passed（状态机） | 未启用 |
+| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝；`managed/` 端到端消费 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议+离线端到端） | passed（9 项 managed 测试） | pending-human-review |
+| HOST-06 | 独立 reviewer、最小有界投影、不扩大权限；`managed/` 只在 confirm 后调用 | 无真实 provider/校准 | AC-08 | P2B | 已实现（协议+离线端到端） | passed（loopback stub）；live blocked | pending-human-review |
+| HOST-07 | pending/approved/denied/failed/timed_out/expired/cancelled/consumed 状态；拒绝/低置信/无校准均停止 | 人重试精确动作的 UI/编排未接 | AC-07 | P2B | 部分 | passed（状态机 + managed 拒绝路径） | 未启用 |
 | HOST-08 | 不允许任意沙箱外 Shell；host 无网络/子进程 | 网络/外部文件例外未实现 | AC-05/08 | P2 | 部分 | passed（闭集） | 未启用 |
 | HOST-09 | 真实 FS 词汇路径/符号链接/硬链接检查；同 UID 仍不是隔离 | 无独立 OS 身份/挂载域/cgroup/bwrap 证据 | AC-05/06 | P2A | 部分 | passed（本地 FS）；隔离 blocked | pending-human-review |
 | HOST-10 | B 的 strict 闭集原型未移植 | 本轮不声称 strict 能力 | AC-20 | 复用材料 | 候选 | not_run | 不做本轮 |
@@ -154,6 +154,25 @@
 - B 的 strict/autonomy/managed 原型未整条移植；只借鉴其边界概念。
 - 未启用任何安全 deny/confirm；未改 NO-GO；未 push/merge/tag/deploy。
 
+## 3.1 受管文件端到端（离线）
+
+`managed/flow.ts` 把现有模块接成一条可测试链路：
+
+1. `activation/runtime.ts` 验证 catalog v2 snapshot 并绑定 project/workspace/
+   epoch/execution digest。
+2. `host/` 用自己的闭集与真实路径检查执行；无 grant 时 confirm 先停。
+3. `managed/authorize` 只对 `confirm` 生成最小投影，调用独立 reviewer；
+   `deny`/`allow`/`log` 不进入 review。
+4. reviewer approved 后签发 HMAC one-shot grant，绑定精确 request digest、
+   session、project、epoch、snapshot、capability、TTL、ceiling、nonce。
+5. host 在 path/capability/precondition 检查后调用 `consume`；只消费一次，
+   授权日志 fsync 后才执行；结果另记。
+6. 第二次执行、换 target、错 epoch/snapshot/凭据、拒绝/低置信/无校准、
+   审计路径在工作区内均无副作用。
+
+证据：`node --test dist/managed/*.test.js` → 9 pass / 0 fail。它不证明真实
+provider、真实 OS 隔离或生产启用；这些仍是 blocked。
+
 ## 4. 验证记录
 
 见 `docs/verification-one-shot.md`（命令、环境、结果、blocked 项）。
@@ -165,5 +184,14 @@
   dist/rollout/*.test.js` → 28 pass / 0 fail / 0 skip；已合入。
 - ACTIVATION：`npm run typecheck`、`npm run build`、`node --test
   dist/activation/*.test.js` → 46 pass / 0 fail / 0 skip；已合入。
+- HOST：`npm run typecheck`、`npm run build`、`node --test
+  dist/host/*.test.js` → 17 pass / 0 fail / 0 skip（真实临时文件系统）；已合入。
+- REVIEW：`npm run typecheck`、`npm run build`、`node --test
+  dist/review/*.test.js` → 42 pass / 0 fail / 0 skip（loopback stub，无真实
+  provider）；已合入。
+- MANAGED：`node --test dist/managed/*.test.js` → 9 pass / 0 fail（端到端
+  离线）；已合入。
+- 整合后全套：`npm test` → 643 tests / 643 pass / 0 fail / 0 skip；typecheck
+  通过。治理模块合并后需重跑全套。
 
 最终整合后本文件会更新为实际全套结果。
