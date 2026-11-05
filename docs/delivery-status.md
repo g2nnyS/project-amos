@@ -63,7 +63,7 @@
 | HOST-02 | 宿主闭集工具；无 Shell/MCP/子进程入口；未知工具无执行器 | Pi/OpenCode 受管入口未接 | AC-05/06 | P2A | 部分 | passed（host 测试）；adapter 未接 | 未启用 |
 | HOST-03 | 宿主构造 action/identity；不信 Agent 的 approved/version | 无 | AC-05 | P2A | 已实现 | passed | pending-human-review |
 | HOST-04 | 已知无命中可执行；deny 停止；confirm 先停；log-only recorder 语义不变 | 受管入口默认关闭 | AC-05 | P2A | 已实现 | passed（host 测试 + 原 recorder 回归） | 未启用 |
-| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝；`managed/` 端到端消费 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议+离线端到端） | passed（9 项 managed 测试） | pending-human-review |
+| HOST-05 | one-shot grant 绑定 action/session/epoch/nonce/TTL/ceiling；只消费一次；重启拒绝；`managed/` 端到端消费 | 无持久化账本（HMAC 换键即失效） | AC-07 | P2B | 已实现（协议+离线端到端） | passed（10 项 managed 测试） | pending-human-review |
 | HOST-06 | 独立 reviewer、最小有界投影、不扩大权限；`managed/` 只在 confirm 后调用 | 无真实 provider/校准 | AC-08 | P2B | 已实现（协议+离线端到端） | passed（loopback stub）；live blocked | pending-human-review |
 | HOST-07 | pending/approved/denied/failed/timed_out/expired/cancelled/consumed 状态；拒绝/低置信/无校准均停止 | 人重试精确动作的 UI/编排未接 | AC-07 | P2B | 部分 | passed（状态机 + managed 拒绝路径） | 未启用 |
 | HOST-08 | 不允许任意沙箱外 Shell；host 无网络/子进程 | 网络/外部文件例外未实现 | AC-05/08 | P2 | 部分 | passed（闭集） | 未启用 |
@@ -187,7 +187,7 @@
 6. 第二次执行、换 target、错 epoch/snapshot/凭据、拒绝/低置信/无校准、
    审计路径在工作区内均无副作用。
 
-证据：`node --test dist/managed/*.test.js` → 9 pass / 0 fail。它不证明真实
+证据：`node --test dist/managed/*.test.js` → 10 pass / 0 fail。它不证明真实
 provider、真实 OS 隔离或生产启用；这些仍是 blocked。
 
 ## 3.2 P1 消费者接线（advisory）
@@ -232,7 +232,7 @@ human-only 审批与发布、发布事务内编译 catalog v2 + verify + audit +
 - REVIEW：`npm run typecheck`、`npm run build`、`node --test
   dist/review/*.test.js` → 42 pass / 0 fail / 0 skip（loopback stub，无真实
   provider）；已合入。
-- MANAGED：`node --test dist/managed/*.test.js` → 9 pass / 0 fail（端到端
+- MANAGED：`node --test dist/managed/*.test.js` → 10 pass / 0 fail（端到端
   离线）；已合入。
 - GOVERNANCE：`npm run typecheck`、`npm run build`、`node --test
   dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip（真实临时 SQLite +
