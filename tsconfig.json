@@ -10,6 +10,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["engine/**/*.ts", "adapters/**/*.ts", "storage/**/*.ts", "decision/**/*.ts", "supervisor/**/*.ts", "guidance/**/*.ts", "injector/**/*.ts", "activation/**/*.ts", "catalog/**/*.ts", "workflow/**/*.ts"],
+  "include": ["engine/**/*.ts", "adapters/**/*.ts", "storage/**/*.ts", "decision/**/*.ts", "supervisor/**/*.ts", "guidance/**/*.ts", "injector/**/*.ts", "activation/**/*.ts", "catalog/**/*.ts", "workflow/**/*.ts", "host/**/*.ts", "review/**/*.ts", "check/**/*.ts", "rollout/**/*.ts", "governance/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
