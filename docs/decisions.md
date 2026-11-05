@@ -39,4 +39,5 @@ log-only recorder 的 `defaultVerdict: deny` 或当前 NO-GO。没有真实 OS
 
 ## 配置
 
-配置仍为文件式；当前没有配置迁移。安全适配器和工程工作流门的实现状态见[运行期状态](go-no-go.md)、[安全模型](security-model.md)及[工作流门](workflow-gate.md)。
+运行期配置仍为文件式；SQLite 治理库/API 是离线实现，尚未接管运行期配置。
+安全适配器和工程工作流门的实现状态见[运行期状态](go-no-go.md)、[安全模型](security-model.md)及[工作流门](workflow-gate.md)。
