@@ -13,7 +13,7 @@
 
 import { readFileSync, statSync } from 'node:fs';
 
-import { createActivationRuntime } from '../../activation/runtime.ts';
+import { createActivationRuntime, type ActivationRuntime } from '../../activation/runtime.ts';
 import { deepFreeze } from '../../activation/json.ts';
 import type { ProjectInjectionBlock, ProjectInjectorSession } from '../../activation/injector.ts';
 import type {
@@ -46,11 +46,19 @@ export interface ActivationGuidanceError {
 
 export type ActivationGuidanceLoad = ActivationGuidanceReady | ActivationGuidanceError;
 
-export function loadActivationGuidance(
+export type ActivationRuntimeLoad =
+  | { readonly status: 'ready'; readonly runtime: ActivationRuntime }
+  | { readonly status: 'error'; readonly code: 'activation_guidance_error' };
+
+/**
+ * Load a snapshot as a verified runtime. This is a structural consistency
+ * check, not publisher authentication.
+ */
+export function loadActivationRuntime(
   options: ActivationGuidanceOptions,
-): ActivationGuidanceLoad {
+): ActivationRuntimeLoad {
   try {
-    if (!isRecord(options)) return errorLoad();
+    if (!isRecord(options)) return { status: 'error', code: 'activation_guidance_error' };
     const snapshotPath = options.snapshotPath;
     const projectId = options.projectId;
     const workspace = options.workspace;
@@ -62,31 +70,39 @@ export function loadActivationGuidance(
       typeof workspace !== 'string' ||
       workspace.length === 0
     ) {
-      return errorLoad();
+      return { status: 'error', code: 'activation_guidance_error' };
     }
-    const now = options.now ?? Date.now;
-    if (typeof now !== 'function') return errorLoad();
-
     const stat = statSync(snapshotPath);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ACTIVATION_SNAPSHOT_BYTES) {
-      return errorLoad();
+      return { status: 'error', code: 'activation_guidance_error' };
     }
     const raw = readFileSync(snapshotPath, 'utf8');
-    if (raw.length === 0) return errorLoad();
+    if (raw.length === 0) return { status: 'error', code: 'activation_guidance_error' };
     // The runtime verifier requires a deep-frozen snapshot identity. A parsed
-    // file is a fresh mutable graph, so freeze the bounded copy first. This is
-    // still a structural consistency check, not source authentication.
+    // file is a fresh mutable graph, so freeze the bounded copy first.
     const value: unknown = deepFreeze(JSON.parse(raw));
-    const runtime = createActivationRuntime(value, { projectId, workspace });
-    return Object.freeze({
-      status: 'ready' as const,
-      createSession(): InjectorSession {
-        return wrap(runtime.injectorSession(now));
-      },
-    });
+    return {
+      status: 'ready',
+      runtime: createActivationRuntime(value, { projectId, workspace }),
+    };
   } catch {
-    return errorLoad();
+    return { status: 'error', code: 'activation_guidance_error' };
   }
+}
+
+export function loadActivationGuidance(
+  options: ActivationGuidanceOptions,
+): ActivationGuidanceLoad {
+  const loaded = loadActivationRuntime(options);
+  if (loaded.status === 'error') return errorLoad();
+  const now = options.now ?? Date.now;
+  if (typeof now !== 'function') return errorLoad();
+  return Object.freeze({
+    status: 'ready' as const,
+    createSession(): InjectorSession {
+      return wrap(loaded.runtime.injectorSession(now));
+    },
+  });
 }
 
 function errorLoad(): ActivationGuidanceError {
