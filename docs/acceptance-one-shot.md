@@ -28,7 +28,7 @@
 | AC-21 | passed（保留） | 未改写历史 JSONL/审核结论/archive v1 |
 | AC-22 | partial | 正常执行不逐次人工批准；误放行/误拒/完成率指标未实现 |
 
-当前全套：Node 732 tests / 731 pass / 1 skipped；Web 5 pass；浏览器 18 项
+当前全套：Node 与 Web 测试无失败（1 项环境测试 skip）；浏览器检查全部
 PASS；live probe 通过。历史表如下。
 
 全套命令与环境见 `docs/verification-one-shot.md`。历史（2026-11-04）实际：

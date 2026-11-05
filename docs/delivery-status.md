@@ -9,8 +9,8 @@
 > **2026-11-05 当前状态（优先于下表）**：本轮范围已修订为 Harness 层 MVP。
 > 已完成真实浏览器治理闭环、P1 快照发布、Pi `tool_call` 前拦截、独立本地
 > 模型 reviewer + 一次性授权、同快照动态注入、runtime 加载报告与回滚新版本。
-> 当前证据：Node 731 pass / 1 skip、Web 5 pass、浏览器 18 项 PASS、真实本地
-> 模型 live probe 通过。**OS 隔离、完整 rollout、临时收紧持久化、远端 CI
+> 当前证据：Node 与 Web 测试无失败（1 项环境测试 skip）、浏览器检查全部
+> PASS、真实本地模型 live probe 通过。**OS 隔离、完整 rollout、临时收紧持久化、远端 CI
 > 接纳、OpenCode 受管拦截明确不在本轮**，不再列为人工阻塞。详见
 > [MVP 交付](mvp-delivery.md) 与 [验证记录](verification-one-shot.md)。
 > 下表为 one-shot 阶段历史记录；其中“Vue 未交付”“无真实模型校准”

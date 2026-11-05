@@ -82,8 +82,8 @@
 | 命令 | 实际结果 |
 |---|---|
 | `npm run typecheck` | exit 0（根 TS + `web` vue-tsc） |
-| `npm test` | Node: **732 tests / 731 pass / 0 fail / 1 skipped**；Web: **5 pass / 0 fail** |
-| `node web/e2e/smoke.mjs` | **18 项浏览器检查全部 PASS**；真实 headless Chromium、真实 CLI 服务、真实 YAML 下载/导入、回滚、CSP/控制台错误检查；证据 `/tmp/opencode/amos-governance-e2e-*/evidence.txt` |
+| `npm test` | exit 0；Node 与 Web 均无失败；1 项依赖外部 UID 的环境测试保持 skip |
+| `node web/e2e/smoke.mjs` | 全部浏览器检查 PASS；真实 headless Chromium、真实 CLI 服务、真实 YAML 下载/导入、回滚、CSP/控制台错误检查；证据 `/tmp/opencode/amos-governance-e2e-*/evidence.txt` |
 | `npm run probe:live` | 通过；真实本地 llama.cpp 模型 `gemma-4-e4b` + 真实 Pi AgentSession + 真实扩展 + 真实文件副作用 + 真实模型 reviewer；证据 `/tmp/opencode/amos-live-probe-*/evidence.json` |
 | `git diff --check` / `git diff --cached --check` | exit 0 |
 

@@ -19,9 +19,8 @@ git diff --cached --check
 实际结果：
 
 - `npm run typecheck` → exit 0（根 TS + `web` vue-tsc）。
-- `npm test` → Node **732 tests / 731 pass / 0 fail / 1 skipped**；
-  Web **5 pass / 0 fail**。跳过项是“外来 UID 数据库文件”测试，需要 root
-  才能创建，仍然 skip 而非伪通过。
+- `npm test` → exit 0；Node 与 Web 均无失败；1 项“外来 UID 数据库文件”
+  测试需要 root，保持 skip 而非伪通过。
 - `git diff --check` → exit 0。
 - `git diff --cached --check` → exit 0（提交前运行）。
 
@@ -35,8 +34,8 @@ npm run build
 node web/e2e/smoke.mjs
 ```
 
-结果：**18 项检查全部 PASS**，无 console error、runtime exception、CSP
-violation 或同源 4xx/5xx。证据目录
+结果：全部检查 PASS，无 console error、runtime exception、CSP violation
+或同源 4xx/5xx。证据目录
 `/tmp/opencode/amos-governance-e2e-*/`（`evidence.txt` + 截图）。
 
 关键检查：
