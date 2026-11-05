@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>P1 离线项目规则目录与双投影已实现；尚未接入现有适配器。</strong>
+  <strong>受管文件宿主、reviewer 协议、SQLite 治理库、catalog/check/rollout 库已离线实现；默认适配器均未启用。</strong>
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@
 
 ## 当前产品范围
 
-Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护栏和动态 advisory 规范注入。P1 项目规则目录仅离线编译投影，尚未接入适配器。详见[产品范围](docs/product-design.md)和[实现状态](docs/product-gap-plan.md)。
+Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护栏和动态 advisory 规范注入。P1 项目规则目录仅离线编译投影；受管文件宿主、reviewer/一次性授权、SQLite 治理库、精确 tree 检查、rollout 证据门与临时收紧均为离线库/API，默认适配器未接入。详见[产品范围](docs/product-design.md)、[实现状态](docs/product-gap-plan.md)和[交付状态](docs/delivery-status.md)。
 
 ---
 
@@ -71,14 +71,19 @@ Amos 当前提供 Stage A `log-only` 安全观察器、可选工程工作流护�
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
 - **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
 - **P1 离线项目规则目录**：把现有 YAML 规则和全部 guidance seed 导入版本化目录，再按项目生成执行与 advisory 投影。编译、TTL 过滤和选择已通过离线测试；现有适配器仍走当前文件快照和静态 seed 路径。
+- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成离线端到端测试。未接入 Pi/OpenCode，无 OS 隔离或真实 provider 校准。
+- **SQLite 治理库与 API（部分）**：单主 schema、全量导入预览、baseVersion CAS 提案、human-only 审批/发布、catalog v2 编译 + 审计原子提交、独立宿主回执、回滚新版本、WAL 备份/恢复和 loopback 认证 API。Vue 治理台与真实宿主回执未交付。
+- **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
 - **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
 
 ### 当前限制
 
-- P1 仍是离线编译器；现有适配器继续使用旧策略快照与 guidance seed。
-- 安全适配器不阻止工具执行；可选工作流门仍只是工程护栏。
+- P1 仍是离线编译器；现有适配器继续使用旧策略快照与 guidance seed。受管宿主/reviewer 流程是库，不是默认宿主入口。
+- 安全适配器不阻止工具执行；可选工作流门仍只是工程护栏。安全运行期仍是 **NO-GO**。
+- 来源认证、独立 OS 身份/挂载域、真实 reviewer 校准、真实 probe/rollout、宿主接收/生效回执、Vue 治理台、远端 CI 接纳门均未交付。
+- SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
 
 ---
 
@@ -118,6 +123,8 @@ npm run audit:review -- \
 - [安全模型与当前状态](docs/security-model.md) · [运行期状态](docs/go-no-go.md)
 - [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
+- [交付状态](docs/delivery-status.md) · [One-shot 验证记录](docs/verification-one-shot.md) · [配置迁移与受管启动](docs/configuration-one-shot.md)
+- 安全 ADR：[来源认证](docs/adr-source-authentication.md) · [受管宿主](docs/adr-managed-file-host.md) · [review 协议](docs/adr-review-protocol.md) · [治理库](docs/adr-governance-store.md) · [CheckBinding](docs/adr-check-binding.md) · [临时收紧](docs/adr-temporary-tightening.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
 
 ---

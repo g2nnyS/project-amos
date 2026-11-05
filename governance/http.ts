@@ -224,6 +224,24 @@ export async function createGovernanceServer(
     return { id: session.role, role: session.role };
   }
 
+  /**
+   * The trusted compiler/catalog is server configuration, never request data.
+   * Publishing and rollback are unavailable when it has not been supplied.
+   */
+  function requirePublishOptions(): PublishOptions {
+    const activation = options.activation;
+    if (activation === undefined) {
+      throw new HttpError(503, 'publishing_unavailable');
+    }
+    return {
+      compiler: activation.compiler,
+      catalogVersion: activation.catalogVersion,
+      rawSchema: activation.rawSchema,
+      mandatoryRuleRefs: activation.mandatoryRuleRefs,
+      projectInput: activation.projectInput,
+    };
+  }
+
   function requireHostToken(req: IncomingMessage): void {
     if (hostToken === undefined) throw new HttpError(403, 'receipts_disabled');
     const header = req.headers.authorization;
@@ -302,6 +320,13 @@ export async function createGovernanceServer(
       return;
     }
 
+    if (method === 'POST' && path === '/api/projects') {
+      const session = requireSession(req, 'human', true);
+      const project = store.createProject(await readJson(req), actorOf(session));
+      finish(res, 201, project);
+      return;
+    }
+
     if (segments[0] === 'api' && segments[1] === 'projects' && segments[2] !== undefined) {
       const projectId = decodeSegment(segments[2]);
       if (segments.length === 3 && method === 'GET') {
@@ -352,20 +377,30 @@ export async function createGovernanceServer(
         if (Object.keys(body).length !== 1 || typeof body.proposalId !== 'string') {
           throw new HttpError(400, 'invalid_input');
         }
-        const activation = options.activation;
-        if (activation === undefined) throw new HttpError(503, 'publishing_unavailable');
-        const publishOptions: PublishOptions = {
-          compiler: activation.compiler,
-          catalogVersion: activation.catalogVersion,
-          rawSchema: activation.rawSchema,
-          mandatoryRuleRefs: activation.mandatoryRuleRefs,
-          projectInput: activation.projectInput,
-        };
         const publication = store.publish(
           projectId,
           body.proposalId,
           actorOf(session),
-          publishOptions,
+          requirePublishOptions(),
+        );
+        finish(res, 201, publication);
+        return;
+      }
+      if (segments.length === 4 && segments[3] === 'rollback' && method === 'POST') {
+        const session = requireSession(req, 'human', true);
+        const body = await readJson(req);
+        if (
+          Object.keys(body).length !== 1 ||
+          typeof body.toVersion !== 'number' ||
+          !Number.isSafeInteger(body.toVersion)
+        ) {
+          throw new HttpError(400, 'invalid_input');
+        }
+        const publication = store.rollback(
+          projectId,
+          body.toVersion,
+          actorOf(session),
+          requirePublishOptions(),
         );
         finish(res, 201, publication);
         return;

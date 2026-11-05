@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Offline P1 project catalog and paired projections are implemented; existing adapters are not connected to them.</strong>
+  <strong>Offline managed file host, reviewer protocol, SQLite governance store, catalog/check/rollout libraries exist; none are enabled in the default adapters.</strong>
 </p>
 
 <p align="center">
@@ -74,14 +74,19 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
 - **P1 Offline Project Rule Catalog**: Imports the current YAML rules and all guidance seeds into versioned records, then derives project-scoped execution and advisory projections. The compiler, TTL filtering, and selection are tested offline; existing adapters still use the current file snapshot and static seed path.
+- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Not enabled in Pi/OpenCode, no OS isolation or live provider calibration.
+- **SQLite Governance Store & API (Partial)**: Single-primary SQLite with versioned schema, full import preview, baseVersion CAS proposals, human-only approval/publish, atomic catalog-v2 compilation + audit, separate host receipts, rollback-as-new-version, WAL backup/restore, and a loopback authenticated API. The Vue console and real host receipt integration are not delivered.
+- **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
 - **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
 
 ### Current Limitations
 
-- P1 remains an offline compiler; existing adapters still use the legacy policy snapshot and guidance seed.
-- Security adapters do not block tool execution; the opt-in workflow gate remains an engineering guard only.
+- P1 remains an offline compiler; existing adapters still use the legacy policy snapshot and guidance seed. The managed host/reviewer flow is a library, not a default harness entry.
+- Security adapters do not block tool execution; the opt-in workflow gate remains an engineering guard only. The security runtime is still **NO-GO**.
+- No source authentication, independent OS identity/mount domain, live reviewer calibration, real probe/rollout, host receipt/effective acknowledgement, Vue console, or remote CI acceptance gate.
+- SQLite owner-only files, HMAC in the same process, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
 
 ---
 
@@ -121,6 +126,8 @@ npm run audit:review -- \
 - [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
+- [Delivery Status](docs/delivery-status.md) · [One-Shot Verification](docs/verification-one-shot.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
+- Safety ADRs: [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
 
 ---

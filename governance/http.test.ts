@@ -7,12 +7,16 @@ import {
   type GovernanceServer,
 } from './http.ts';
 import {
+  HUMAN,
   RULE_SCHEMA,
   RULES_YAML,
+  WORKSPACE,
+  WORKSPACE_2,
+  activationCandidate,
   createEnv,
   projectInput,
+  publishOptions,
   seedProject,
-  WORKSPACE_2,
   type TestEnv,
 } from './test-support.ts';
 import { GUIDANCE_PACKS } from '../guidance/packs.ts';
@@ -455,6 +459,62 @@ test('expired sessions stop authenticating', async () => {
     // Throttled after repeated failures; the valid token is also refused.
     assert.equal(sessions.login(HUMAN_TOKEN), null);
   } finally {
+    env.db.close();
+  }
+});
+
+test('HTTP project registration is human-only and rollback publishes a new version', async () => {
+  const env = createEnv('http-project-rollback');
+  const harness = await start(env);
+  try {
+    const human = await login(harness, HUMAN_TOKEN);
+    const agent = await login(harness, AGENT_TOKEN);
+
+    const created = await call(harness, '/api/projects', {
+      method: 'POST', cookie: human.cookie, csrf: human.csrfToken,
+      body: { id: 'p1', name: 'Project one', workspace: WORKSPACE },
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.json.id, 'p1');
+
+    const denied = await call(harness, '/api/projects', {
+      method: 'POST', cookie: agent.cookie, csrf: agent.csrfToken,
+      body: { id: 'p2', name: 'Project two', workspace: WORKSPACE_2 },
+    });
+    assert.equal(denied.status, 403);
+
+    const first = env.store.createProposal({
+      projectId: 'p1',
+      baseVersion: 0,
+      type: 'project-activation',
+      title: 'First',
+      rationale: 'First activation',
+      candidate: activationCandidate(['credential-0-1']),
+    }, HUMAN);
+    env.store.decideProposal(first.id, { decision: 'approve' }, HUMAN);
+    const published1 = env.store.publish('p1', first.id, HUMAN, publishOptions(env));
+
+    const second = env.store.createProposal({
+      projectId: 'p1',
+      baseVersion: 1,
+      type: 'project-activation',
+      title: 'Second',
+      rationale: 'Second activation',
+      candidate: activationCandidate(['credential-0-2']),
+    }, HUMAN);
+    env.store.decideProposal(second.id, { decision: 'approve' }, HUMAN);
+    env.store.publish('p1', second.id, HUMAN, publishOptions(env));
+
+    const rollback = await call(harness, '/api/projects/p1/rollback', {
+      method: 'POST', cookie: human.cookie, csrf: human.csrfToken,
+      body: { toVersion: 1 },
+    });
+    assert.equal(rollback.status, 201);
+    assert.equal(rollback.json.version, 3);
+    assert.equal(rollback.json.candidateDigest, published1.candidateDigest);
+    assert.equal(env.store.listPublications('p1').length, 3);
+  } finally {
+    await harness.server.close();
     env.db.close();
   }
 });

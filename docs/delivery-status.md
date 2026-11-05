@@ -73,17 +73,17 @@
 
 | ID | 当前实现 | 缺口 | AC | 切片/依赖 | 实现 | 证据 | 审查/启用 |
 |---|---|---|---|---|---|---|---|
-| GOV-01 | `governance/` SQLite 单主（node:sqlite）；Git/YAML 仅导入 | 全配置运行期接管未完成 | AC-09 | P3 | 部分 | passed（store/API 测试） | 未启用 |
-| GOV-02 | 规则/项目/激活/非秘密设置导入映射 | guidance/Jev/工作流全部字段的等价迁移需逐项验证 | AC-09 | P3 | 部分 | passed（子集） | 未启用 |
+| GOV-01 | `governance/` SQLite 单主（node:sqlite）；Git/YAML 仅导入 | 运行期接管/旧文件失效未部署 | AC-09 | P3 | 部分（store/API 已实现） | passed（39 项本地测试） | 未启用 |
+| GOV-02 | 规则/项目/激活/非秘密设置导入映射；全量预览 | 全配置字段的逐项生产切换证据 | AC-09 | P3 | 部分 | passed（store/import 测试） | 未启用 |
 | GOV-03 | 秘密仅存 `{env:NAME}` 引用；测试扫描无字面秘密 | 无真实秘密后端 | AC-09 | P3 | 已实现（引用约束） | passed | pending-human-review |
-| GOV-04 | 认证 loopback API；人/Agent 能力分离；无任意 SQL | Vue UI 未接 | AC-10/12 | P3 | 部分 | passed（HTTP 测试） | 未启用 |
+| GOV-04 | 认证 loopback API；人/Agent 能力分离；无任意 SQL；项目注册 | Vue UI 未接 | AC-10/12 | P3 | 已实现（API） | passed（HTTP 测试） | 未启用 |
 | GOV-05 | 不可变提案、baseVersion CAS、绑定 digest、原子审发 | 多人四眼不是本轮范围 | AC-10 | P3 | 已实现 | passed | pending-human-review |
-| GOV-06 | 发布事务编译 H catalog v2 并写 audit；宿主接收另记 | 无真实宿主接收回执 | AC-10/20 | P3 | 部分 | passed（本地）；receipt blocked | 未启用 |
-| GOV-07 | 回滚生成新版本；GET 不写；单人自批不称四眼 | UI 回滚流程未接 | AC-10 | P3 | 已实现（API） | passed | 未启用 |
-| GOV-08 | 全量导入预览、重复/未知/秘密/未知字段拒绝 | 旧 YAML 失效切换需部署证据 | AC-09 | P3 | 已实现（预览） | passed | 未启用 |
+| GOV-06 | 发布事务编译 H catalog v2 并写 audit；宿主接收另记 | 无真实宿主接收回执 | AC-10/20 | P3 | 已实现（发布）/契约（回执） | passed（本地）；receipt blocked | 未启用 |
+| GOV-07 | 回滚生成新版本；GET 不写；单人自批不称四眼 | UI 回滚流程未接 | AC-10 | P3 | 已实现（store/API） | passed | 未启用 |
+| GOV-08 | 全量导入预览、重复/未知/秘密/未知字段拒绝 | 旧 YAML 失效切换需部署证据 | AC-09 | P3 | 已实现（预览/提案） | passed | 未启用 |
 | GOV-09 | 损坏/未知 Schema/错误权限不自动重置；WAL 备份恢复 | 真实备份目标/权限未部署 | AC-11 | P3 | 已实现 | passed（本地） | pending-human-review |
 | GOV-10 | loopback、Host/Origin/CSRF、CSP、角色分离、稳定错误 | 无 HTTPS/远程访问（未授权） | AC-11 | P3 | 已实现 | passed（HTTP 测试） | 未启用 |
-| GOV-11 | API 状态区分 published/received/effective；无 mock | 真实浏览器治理台未交付 | AC-12 | P3 | 部分 | passed（API）；UI blocked | 未完成 |
+| GOV-11 | API 状态区分 published/received/effective；无 mock | 真实浏览器治理台未交付 | AC-12 | P3 | 部分（API 完成，无 UI） | passed（API）；UI blocked | 未完成 |
 | GOV-12 | 未引入 B 的营收/计费 SaaS 模板 | 无 | AC-12 | P3 | 不做 | — | — |
 | GOV-13 | 旧 archive v1/JSONL v2 未改写；治理版本独立 | 新格式与 legacy 的迁移说明需人审 | AC-21 | P3 | 已保留 | passed（回归） | pending-human-review |
 
@@ -173,6 +173,20 @@
 证据：`node --test dist/managed/*.test.js` → 9 pass / 0 fail。它不证明真实
 provider、真实 OS 隔离或生产启用；这些仍是 blocked。
 
+## 3.2 治理库与 API（离线/部分）
+
+`governance/` 已实现：SQLite schema v1（WAL、FULL、owner-only、非符号链接、
+未知/损坏版本不重置）、全量导入预览与候选、不可变提案/baseVersion CAS、
+human-only 审批与发布、发布事务内编译 catalog v2 + verify + audit + 指针
+推进、独立 receipt、回滚新版本、WAL 备份/恢复、loopback 认证 API
+（Host/Origin/CSRF/CSP/角色/请求体上限/项目注册/回滚）。
+
+未完成：Vue 治理台/浏览器流程（AC-12）、真实宿主接收与生效回执、全配置
+运行期切换部署证据、来源认证/O5。API 测试不能替代浏览器或部署证据。
+
+证据：`node --test dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip；
+使用真实临时 SQLite 文件与 loopback HTTP。
+
 ## 4. 验证记录
 
 见 `docs/verification-one-shot.md`（命令、环境、结果、blocked 项）。
@@ -191,7 +205,10 @@ provider、真实 OS 隔离或生产启用；这些仍是 blocked。
   provider）；已合入。
 - MANAGED：`node --test dist/managed/*.test.js` → 9 pass / 0 fail（端到端
   离线）；已合入。
-- 整合后全套：`npm test` → 643 tests / 643 pass / 0 fail / 0 skip；typecheck
-  通过。治理模块合并后需重跑全套。
+- GOVERNANCE：`npm run typecheck`、`npm run build`、`node --test
+  dist/governance/*.test.js` → 39 pass / 0 fail / 0 skip（真实临时 SQLite +
+  loopback HTTP；无真实宿主/UI）；已合入。
+- 整合后全套：`npm run typecheck` 通过；`npm test` → 682 tests / 682 pass /
+  0 fail / 0 skip；`git diff --check` 通过。
 
 最终整合后本文件会更新为实际全套结果。

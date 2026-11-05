@@ -1,6 +1,27 @@
 # 实现状态
 
-基线：`feat/constraint-runtime`，HEAD `a8b075d`。本页仅记录当前分支的实现与验证。
+当前交付分支：`feat/amos-one-shot-delivery`，基线 `7236c77`（原
+`feat/constraint-runtime`）。本页保留历史 P1 记录，并追加 one-shot 的
+离线实现；安全运行期仍是 Stage A `log-only`，NO-GO 未改变。
+
+## one-shot 新增（离线，未启用）
+
+- `activation/runtime.ts`：验证 catalog v2 snapshot、绑定 project/workspace/
+  epoch/execution digest，并提供 runtime/ci/server 视图与 advisory session。
+- `host/`：闭集文件宿主、能力/资源根、真实路径/符号链接/硬链接检查、
+  审计先于副作用、崩溃 unknown 不重放。
+- `review/` + `managed/`：最小有界投影、校准门、独立 reviewer、一次性
+  HMAC grant、端到端离线确认/执行。
+- `governance/`：SQLite 单主、导入预览、CAS 提案/发布、审计、独立 receipt、
+  回滚、WAL 备份/恢复、loopback 认证 API。Vue GUI 未交付。
+- `check/`：精确 tree 的 CheckBinding/FindingBatch + 真实 TypeScript 检查。
+- `rollout/`：版本/宿主/环境/检查绑定证据门；无真实 probe。
+- `activation/tighten.ts`：已批准模板的附加型临时收紧、TTL/配额/epoch。
+- 验证：`npm run typecheck`、`npm test`（实际 682 pass / 0 fail / 0 skip）、
+  `git diff --check` 通过。详见
+  `docs/delivery-status.md` 与 `docs/verification-one-shot.md`。
+- 限制：Pi/OpenCode 默认仍读旧策略快照/guidance seed；没有真实 OS 隔离、
+  provider 校准、宿主回执、生产 rollout、Vue 浏览器流程或来源认证。
 
 ## P1 离线项目规则目录
 
