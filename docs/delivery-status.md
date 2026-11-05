@@ -157,4 +157,13 @@
 ## 4. 验证记录
 
 见 `docs/verification-one-shot.md`（命令、环境、结果、blocked 项）。
-最终整合后本文件会更新为实际结果。
+已复核通道（整合前，各 lane 工作树）：
+
+- CHECK：`npm run typecheck`、`npm run build`、`node --test
+  dist/check/*.test.js` → 23 pass / 0 fail / 0 skip；已合入交付分支。
+- ROLLOUT：`npm run typecheck`、`npm run build`、`node --test
+  dist/rollout/*.test.js` → 28 pass / 0 fail / 0 skip；已合入。
+- ACTIVATION：`npm run typecheck`、`npm run build`、`node --test
+  dist/activation/*.test.js` → 46 pass / 0 fail / 0 skip；已合入。
+
+最终整合后本文件会更新为实际全套结果。

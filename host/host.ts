@@ -688,6 +688,37 @@ function requestDigest(request: NormalizedRequest): string {
 }
 
 /**
+ * Compute the exact digest the host will bind into `ManagedConfirmBasis`.
+ *
+ * A review/one-shot caller must use this same value for `actionDigest`; a
+ * caller cannot substitute a weaker description of the effect. Returns null
+ * for a request the host would reject before policy evaluation.
+ */
+export function managedRequestDigest(value: unknown): string | null {
+  try {
+    const parsed = parseRequest(value);
+    return parsed.ok ? requestDigest(parsed.request) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Closed-set request parsing, exposed for trusted review wiring. */
+export function parseManagedFileRequest(value: unknown): RequestParseResult {
+  try {
+    return parseRequest(value);
+  } catch {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      operationId: '[invalid-operation-id]',
+      tool: 'unknown',
+      operation: 'unknown',
+    };
+  }
+}
+
+/**
  * Best-effort workspace-relative target for audit entries produced before full
  * path identity resolution. Never returns an absolute path.
  */

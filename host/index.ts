@@ -1,5 +1,9 @@
-export { createManagedFileHost } from './host.ts';
-export { ManagedHostError } from './contracts.ts';
+export {
+  createManagedFileHost,
+  managedRequestDigest,
+  parseManagedFileRequest,
+} from './host.ts';
+export { ManagedHostError, OPERATION_BY_TOOL } from './contracts.ts';
 export type {
   ManagedConfirmBasis,
   ManagedExecutionBinding,
@@ -10,4 +14,6 @@ export type {
   ManagedHostOptions,
   ManagedOutcome,
   ManagedStopCode,
+  NormalizedRequest,
+  RequestParseResult,
 } from './contracts.ts';
