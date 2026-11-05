@@ -184,7 +184,8 @@
 
 ## 3.1 受管文件端到端（离线）
 
-`managed/flow.ts` 把现有模块接成一条可测试链路：
+`managed/flow.ts` 把现有模块接成一条可测试链路（该文件已从 2026-11-05
+交付分支移除；当前路径为 `managed/harness.ts` + `host/` + `review/`）：
 
 1. `activation/runtime.ts` 验证 catalog v2 snapshot 并绑定 project/workspace/
    epoch/execution digest。
