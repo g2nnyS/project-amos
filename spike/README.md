@@ -36,4 +36,4 @@ npm test
 npm run typecheck
 ```
 
-当前仍处阶段 A，不包含真实 deny、confirm、SQLite、Web 治理台或任何 LLM 裁决。Pi 是单独的 log-only 适配器，见 `docs/pi-adapter.md`。OpenCode 的 shell、patch 等写旁路必须在阶段 B 前另行裁决。
+安全适配器仍处阶段 A，不包含真实安全 deny/confirm 或任何 LLM 裁决。独立的 SQLite 本地治理服务与 Web 界面见 `docs/local-governance.md`；它管理规则提案和版本，不是受信执行层或动作授权。Pi 是单独的 log-only 适配器，见 `docs/pi-adapter.md`。OpenCode 的 shell、patch 等写旁路仍须在强制执行前另行裁决。

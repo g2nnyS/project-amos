@@ -1,68 +1,291 @@
-# 安全模型与当前保证
+# Security model and current guarantees
 
-状态：默认安全适配器是 Stage A `log-only` 观察器。它计算并记录假设裁决，
-默认不阻止工具执行。Pi 适配器提供显式 `.pi/amos.json managed` opt-in，
-在 Harness 层对归一化工具做真实阻断；它不是 OS 沙箱。本文件只描述已实现
-行为和当前限制。
+Status: **limited Harness-layer MVP implemented; general runtime enforcement and OS
+isolation remain unavailable.** The default adapters remain log-only; the Pi
+`managed.enabled` path is an explicit opt-in Harness-layer gate. This document
+separates guarantees implemented in the repository from the deployment architecture
+required before `deny` or `confirm` can be described as a general security boundary.
 
-## 当前实现
+## 2026-11-05 limited Harness MVP
 
-- 引擎对无效动作、规则表、谓词和内部异常 fail closed；裁决优先级为 `deny > confirm > log > allow`。
-- 适配器归一化支持的文件工具事件。未支持或不透明的工具会记录覆盖缺口，不被当作已评估。
-- JSONL 记录包含规则快照摘要、匹配元数据、裁决类别与覆盖状态。URL 中的 userinfo、路径、查询值和 fragment 会脱敏；不记录文件内容、Shell 命令文本或原始 hostile payload。
-- 快照归档通过摘要检查内容一致性；owner-only 权限和摘要不提供来源认证或防篡改保证。
-- 文件 target 做词法规范化，不解析 symlink、bind mount、hard link 或 TOCTOU 对象身份。
-- `${SESSION_WORKSPACE}` 只允许出现在 `target_glob` / `target_outside_glob` 的 patterns 中；快照摘要同时绑定原始规则和有效 workspace。
+- Pi `tool_call` is intercepted before the real tool runs; deterministic `deny`
+  blocks, `confirm` stops for an independent HTTP reviewer and a single-use HMAC
+  grant, and `tool_result` records execution.
+- Execution and advisory injection consume the same verified activation snapshot.
+  The console publishes a catalog-v2 artifact; the harness writes a same-UID
+  `.pi/runtime.json` load report.
+- This covers only the normalized tools `read/write/edit/ls/find/grep`. Shell,
+  PowerShell, custom tools, MCP, subprocesses, bypass paths, alternate harness
+  entries, and effects inside an allowed shell are outside this guarantee.
+- No independent OS identity, mount domain, bwrap/cgroup, kernel sandbox, or
+  tamper-proof audit. The runtime report is a same-UID observation, not remote
+  attestation. OS isolation is explicitly out of scope for this MVP.
+- The reviewer is a local model plus a fixed deny surface; the synthetic
+  calibration set is not a security certification.
 
-这些保证默认只覆盖观察和记录路径，不能让工具调用停下；显式 Pi
-managed 模式另有 Harness 层阻断（见下文），仍不是 OS 边界。
+## Threat model
 
-## Jev 语义传感器
+Protected assets include credentials, files outside an approved workspace, network
+destinations, release credentials, policy files, and audit records.
 
-`decision/` 可以将 harness 捕获的 `RequirementFrame` 与动作交给 Jev，返回类型化事实。它不是策略权威、批准器或执行器；确定性引擎仍是基线，Jev 只能收紧结果。需要评估时，provider 失败、拒答、超时、低置信度或 frame 摘要不匹配按既定策略 fail closed。
+The relevant adversary controls an agent's prompts, tool inputs, and any code it can
+execute inside its assigned sandbox. It may use symlinks, path races, unknown tools,
+shell, patches, or alternate harness entry points. It may attempt to inject text into
+review surfaces or make a probabilistic classifier return an unsafe answer.
 
-requirement 文本属于用户内容，只有 frame 明确设置 `egress: "allowed"` 才能发送到 hosted provider。日志只记录 frame 摘要与来源，不写原文。调用方提供的 `context` 不会自动脱敏。具体配置和边界见 [Jev 接入说明](jev-integration.md)。
+Out of scope: a compromised kernel, a compromised supervisor, host root, a malicious
+human approver, and hardware compromise.
 
-## Harness 层 MVP（Pi）
+## Current guarantees
 
-`managed/harness.ts` + Pi `tool_call` 钩子是本轮 MVP：规则引擎裁决、
-deny 前阻断、confirm 最小投影 + 独立 reviewer + HMAC 一次性 grant、
-`tool_result` 记录；advisory 注入来自同一 activation snapshot。真实
-Pi harness 测试证明 deny/allow/confirm 与真实文件副作用。
+The implementation is being hardened to provide these properties:
 
-限制：不是 OS 沙箱；不解析真实文件对象身份，不防 symlink/hardlink/
-bind mount/TOCTOU；不中介子进程/插件/MCP；不宣称全副作用覆盖；审计与
-Agent 同写域、无防篡改。OS 隔离（独立 UID/挂载域/bwrap/cgroup）本轮明确
-不做，不是阻塞项。
+- Policy evaluation fails closed on malformed actions, malformed or empty rule tables,
+  unknown fields, invalid predicates, and internal errors.
+- A policy result distinguishes a matched rule, no match, an evaluation error, and a
+  not-evaluated action. The log-only recorder uses `deny` as its hypothetical no-match
+  default.
+- Every known but unsupported tool produces a coverage record instead of disappearing.
+  Opaque shell actions are marked not evaluated and not confirmation-eligible.
+- Audit records include the rule snapshot digest, matched rule metadata, decision
+  kind, coverage status, and schema version.
+- New audit directories and files are created owner-only where the platform
+  supports POSIX modes. The writer rejects a final-component symlink. Parent
+  directory symlinks, existing file ownership, and tamper resistance still require
+  the trusted supervisor described below.
+- URL query values, userinfo, fragments, and path contents are redacted before being
+  persisted. Shell command text and free-form payloads are not persisted.
+- Audit worksheets encode untrusted fields so they cannot break code spans or inject
+  raw HTML/Markdown.
+- Audit review prefers the rule metadata captured at decision time. Missing historical
+  metadata is a coverage gap, not a reason to reinterpret the record using the current
+  rule table.
+- Session-scoped filesystem whitelists use the single restricted
+  `${SESSION_WORKSPACE}` substitution in `target_glob` / `target_outside_glob`
+  patterns. The adapter must supply an explicit normalized absolute session
+  workspace; a missing or invalid value fails closed. This is not a general
+  variable system, and the snapshot digest binds both the raw rule bytes and the
+  effective workspace so different sessions cannot share a misleading digest.
+- Tests use system temporary directories and portable logical workspace paths.
 
-## one-shot 离线模块的边界
+These properties cover the observer pipeline only. They do not stop a tool call in the
+real harness.
 
-以下模块默认未启用；Pi managed 是显式 opt-in 的 Harness 层阻断，其余仍
-为离线/可选实现：
+## Requirement conformance (semantic layer)
 
-- `host/` 的受管文件宿主在声明闭集内做真实路径、符号链接、硬链接、保护
-  路径和审计前置检查；它没有独立 OS 身份/挂载域/cgroup，bind mount 与
-  TOCTOU 对象身份不支持，同 UID 的 Agent 仍可改写审计/策略。见
-  [受管宿主 ADR](adr-managed-file-host.md)。
-- `review/`/`managed/` 的投影只允许有界字段，reviewer 只能收紧；Pi
-  managed 对 confirm 使用本地确定性 reviewer 或 loopback HTTP reviewer，
-  无真实模型校准时不得称已校准；grant 是进程内单次 HMAC，重启拒绝而非
-  持久授权。见 [review ADR](adr-review-protocol.md)。
-- `control-plane/` 的 SQLite/API 提供单主、CAS、审计和版本契约；SQLite/0600/
-  同 UID 不是隔离，发布不等于宿主接收或生效。见
-  [治理 ADR](adr-governance-store.md)。
-- `check/`、`rollout/`、`activation/tighten.ts` 是库级合同/证据门；没有
-  远端 CI 强制、真实 probe 或持久 TTL 恢复。见
-  [CheckBinding ADR](adr-check-binding.md) 与
-  [临时收紧 ADR](adr-temporary-tightening.md)。
-- 来源认证仍是未决项（O5）；digest、SQLite、HMAC 同域或文件权限都不能
-  替身认证。见 [来源认证 ADR](adr-source-authentication.md)。
+The deterministic engine answers "what does the policy say"; it cannot answer "did the
+human ask for this". Jev supplies that as a typed semantic sensor, never as an
+authority:
 
-## 尚未具备的能力
+| Layer | Question | Authority |
+|---|---|---|
+| Structural | Is the tool mediated, is the target in scope, is it a zero-level action? | Trusted code |
+| Deterministic | What is the policy baseline? | `engine/` |
+| Semantic | Does the action serve the captured requirement? | Jev facts |
 
-默认适配器不执行安全阻断；Pi managed 只在 Harness 层阻断归一化工具，
-不覆盖未知/未归一化入口或全副作用。策略、审计和配置仍处于同一可写域，
-JSONL 可被有写权限的主体修改；词法路径检查不是实际文件系统身份检查。
-独立的工程工作流门只覆盖其明确实现的子集，不能替代安全裁决或声称完整
-覆盖。OS 隔离本轮不做。当前限制见[运行期状态](go-no-go.md)与
-[工作流门](workflow-gate.md)。
+A `RequirementFrame` is the only accepted representation of a human requirement. It is
+captured by the harness from a user-input channel. Its `source` is either
+`user_message` or `delegated`; a delegated frame records that the immediate
+instruction came from an agent, and can never justify relaxing a verdict. Requirement
+text from tool results, file contents, MCP responses, or model summaries is not a
+frame.
+
+Jev returns `requirementMatch` plus `sensitiveArea`, `irreversible`, `risk`, and
+`confidence`. The fixed combination table is trusted code:
+
+| Deterministic baseline | `requirementMatch` | Result |
+|---|---|---|
+| `deny` | any | `deny` |
+| `confirm` | any | `confirm` |
+| `allow` | `match` | `allow` |
+| `allow` | `partial` / `unclear` | `confirm` |
+| `allow` | `mismatch` | `deny` |
+
+`match` never loosens a stricter baseline. Provider failure, refusal, timeout, low
+confidence, or facts bound to a different frame digest fail closed when an assessment
+is required and otherwise preserve the deterministic verdict.
+
+Requirement text is user content. Sending it to a hosted assessor requires
+`egress: "allowed"` on the frame; the provider rejects a denied frame with
+`egress_denied`. Audit records carry the frame digest and provenance only, never the
+text or declared scope.
+
+Implementation status: the frame type, Jev question set v2, digest binding, and
+combination table exist in `decision/`. The opt-in engineering workflow gate captures
+frames and uses them for its shell-assessment path; the separate security observer
+does not become an enforcement boundary through that integration. Runtime security
+enforcement remains Stage A `log-only`.
+
+## Snapshot provenance archives
+
+Each successful snapshot load can persist the exact policy inputs that produced its
+digest. The log-only recorder enables this by default, so an audit log's
+`snapshot_digest` remains resolvable after the working tree changes:
+
+- Location is deterministic: `<snapshotArchiveDir>/<digest>.json`, where the adapter
+  default is `<dirname(logPath)>/snapshots`. The digest is the existing
+  `SHA-256(rawRules + '\0SESSION_WORKSPACE=' + workspace + '\0')` value recorded in
+  the audit entry.
+- Each archive contains `schema_version: 1`, `digest`, `session_workspace`
+  (`null` when no workspace was supplied), the raw YAML `rules` string, the raw
+  JSON `schema` string, and a separate `schema_digest` of the schema bytes.
+- New archive directories are created with mode `0700` and archive files with mode
+  `0600`, best effort as with the audit writer. Existing paths keep their mode.
+- On a later load with the same digest, the existing archive is read and verified
+  against the freshly loaded digest, session workspace, raw rules, and raw schema,
+  including the recomputed rules-plus-workspace hash and the stored schema digest.
+  A mismatch, unreadable archive, or write failure makes the load return
+  `snapshot_error` and keeps the previous snapshot, rather than silently accepting
+  altered provenance.
+- This is integrity checking against accidental or partial modification by the same
+  kind of access that can alter the policy files, not tamper-proof storage. A
+  same-user attacker can rewrite both an archive and its digests, or a whole audit
+  log. Authentic provenance still requires the trusted supervisor and separate OS
+  identity described below.
+
+## Not yet guaranteed
+
+The following remain open until a separate enforcement milestone:
+
+- Complete mediation. Harness flags, extensions, shell, and unregistered tools can
+  bypass a plugin hook.
+- Separation between the agent and the policy/audit trust root. Files in the project
+  workspace are writable by the same execution domain.
+- Execution-time filesystem identity. Lexical normalization does not resolve symlinks,
+  bind mounts, hard links, or check/use races.
+- Tamper-resistant audit. Appending JSONL is not an immutability or remote-retention
+  guarantee.
+- Authenticated, one-time system authorization bound to the exact action, session,
+  snapshot/epoch and expiry, following independent Jev review of an eligible stopped
+  escalation. Human per-request approval is not the latest target; see decision 32.
+- A real OS sandbox or trusted mediator that performs side effects on the agent's
+  behalf.
+
+Until those are implemented and adversarially tested, the product must be described
+as a policy-matching and observation prototype, not a hard security boundary.
+
+The standalone [local governance console](local-governance.md) adds persistent rule
+proposals, capability-authenticated human governance review, and atomic version
+publication. These are not runtime action approvals: publishing does not change
+harness configuration, enable adapter enforcement, or establish a separate OS
+trust domain. Same-UID processes can still access its credentials and database.
+
+## Target shape: Approve for me
+
+The target security shape is the Codex Approve for me trio, not a plugin mode
+and not a stronger claim than that product makes. A host sandbox stops a
+boundary crossing first. `on-request` means in-sandbox work proceeds and a
+crossing waits. A separate reviewer may approve or deny only that stopped
+confirm-class escalation. The reviewer cannot expand the writable root, enable
+network, weaken a protected path, or lift a `deny`. Level 0 denies are not
+eligible. Humans edit rules through the existing multi-dimensional table; the
+agent cannot publish them. Engineering guardrails and advisory injection stay
+outside this trio.
+
+The 2026-11-02 [Product Design](product-design.md) makes protected-service-owned
+SQLite the sole Amos configuration authority at the GUI stage. A shared project
+activation snapshot feeds enforcement and narrative injection; temporary tightening
+requires a trusted publisher, human preauthorization, finite TTL and immutable epochs.
+Neither the GUI nor SQLite alone supplies isolation. The current YAML/JSON loaders,
+shared advisory seed and same-domain JSONL remain unchanged. The eleven implementation
+gaps and falsifiable acceptance gates are in [Gap Closure](product-gap-plan.md).
+
+This shape is not implemented. Current adapters remain log-only, and today's
+Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
+`docs/decisions.md`. Aligning the target does not pass the enforcement gate.
+
+## Required enforcement architecture
+
+### Restricted staging profile
+
+The experimental controlled Pi host described in [strict-harness.md](strict-harness.md)
+uses a smaller execution domain: its only model tools operate on private in-memory
+string files, not native paths. Shell, MCP, extensions, native filesystem executors,
+and automatic change application are absent. Mandatory audit, pinned policy, and a
+closed dispatcher protect that virtual domain. Its guarantees must not be generalized
+to the ordinary plugins or to native filesystem/OS enforcement. The requirements below
+still apply before expanding to that broader execution domain.
+
+1. A trusted supervisor outside the agent's writable domain loads policy from a
+   protected location, owns credentials, and writes audit records.
+2. A complete action envelope is produced at the execution boundary. Unsupported or
+   incomplete actions are denied, not guessed.
+3. Filesystem and network operations are executed through an OS sandbox or protected
+   mediator using real object identity. A preflight `realpath()` check is insufficient.
+4. Approvals bind the action digest, policy snapshot/epoch, session, expiry, and
+   one-time use, with revalidation immediately before execution. The target reviewer
+   may resolve an eligible stopped request; without a valid reviewer/human protocol,
+   confirm stays stopped. Today's engineering gate still requires its supported UI.
+5. Policy and audit storage use a separate OS identity or remote trust anchor. A local
+   hash chain without an external anchor only detects accidental edits.
+6. Adversarial integration tests cover symlinks, TOCTOU, hard links, shell escapes,
+   unknown tools, disabled extensions, policy modification, approval substitution, and
+   audit tampering.
+7. The protected publisher authenticates SQLite configuration versions and shared
+   activation projections; the agent cannot modify the DB, WAL, backups or generated
+   native configuration. TTL, rollout and language-check evidence cannot be forged by
+   changing project files or by naming a rule in a prompt. Durable audit acknowledgement
+   precedes effects; outcome receipts remain distinct from authorization records.
+
+## Policy dimensions
+
+`policy_class` separates security policy from engineering policy. `dimension` identifies
+the concrete asset or discipline. `enforcement` records the intended mechanism:
+
+- `runtime` for execution-time policy;
+- `ci` for repository checks such as branch naming, tests, and secure coding rules;
+- `server` for Git-host or infrastructure controls such as protected branches;
+- `advisory` for guidance that is not mechanically enforced.
+
+Branch naming and commit style belong to `engineering`/`delivery` and are enforced in
+CI. Protected branches, force-push prevention, secret scanning, and signed releases
+belong to security and must be enforced by the Git host or another authority outside
+the agent. A branch name is metadata, never an authorization decision.
+
+## Engineering workflow gate
+
+The opt-in `workflowGate` is a separate engineering guardrail, not part of the guarantees
+above. It can select advisory guidance, block a closed subset of dangerous shell
+commands before execution where the harness exposes a blocking seam, run fixed local
+change checks, and send an eligible filtered diff to Jev for advisory engineering review.
+Its optional `actionAssessment` mode compares a model-authored shell action with a
+harness-captured human requirement and may only tighten the deterministic shell verdict.
+A Pi `user_bash` command typed directly by the human is a separate structural literal
+grant: every deterministic deny remains, while a non-deny can proceed without a second
+approval. These are engineering controls, not authenticated approvals, complete mediation,
+or a security boundary.
+
+- Unknown shell syntax, custom shells/prefixes, PowerShell, and analysis failures remain
+  confirmation-required or denied. Confirm-class decisions fail closed without a safe
+  approval path.
+- Pi can block `tool_call` and stop `user_bash` by throwing. OpenCode `execute.before`
+  cannot block by contract; it uses `shell.create.before` plus native permission
+  tightening. Only a parsed plan-class confirm is admitted from the shell hook into
+  OpenCode's own `permission.assert` → `permission.evaluate` → user once/always/reject
+  path; opaque, unsupported, or reduced-host decisions fail closed with
+  `amos_workflow_gate_shell_confirm_unavailable` (this path cannot approve, rather than
+  waiting for approval). The gate's permission hook can only tighten: `allow` becomes
+  `ask` for a parsed confirm, and `deny` stays `deny`. This covers only the agent shell
+  tool's plan confirm; `/api/shell` and `POST /api/session/{id}/shell` are outside the
+  channel, `--auto` may accept `once` without a human, a saved `always` may still be
+  asked again after tightening, and direct shell APIs cannot be claimed as mediated. The
+  gate remains an engineering guardrail, not a security boundary.
+- Pi allows at most one repair continuation per session. OpenCode V2 exposes no true
+  settle/merge block, so its completion feedback is advisory only.
+- The gate does not provide complete mediation. Disabled extensions, alternate entry
+  points, `pi.exec`, MCP/extension code, repository scripts, and safe-command trust in git
+  or npm configuration remain outside it.
+- A passing Jev engineering review is not proof of correctness, safety, or merge
+  authorization.
+
+See `docs/workflow-gate.md` for configuration and exact limits.
+
+## Decision-model integration
+
+A probabilistic decision model such as Jev may supply typed semantic facts (intent,
+sensitivity, reversibility, risk). It must not own policy or execute actions. The
+deterministic engine remains authoritative, the model may only tighten a verdict, and
+model failure or low confidence must fail closed when the policy requires an
+assessment. This implemented path is not the security auto-reviewer in
+`docs/security-shape.md`; do not extend it to approve a `confirm`. See
+`docs/jev-integration.md`.

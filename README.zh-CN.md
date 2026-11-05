@@ -81,11 +81,14 @@ Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1
 
 ### 当前限制
 
-- P1 仍是离线编译器；现有适配器继续使用旧策略快照与 guidance seed。受管宿主/reviewer 流程是库，不是默认宿主入口。
-- 安全适配器不阻止工具执行；可选工作流门仍只是工程护栏。安全运行期仍是 **NO-GO**。
-- **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介）本轮不做，不是阻塞项**，不得宣称已具备。
-- 来源认证、真实模型 reviewer 校准、真实 probe/rollout、宿主接收/生效回执、Vue 治理台、远端 CI 接纳门均未交付。
+- Pi/OpenCode 默认适配器仍是 Stage A log-only；Pi `managed.enabled` 是显式 opt-in 的 Harness 门，OpenCode 受管拦截未实现。
+- `managed` 只覆盖归一化 `read/write/edit/ls/find/grep`；Shell、PowerShell、自定义工具、MCP、子进程、绕过路径以及获准 Shell 内部副作用不在保证内。
+- **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介、防篡改审计）本轮不做，不是阻塞项**，不得宣称已具备。
+- 来源认证未实现；快照 verify 是结构/身份一致性检查，不是签名；控制台令牌与 runtime 报告都是同 UID 本地观察。
+- live reviewer 是本地模型 + 合成校准集，不是安全认证；未使用外部 provider 凭据/出境。
+- 完整 rollout、临时收紧持久化、远端 CI 接纳门、跨机器生效回执未实现。
 - SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
+- `strict/`、`autonomy/` 是 dev 线保留的本地实验库，不是本 MVP 受管路径。
 
 ---
 

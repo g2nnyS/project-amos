@@ -15,6 +15,7 @@
   "include": [
     "activation/**/*.ts",
     "adapters/**/*.ts",
+    "autonomy/**/*.ts",
     "catalog/**/*.ts",
     "check/**/*.ts",
     "control-plane/**/*.ts",
@@ -27,6 +28,7 @@
     "review/**/*.ts",
     "rollout/**/*.ts",
     "storage/**/*.ts",
+    "strict/**/*.ts",
     "supervisor/**/*.ts",
     "workflow/**/*.ts"
   ],

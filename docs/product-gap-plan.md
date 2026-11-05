@@ -1,44 +1,66 @@
-# 实现状态
+# 愿景差距闭环与验收
 
-当前交付分支：`feat/amos-one-shot-delivery`，基线 `7236c77`（原
-`feat/constraint-runtime`）。本页保留历史 P1 记录，并追加 one-shot 的
-离线实现；安全运行期仍是 Stage A `log-only`，NO-GO 未改变。
+> **2026-11-05 当前状态**：限定范围 Harness 层 MVP 已交付（控制台发布 → Pi 加载 → tool_call 拦截 → reviewer/一次性授权 → 同源注入 → runtime 报告 → 回滚）。本页保留历史差距与路线图；当前交付范围、证据和限制以 [MVP 交付](mvp-delivery.md) 为准。OS 隔离、完整 rollout、临时收紧持久化和远端 CI 接纳明确不在本轮。
 
-## one-shot 新增（离线，未启用）
+历史设计基线：`02abdf5`，2026-11-02；下表的源码行号与证据描述以该基线为准，不是合并后能力的完整清单。[产品设计](product-design.md) 仍是目标。本地治理控制台和受控 Pi 内存 strict 原型代码现已并入：前者提供本地提案、人工审批与版本发布，后者仅在封闭内存工作区暂存变更；两者均不代表已完成可信 OS 隔离、全部配置迁移或自动治理。**代码并入不等于下列缺口已通过验收，阶段 A NO-GO 不变。**
 
-- `activation/runtime.ts`：验证 catalog v2 snapshot、绑定 project/workspace/
-  epoch/execution digest，并提供 runtime/ci/server 视图与 advisory session。
-- **Harness 层 MVP**：Pi `.pi/amos.json managed.enabled` 在真实 `tool_call`
-  前阻断 deny、confirm 经独立 reviewer + 一次性 HMAC grant、`tool_result`
-  记录、activation advisory 注入。真实 Pi 工具/文件副作用测试通过。
-  默认仍 log-only；不是 OS 沙箱，OS 隔离本轮不做。
-- `host/`：可选闭集文件宿主、能力/资源根、路径/审计检查；不是 MVP 默认。
-- `review/` + `managed/`：最小有界投影、校准门、独立 reviewer（本地确定性/
-  HTTP）、一次性 HMAC grant、端到端确认/执行。
-- `control-plane/`：SQLite 单主、GUI/YAML 导入、CAS 提案/发布、审计、
-  版本/回滚、loopback 认证 API；Vue 控制台与真实浏览器闭环已接通。
-  `governance/` 实验副本未并入交付分支。
-- `check/`：精确 tree 的 CheckBinding/FindingBatch + 真实 TypeScript 检查。
-- `rollout/`：版本/宿主/环境/检查绑定证据门；无真实 probe。
-- `activation/tighten.ts`：已批准模板的附加型临时收紧、TTL/配额/epoch。
-- 验证：`npm run typecheck`、`npm test`（实际 698 pass / 0 fail / 0 skip）、
-  `git diff --check` 通过。详见
-  `docs/delivery-status.md` 与 `docs/verification-one-shot.md`。
-- 限制：Pi/OpenCode 默认仍读旧策略快照/guidance seed；没有真实 OS 隔离、
-  外部 provider 校准、跨机器宿主回执、生产 rollout 或来源认证。
+## 1. 截图十一项逐项落点
 
-## P1 离线项目规则目录
+| ID | 截图要求与当前事实 | 设计补齐处 | 可证伪验收（后续实现必须跑） |
+|---|---|---|---|
+| G01 | 每项目可审计激活；当前 `storage/snapshot.ts:10-13,86-138` 只有整表/digest 与失败保留，`scope` 不选择项目规则 | 产品设计 §4：逐条激活、必选基线、检测提案、同身份最后有效快照 | 两项目使用不同语言/标签；删除项目检测文件或让检测失败，旧激活不减少；首次无有效快照不得启动受管执行 |
+| G02 | 执行/注入同一激活集；当前 `injector/seed.ts:13-18,36-65` 从 guidance 单独编译，`adapters/shared/log-only.ts:65-72` 另载规则表 | §3–4、§8：单一 rule version 和 ActivationSnapshot，派生两个 payload | 两投影激活 digest/epoch 相同；硬规则 narrative 与执行引用同版本；交叉混入另一快照必须拒绝 |
+| G03 | 引擎评估本项目全部硬规则；当前 `engine/engine.ts:177-214` 遍历调用者给的整表，没有项目激活/rollout 编译 | §4.2：按真实检查点投影，实拦与 shadow 分离，不能按任务裁剪硬规则 | 同一动作改变 prompt/注入预算/任务选择，实拦结果不变；另一项目规则不参与；shadow 命中有记录但不冒充实际阻断 |
+| G04 | 未激活不执行不注入；当前 `injector/select.ts:74-177` 有 advisory 闭集，但未连接 enforcement，`pairedRuleId` 仍靠 caller 声明（`injector/snapshot.ts:78-86`） | §4.1–4.2：来源闭集不变量；必选基线显式在激活集内 | prompt 点名未激活 ID 无效；路由引用未激活规则失败；不能排除基线；未激活规则不出现在评估/新注入清单 |
+| G05 | 动作前 deny/confirm；当前 `adapters/shared/log-only.ts:75-147` 只留假设裁决并吞审计失败；真实工程 Shell 护栏是另一条路径 | §5、§9：宿主执行、先停后审、单次绑定、受保护审计 | 无 reviewer 先证明越界无副作用；拒绝/超时/重放/错 session/换目标/epoch 变化均不执行；普通安全动作仍可完成 |
+| G06 | AST/编译器/linter 发现信封；当前 `engine/engine.ts:40-53` 只有三字段 action 和七算子；`constraints/schema.json:31-40` 不支持 finding | §6：外部受保护 runner、版本化 finding/check-binding，单独兼容 ADR | 真实工具产生一个正例和反例；改 tree 后旧信封失效；伪造 analyzer 身份、失败或缺失结果不等同通过；引擎不执行解析器 |
+| G07 | pre-commit 绕过的兜底；当前 `.github/workflows/ci.yml:19-49` 有仓库检查，`CONTRIBUTING.md:121-144` 要求分支保护，但没有产品语言规则接受门 | §6：受管导出/提交点或服务端必需 CI 状态；区分接受与执行 | 跳过本地 hook 仍无法接纳违规 tree；旧 commit 绿灯、漏跑 analyzer、改检查配置不能充当本次通过；远端保护由人核验 |
+| G08 | 收紧自动生效+强制 TTL；当前 `engine/engine.ts:194-196` 仅跳过到期规则，没有主工作区提案发布器 | §4.3、§7：预授权可信发布器、附加 epoch、有限 TTL，放宽人批 | 预授权模板追加立即切换两个投影；超限/改旧规则/新叙事待审；TTL 到点不等清理器、不因重启/重试延寿；越权放宽被拒 |
+| G09 | Agent 写不到的审计；当前 `storage/jsonl.ts:109-133` 的 owner-only/O_APPEND 不隔离同用户 | §3、§9：隔离写入端、授权前持久回执、结果独立、外部留存可选 | 在 Agent 的真实执行身份下无法改数据库/WAL/备份/审计；断审计后不产生副作用；崩溃可辨 outcome_unknown，不能重复执行 |
+| G10 | 截图原为“控制台只浏览/提案，修改走 Git”；**用户最新要求取代**：GUI 后全部 Amos 配置入 SQLite。现有独立治理台仍未接管执行 | §3.1–3.2、§10：GUI→认证 API→SQLite 单主，Git 仅归档；秘密存引用 | 导入规则、guidance、护栏、provider、激活/rollout/TTL 设置后逐项等价；旧 YAML/JSON 变更无效；GUI 不能直写 DB/旁路审批；宿主投影回执可核对 |
+| G11 | 真实 probe、逐规则 rollout；当前 `constraints/schema.json:178` 的 `probe` 是字符串，没有晋升状态或执行器 | 下文 §2、产品设计 §3.2/§7：证据绑定版本/入口/环境，按人预设标准自动晋升 | 真工具/真宿主运行诱发违规与合法对照；记录发生/未发生的副作用及误拒；换规则/宿主版本需重验；没有绑定证据不能开启强制 |
 
-- catalog v2 从现有 YAML 规则和 guidance seeds 建立版本化目录、迁移映射及项目激活集。
-- 同一离线 activation snapshot 编译 runtime/CI/server enforcement 投影和 advisory 注入投影；包括基线/引用闭集校验、level-first 选择、TTL、last-good 与遗漏报告。
-- 独立审查发现的五项选择/会话/投影边界问题均已补回归覆盖。
-- 验证：`npm run typecheck`、`npm test`（526 项通过）和 `git diff --check` 通过。工作树改动未提交。
-- 限制：现有适配器仍使用旧策略快照和静态 guidance seed；P1 不接入工具裁决，不认证来源，也不改变 `opencode.jsonc`。
+以上是**设计覆盖**，不是安全通过表。单测证明纯函数语义，不证明真实宿主、OS 隔离、GUI 认证或受保护 CI 已成立。
 
-## 外部 Jev 连通性检查
+## 2. Rollout 与 probe 的最小契约
 
-已发送一次合成输入的 OpenRouter/System One 请求，返回结构化答复，说明此配置可连通并解析响应。该样例置信度为 0.4，标记为需要复核；它不是完整校准，也不构成安全证据。当前客户端结果不含 usage/费用数据，因此不能据此确认实际扣费。
+激活、rollout 和注入选择是三个轴，不用一个 `enabled` 含混代替：
 
-## 当前状态
+| 状态 | 执行效果 | 晋升前提 |
+|---|---|---|
+| `draft` | 不进入发布激活集 | 人批准规则内容与来源，严格校验 |
+| `log_only` | 对已激活动作作 shadow 评估，不据此阻断；批准 narrative 可注入 | 真实任务观察、诱发违规和正常对照；按预设阈值自动评估误伤/覆盖缺口 |
+| `selective_deny` | 只在批准的项目/执行器/环境范围实拦指定 deny；其余 shadow | 首先限定标准 0 层切片；真实执行边界与预设证据标准均通过 |
+| `confirm_enabled` | 批准范围内的 confirm 在副作用前停止 | 单次审批协议、失败/重放/替换测试通过；reviewer 在宿主之后接入 |
+| `retired` | 后续会话不激活；保留历史证据 | 人批准防护减少；必选基线不能退休为项目豁免 |
 
-安全适配器仍是 Stage A `log-only`，裁决是假设结果，不阻止工具执行。可选工程工作流门是独立护栏，不提供完整动作覆盖。不要将离线测试、一次模型请求或配置文件描述为运行期安全强制能力。
+`selective_deny` / `confirm_enabled` 是能力和范围记录，不改变规则 `on_hit`，不增加“低 rollout 可以覆盖 deny”的优先级。任意确定性 deny 一旦在实拦投影中命中，不得送审查者批准；shadow-only 的 hypothetical deny 必须明确标为假设。宿主自己的结构拒绝不受 rule rollout 开关影响。
+
+晋升绑定 `(rule version, activation configuration, host/executor capability version, check version, environment scope)`；变化后先自动重验适用性，不能复用不相关绿灯。系统依据人预先制定的范围、阈值和可信、机器可验证的证据自动决定晋升；Agent、Jev 或 probe 的文字总结不能单独批准晋升。证据不足保持原状态，不自动放宽；人可紧急停机会话，不让 Agent 关门。自动晋升机制及阈值尚未实现或验证。
+
+一个 `ProbeRun` 至少包含：版本绑定、隔离环境、可信测试驱动/版本、输入与期望的摘要、实际结构化决策、实际副作用对照、覆盖入口、故障注入结果、耗时/退出状态、自动判定及脱敏工件引用。模型可以提出诱发场景，不能自己声称“没有副作用”作为唯一 oracle。
+
+最小场景包必须同时包含：合法基线任务、命中 deny 的真实尝试、confirm 的 approve/reject/timeout、未知入口、项目配置篡改、策略/审计写入、错快照或审批替换、TTL 临界点、检测失败、注入失败/超预算、检查 tree 不一致。只在隔离测试目录/受控端点运行，不触碰真实凭据或生产系统。
+
+## 3. 按依赖交付，不把十一项一次拼起来
+
+| 切片 | 输入/复用 | 本片交付和验证 owner | 停止线 |
+|---|---|---|---|
+| P1 项目激活离线切片 | 现有严格规则表、engine、injector | 激活编译负责人：两个项目、规则级激活/排除、必选基线、失败保留、双投影一致性；只跑 shadow 与注入验证 | G01–G04 的离线证据通过。不是可信发布器，不开启安全阻断 |
+| P2 一个真实宿主边界 | P1 产物；复用已验证宿主或扩展受限 host | 执行边界负责人：只注册一类受限文件执行器；真实身份/路径执行、受保护配置和审计端；没有 reviewer 先证越界不执行 | G05/G09 的窄范围真实对抗通过；不添加任意 Shell/MCP，内存 strict 不能代替 OS 证据 |
+| P3 GUI 配置 SQLite 单主 | P1 编译器、P2 信任边界；独立治理台只能复用已核验内容 | 配置/迁移负责人：按产品设计 §3.1 全量清单导入、预览、认证发布、宿主接收回执、备份恢复；GUI 走 API | G10 单主、权限和故障恢复通过；无执行接入可演示但标记 unmanaged，不因有 SQLite 宣称安全 |
+| P4 真实 probe + 选择性 deny | P2/P3、阶段 A 观察 | probe/安全评审负责人：实际诱发违规与正常对照、版本绑定证据；实现预设范围内自动晋升 | G11 与该保护范围内 G0 前提通过，缺可信证据不晋升；不把一个入口绿灯称为全覆盖 |
+| P5 一次 confirm 与独立 reviewer | 已能停止的 P2/P4 执行器 | 审批协议负责人：自动 Jev reviewer 与一次授权协议；错 action/session/epoch、超时和重放测试 | G05 审批端证据通过。现有 Jev tighten-only 路径不变；受保护路径/任何实拦 deny 不可批准 |
+| P6 临时收紧生命周期 | P3/P4，需确认能力时依赖 P5 | 治理负责人：预授权模板、TTL/配额、epoch 原子切换、续期人批与过期重建 | G08 通过；不得跳过 rollout，也不让 Agent 自写数据库或发布版本 |
+| P7 一个语言检查点 | P3/P4 的版本/证据管线 | 检查适配负责人：先选本仓库 TypeScript 一个已有确定检查，外部 runner/finding 绑定；受保护接受门验证 | G06/G07 通过，再考虑 Python/Rust；不加七算子，不把所有语言一次实现 |
+
+规范注入和现有工程护栏**全程保留**，P1 先消除双来源，后续每片验证其来源一致性和失败不改变裁决，不把动态注入拖到路线末尾重建。每片负责人只验证自己引入的断言，整合负责人在合并前运行仓库要求的 `npm run typecheck` 与 `npm test`；涉及部署的 owner 另交真实环境证据。人类持有规则配置与预授权的治理权；晋升按预设标准自动决定，独立安全审查者只可批准符合既定上限的单次 confirm，不能发布配置。
+
+## 4. 本轮文档完成条件
+
+- 三块产品、SQLite 单主、同源激活、TTL/epoch、rollout 与审查权界限在 README、决策、安全文档和 Notion 没有现行口径冲突。
+- 截图 G01–G11 每条都有当前证据、设计契约、后续实现切片与可证伪验收；G10 明确记录最新需求取代，不照搬旧 Git 权威方案。
+- 本轮文档修订不改严格 Schema、运行代码、原始 JSONL 或宿主安全开关；已并入的本地治理与内存 strict 原型不因此获得可信执行或自动治理保证。保留旧 digest/归档兼容与阶段 A NO-GO。
+- 仓库静态链接与差异检查、要求的 typecheck/test 是文档交付回归证据；**它们不证明 P1–P7 已实现。**
+
+Notion 对应页：[Agent 行为约束系统 — 设计文档](https://www.notion.so/eb784af41d4f834f8cb881cb913f7601)。现行 §0 已同步产品契约与 G01–G11，新增 §0.3–0.8；旧 §1–§12 作为历史设计保留，不用历史段落恢复已被取代的权限/存储语义。

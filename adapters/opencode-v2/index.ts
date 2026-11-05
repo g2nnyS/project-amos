@@ -147,6 +147,14 @@ const WORKFLOW_GATE_SHELL_CONFIRM_UNAVAILABLE =
 const WORKFLOW_GATE_TOOL_BLOCKED = "amos_workflow_gate_tool_blocked";
 const WORKFLOW_GATE_CONFIG_ERROR = "amos_workflow_gate_config_error";
 
+/**
+ * Fixed code for an explicit `mode: "strict"` option. Strict mode requires the
+ * separate controlled host entrypoint; setup rejects before registering any
+ * hook so the ordinary observer plugin never runs unguarded.
+ */
+const AMOS_STRICT_REQUIRES_CONTROLLED_HOST =
+  "amos_strict_requires_controlled_host";
+
 const GUIDANCE_INSTRUCTION_KEY = "amos.workflow.guidance";
 const MAX_GUIDANCE_SESSIONS = 64;
 const MAX_REVIEWED_SESSIONS = 64;
@@ -238,6 +246,11 @@ function readConfig(
   options: Record<string, unknown>,
   directory: string,
 ): AuditConfig {
+  // An explicit strict request is never handled here: setup must reject before
+  // any hook is registered rather than silently continuing in log-only mode.
+  if (options.mode === "strict") {
+    throw new Error(AMOS_STRICT_REQUIRES_CONTROLLED_HOST);
+  }
   if (!isAbsolute(directory)) throw new Error("OpenCode location must be absolute");
   if (options.mode !== "log-only") throw new Error("Only log-only mode is enabled in stage A");
   return {

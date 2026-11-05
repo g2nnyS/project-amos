@@ -87,11 +87,14 @@ In security `log-only` mode, the only side effects are writing the audit record 
 
 ### Current Limitations
 
-- P1 remains an offline compiler; existing adapters still use the legacy policy snapshot and guidance seed. The managed host/reviewer flow is a library, not a default harness entry.
-- Security adapters do not block tool execution; the opt-in workflow gate remains an engineering guard only. The security runtime is still **NO-GO**.
-- OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation) is **out of scope for this MVP**, not a blocker; do not claim it.
-- No source authentication, live model reviewer calibration, real probe/rollout, host receipt/effective acknowledgement, Vue console, or remote CI acceptance gate.
+- The default Pi/OpenCode adapters still use Stage A log-only behavior. Pi `managed.enabled` is the explicit opt-in Harness gate; OpenCode managed interception is not implemented.
+- `managed` covers normalized `read/write/edit/ls/find/grep`; shell, PowerShell, custom tools, MCP, subprocesses, bypass paths and side effects inside an allowed shell are outside the guarantee.
+- OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is **out of scope for this MVP**, not a blocker; do not claim it.
+- No publisher authentication. Snapshot verification is structural/identity consistency, not a signature; control-plane tokens and runtime reports are same-UID local observations.
+- The live reviewer is a local model with a synthetic calibration set; it is not a security certification. External provider credentials/egress were not used.
+- No complete rollout, temporary-tightening persistence, remote CI acceptance gate, or host effective-receipt across machines.
 - SQLite owner-only files, in-process HMAC, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
+- `strict/` and `autonomy/` remain local experimental libraries from the dev line; they are not the MVP managed path.
 
 ---
 
