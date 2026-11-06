@@ -20,6 +20,12 @@ export type DomainErrorCode =
   | 'digest_mismatch'
   | 'proposal_not_pending'
   | 'proposal_expired'
+  | 'tightening_disabled'
+  | 'tightening_denied'
+  | 'tightening_expired'
+  | 'clock_regression'
+  | 'rollout_denied'
+  | 'evidence_unbound'
   | 'database_busy'
   | 'database_corrupt'
   | 'database_incompatible'
@@ -40,6 +46,12 @@ export const DOMAIN_ERROR_STATUS: Readonly<Record<DomainErrorCode, number>> = {
   digest_mismatch: 409,
   proposal_not_pending: 409,
   proposal_expired: 409,
+  tightening_disabled: 409,
+  tightening_denied: 403,
+  tightening_expired: 409,
+  clock_regression: 409,
+  rollout_denied: 403,
+  evidence_unbound: 409,
   database_busy: 503,
   database_corrupt: 500,
   database_incompatible: 409,

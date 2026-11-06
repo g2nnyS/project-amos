@@ -45,8 +45,17 @@ export interface HarnessRuntimeReportInput {
   readonly policyVersion: string;
   readonly loadedAt: string;
   readonly lastToolAt?: string;
+  readonly harness?: 'pi' | 'opencode';
   readonly capabilities?: HarnessRuntimeCapabilities;
 }
+
+export const OPENCODE_MANAGED_CAPABILITIES: HarnessRuntimeCapabilities = Object.freeze({
+  enforcedTools: Object.freeze(['read', 'write', 'edit', 'glob', 'grep', 'list']),
+  blockedUnsupportedTools: Object.freeze(['shell', 'bash', 'task', 'webfetch', 'websearch', 'patch', 'custom']),
+  preCallStop: true,
+  injection: 'system-prompt-and-tool-result',
+  singleUseReview: true,
+});
 
 /** Atomically replace `.pi/runtime.json`; never follows a symlink. */
 export function writeHarnessRuntimeReport(
@@ -83,9 +92,9 @@ export function writeHarnessRuntimeReport(
       policyVersion: input.policyVersion,
       loadedAt: input.loadedAt,
       ...(input.lastToolAt === undefined ? {} : { lastToolAt: input.lastToolAt }),
-      harness: 'pi',
+      harness: input.harness ?? 'pi',
       mode: 'enforcing',
-      capabilities: input.capabilities ?? PI_MANAGED_CAPABILITIES,
+      capabilities: input.capabilities ?? (input.harness === 'opencode' ? OPENCODE_MANAGED_CAPABILITIES : PI_MANAGED_CAPABILITIES),
     })}\n`;
     const temp = join(pi, `.runtime-${randomBytes(12).toString('hex')}.tmp`);
     let fd: number | null = null;

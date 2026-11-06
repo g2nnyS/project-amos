@@ -68,6 +68,7 @@ import {
   loadActivationGuidance,
   loadActivationRuntime,
 } from '../shared/activation-guidance.ts';
+import { readHostProjection } from '../shared/host-projection.ts';
 import {
   PI_MANAGED_CAPABILITIES,
   writeHarnessRuntimeReport,
@@ -180,6 +181,11 @@ export function readPiConfig(directory: string): PiAmosConfig | null {
 interface PiActivationGuidanceConfig {
   readonly snapshotPath: string;
   readonly projectId: string;
+  readonly expected?: {
+    readonly activationDigest: string;
+    readonly epoch: number;
+    readonly policyVersion: string;
+  };
 }
 
 type PiActivationGuidanceState =
@@ -197,6 +203,22 @@ function readPiActivationGuidanceConfig(
 ): PiActivationGuidanceState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
+  }
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') return { status: 'error' };
+  if (projection.status === 'ready') {
+    return {
+      status: 'enabled',
+      config: {
+        snapshotPath: projection.projection.activation.snapshotPath,
+        projectId: projection.projection.activation.projectId,
+        expected: {
+          activationDigest: projection.projection.activationDigest,
+          epoch: projection.projection.epoch,
+          policyVersion: projection.projection.policyVersion,
+        },
+      },
+    };
   }
   const configPath = join(directory, '.pi', 'amos.json');
   if (!existsSync(configPath)) {
@@ -265,6 +287,32 @@ type PiManagedState =
 function readPiManagedState(directory: string): PiManagedState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
+  }
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') return { status: 'error' };
+  if (projection.status === 'ready') {
+    const managed = projection.projection.managed;
+    if (!managed.enabled) return { status: 'absent' };
+    const review = managed.review;
+    return {
+      status: 'enabled',
+      config: {
+        auditPath: managed.auditPath,
+        requirementEgress: managed.requirementEgress,
+        review:
+          review === null
+            ? null
+            : {
+                endpoint: review.endpoint,
+                model: review.model,
+                apiKeyEnv: review.apiKeyEnv,
+                policy: review.policy,
+                calibration: review.calibration,
+                ceilingDigest: review.ceilingDigest,
+                grantTtlMs: review.grantTtlMs,
+              },
+      },
+    };
   }
   const configPath = join(directory, '.pi', 'amos.json');
   if (!existsSync(configPath)) {
@@ -431,6 +479,15 @@ export function readPiWorkflowGateState(
 ): PiWorkflowGateState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent', config: null };
+  }
+
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') return { status: 'error', config: null };
+  if (projection.status === 'ready') {
+    const config = projection.projection.workflowGate as WorkflowGateConfig;
+    return config.enabled
+      ? { status: 'enabled', config }
+      : { status: 'absent', config: null };
   }
 
   const configPath = join(directory, '.pi', 'amos.json');
@@ -649,6 +706,11 @@ export default function amosPiLogOnly(
 
     const config = readPiConfig(directory);
     if (config === null) {
+      // A generated managed projection is a complete enforcement input; the
+      // legacy Stage A shadow recorder is not required in that mode.
+      if (readPiManagedState(directory).status === 'enabled') {
+        return null;
+      }
       reportConfigErrorOnce();
       return null;
     }
@@ -705,6 +767,16 @@ export default function amosPiLogOnly(
       workspace: directory,
     });
     if (loaded.status === 'error') {
+      const state: ManagedGateState = { status: 'error' };
+      managedGates.set(cacheKey, state);
+      return state;
+    }
+    if (
+      activation.config.expected !== undefined &&
+      (loaded.runtime.activationDigest !== activation.config.expected.activationDigest ||
+        loaded.runtime.epoch !== activation.config.expected.epoch ||
+        loaded.runtime.snapshot.project.projectConfigVersion !== activation.config.expected.policyVersion)
+    ) {
       const state: ManagedGateState = { status: 'error' };
       managedGates.set(cacheKey, state);
       return state;

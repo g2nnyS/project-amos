@@ -49,6 +49,19 @@ export interface TighteningQuota {
   readonly windowMs: number;
 }
 
+export interface TemporaryTighteningRecovery {
+  /** Applications already persisted for this project, in application order. */
+  readonly entries: readonly AppliedTightening[];
+  /** Latest persisted effective snapshot (may already reflect a prior expiry). */
+  readonly currentSnapshot?: ProjectActivationSnapshot;
+  /** All persisted application times used for quota windows. */
+  readonly applicationTimes: readonly number[];
+  /** Per-template application times used for quota windows. */
+  readonly templateTimes: Readonly<Record<string, readonly number[]>>;
+  /** Last trusted-clock observation; a smaller `now` is a regression. */
+  readonly lastObservedAt: number;
+}
+
 export interface TemporaryTighteningOptions {
   readonly compiler: ProjectActivationCompiler;
   readonly base: ProjectActivationSnapshot;
@@ -58,6 +71,11 @@ export interface TemporaryTighteningOptions {
   /** Caller supplies the next version/base identity; never derived from model text. */
   readonly newProjectConfigVersion: string;
   readonly newBaseVersion: string;
+  /**
+   * Optional SQLite-backed recovery state. Persisted TTLs are preserved; this
+   * module never re-applies an old entry with a fresh clock or resets quota.
+   */
+  readonly recovered?: TemporaryTighteningRecovery;
 }
 
 export interface AppliedTightening {
@@ -114,9 +132,18 @@ export function createTemporaryTighteningPublisher(
   let activeEntries: AppliedTightening[] = [];
   // Trusted-clock observations used only for quota windows. They are never
   // cleared by apply/expire cycles, so a retry cannot reset the quota.
-  const applicationTimes: number[] = [];
-  const templateTimes = new Map<string, number[]>();
+  let applicationTimes: number[] = [];
+  let templateTimes = new Map<string, number[]>();
   let lastObserved: number | null = null;
+
+  if (options.recovered !== undefined) {
+    const recovered = readRecovery(options.recovered, base);
+    currentSnapshot = recovered.currentSnapshot;
+    activeEntries = recovered.entries;
+    applicationTimes = recovered.applicationTimes;
+    templateTimes = recovered.templateTimes;
+    lastObserved = recovered.lastObservedAt;
+  }
 
   function readNow(): number {
     let value: number;
@@ -282,6 +309,156 @@ export function createTemporaryTighteningPublisher(
       return Object.freeze([...activeEntries]);
     },
   });
+}
+
+export function validateApprovedTighteningTemplates(
+  value: unknown,
+): readonly ApprovedTighteningTemplate[] {
+  try {
+    return Object.freeze([...readTemplates(value).values()]);
+  } catch {
+    throw new ActivationError();
+  }
+}
+
+export function validateTighteningQuota(value: unknown): TighteningQuota {
+  try {
+    return readQuota(value);
+  } catch {
+    throw new ActivationError();
+  }
+}
+
+interface NormalizedRecovery {
+  readonly entries: AppliedTightening[];
+  readonly currentSnapshot: ProjectActivationSnapshot;
+  readonly applicationTimes: number[];
+  readonly templateTimes: Map<string, number[]>;
+  readonly lastObservedAt: number;
+}
+
+function readRecovery(value: unknown, base: ProjectActivationSnapshot): NormalizedRecovery {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ActivationError();
+  }
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set(['entries', 'currentSnapshot', 'applicationTimes', 'templateTimes', 'lastObservedAt']);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new ActivationError();
+  }
+  if (!Array.isArray(raw.entries) || raw.entries.length > 64) throw new ActivationError();
+  if (typeof raw.lastObservedAt !== 'number' || !Number.isSafeInteger(raw.lastObservedAt) || raw.lastObservedAt < 0) {
+    throw new ActivationError();
+  }
+  const entries: AppliedTightening[] = [];
+  let previous = base;
+  let previousAppliedAt = -1;
+  for (const candidate of raw.entries) {
+    const entry = readRecoveredEntry(candidate);
+    if (entry.appliedAt <= previousAppliedAt) throw new ActivationError();
+    previousAppliedAt = entry.appliedAt;
+    const expectedRefs = [
+      ...previous.project.selectedRuleRefs,
+      { id: entry.ruleRef.id, version: entry.ruleRef.version },
+    ];
+    assertAppendOnly(previous, entry.snapshot, expectedRefs, [entry.ruleRef], [], {
+      projectConfigVersion: entry.snapshot.project.projectConfigVersion,
+      baseVersion: entry.snapshot.project.baseVersion,
+      epoch: entry.epoch,
+    });
+    entries.push(entry);
+    previous = entry.snapshot;
+  }
+
+  let currentSnapshot = entries.length === 0 ? base : entries[entries.length - 1]!.snapshot;
+  if (raw.currentSnapshot !== undefined) {
+    currentSnapshot = verifyProjectActivationSnapshot(raw.currentSnapshot);
+    if (
+      currentSnapshot.project.projectId !== base.project.projectId ||
+      currentSnapshot.project.workspace !== base.project.workspace
+    ) {
+      throw new ActivationError();
+    }
+    const last = entries.length === 0 ? base : entries[entries.length - 1]!.snapshot;
+    if (currentSnapshot.epoch < last.epoch) throw new ActivationError();
+    const knownKeys = new Set(
+      last.activeRules.map((item) => `${item.id}\0${item.version}`),
+    );
+    for (const item of currentSnapshot.activeRules) {
+      if (!knownKeys.has(`${item.id}\0${item.version}`)) throw new ActivationError();
+    }
+  }
+
+  if (raw.lastObservedAt < previousAppliedAt) {
+    // A restart behind a persisted application is a clock regression, never a
+    // reason to re-heal or extend the TTL.
+    throw new ActivationError();
+  }
+  if (!Array.isArray(raw.applicationTimes)) throw new ActivationError();
+  const applicationTimes = raw.applicationTimes.map(readRecoveredTime);
+  if (!isPlainRecoveryRecord(raw.templateTimes)) throw new ActivationError();
+  const templateTimes = new Map<string, number[]>();
+  for (const [templateId, times] of Object.entries(raw.templateTimes)) {
+    if (typeof templateId !== 'string' || templateId.length === 0) throw new ActivationError();
+    if (!Array.isArray(times)) throw new ActivationError();
+    templateTimes.set(templateId, times.map(readRecoveredTime));
+  }
+
+  return {
+    entries,
+    currentSnapshot,
+    applicationTimes,
+    templateTimes,
+    lastObservedAt: raw.lastObservedAt,
+  };
+}
+
+function readRecoveredEntry(value: unknown): AppliedTightening {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ActivationError();
+  }
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set(['snapshot', 'templateId', 'ruleRef', 'appliedAt', 'expiresAt', 'epoch']);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new ActivationError();
+  }
+  if (typeof raw.templateId !== 'string' || raw.templateId.length === 0 || raw.templateId.length > 160) {
+    throw new ActivationError();
+  }
+  if (raw.ruleRef === null || typeof raw.ruleRef !== 'object' || Array.isArray(raw.ruleRef)) {
+    throw new ActivationError();
+  }
+  const ref = raw.ruleRef as Record<string, unknown>;
+  if (
+    typeof ref.id !== 'string' || ref.id.length === 0 || ref.id.length > 160 ||
+    typeof ref.version !== 'number' || !Number.isSafeInteger(ref.version) || ref.version < 1
+  ) throw new ActivationError();
+  const appliedAt = readRecoveredTime(raw.appliedAt);
+  const expiresAt = readRecoveredTime(raw.expiresAt);
+  const epoch = raw.epoch;
+  if (expiresAt <= appliedAt) throw new ActivationError();
+  if (typeof epoch !== 'number' || !Number.isSafeInteger(epoch) || epoch < 1) throw new ActivationError();
+  const snapshot = verifyProjectActivationSnapshot(raw.snapshot);
+  if (snapshot.epoch !== epoch) throw new ActivationError();
+  return Object.freeze({
+    snapshot,
+    templateId: raw.templateId,
+    ruleRef: Object.freeze({ id: ref.id, version: ref.version }),
+    appliedAt,
+    expiresAt,
+    epoch,
+  });
+}
+
+function readRecoveredTime(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ActivationError();
+  }
+  return value;
+}
+
+function isPlainRecoveryRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function countWithin(times: readonly number[], now: number, windowMs: number): number {

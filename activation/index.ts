@@ -8,12 +8,15 @@ export type { ActivationExecutionView, ActivationRuntime } from './runtime.ts';
 export {
   createTemporaryTighteningPublisher,
   tighteningRuleDigest,
+  validateApprovedTighteningTemplates,
+  validateTighteningQuota,
 } from './tighten.ts';
 export type {
   AppliedTightening,
   ApprovedTighteningTemplate,
   TemporaryTighteningOptions,
   TemporaryTighteningPublisher,
+  TemporaryTighteningRecovery,
   TighteningQuota,
 } from './tighten.ts';
 export * from './types.ts';

@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { evaluatePolicy, type PolicyDecision } from '../engine/engine.ts';
 import {
@@ -12,6 +15,18 @@ import {
   type CandidateCompilation,
   type RuleValidator,
 } from './compiler.ts';
+import { createTemporaryTighteningPublisher, type AppliedTightening } from '../activation/tighten.ts';
+import {
+  createProbeRun,
+  createPromotionThresholds,
+  nextRolloutStage,
+  promotionThresholdsDigest,
+  type ProbeRun,
+  type PromotionThresholds,
+  type RolloutStage,
+} from '../rollout/contracts.ts';
+import { evaluatePromotion } from '../rollout/promote.ts';
+import type { ProjectActivationSnapshot } from '../activation/types.ts';
 import type {
   Actor,
   AuditPage,
@@ -26,10 +41,18 @@ import type {
   GovernanceEventKind,
   GovernanceMetadataValue,
   Project,
+  ProjectConfig,
+  ProbeRunRecord,
   Proposal,
   ProposalDecision,
   PublishedVersion,
+  RolloutEvaluation,
+  RuleRolloutRecord,
+  RuntimeStatus,
   SimulateInput,
+  TemporaryTighteningRecord,
+  TemporaryTighteningStatus,
+  UpdateProjectConfigInput,
   ValidationResult,
 } from './contracts.ts';
 import {
@@ -43,14 +66,36 @@ import { DomainError, isDomainError } from './errors.ts';
 import {
   eventFromRow,
   parseStoredJson,
+  probeRunFromRow,
+  projectConfigFromRow,
   projectFromRow,
   proposalFromRow,
+  ruleRolloutFromRow,
+  tighteningFromRow,
   versionFromRow,
   type EventRow,
+  type ProjectConfigRow,
   type ProjectRow,
   type ProposalRow,
+  type ProbeRunRow,
+  type RuleRolloutRow,
+  type TemporaryTighteningRow,
+  type TighteningStateRow,
   type VersionRow,
 } from './rows.ts';
+import {
+  DEFAULT_PROJECT_CONFIG,
+  buildManagedProjection,
+  managedAuditPath,
+  normalizeProjectConfig,
+  readProjectConfig,
+} from './project-config.ts';
+import {
+  expectationFromPublished,
+  readRuntimeStatus,
+  type RuntimeExpectation,
+} from './runtime-status.ts';
+import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
 import {
   classifyDatabaseError,
   isUniqueConstraint,
@@ -79,7 +124,13 @@ const DEFAULT_AUDIT_LIMIT = 50;
 interface DecisionOutcome {
   readonly proposal?: Proposal;
   readonly error?: DomainError;
-  readonly artifact?: import('./contracts.ts').PublishArtifactInput;
+  readonly artifact?: {
+    readonly projectId: string;
+    readonly workspace: string;
+    readonly version: number;
+    readonly snapshot: PublishedVersion['snapshot'];
+    readonly activationSnapshot: ProjectActivationSnapshot;
+  };
 }
 
 export function createControlPlane(
@@ -111,6 +162,11 @@ export function createControlPlane(
     validator.schemaDigest,
     safeClockValue(now),
   );
+  const managedAuditDir =
+    options.managedAuditDir ??
+    (options.databasePath === ':memory:'
+      ? join(tmpdir(), 'amos-managed-audit')
+      : join(dirname(resolve(options.databasePath)), 'managed-audit'));
 
   try {
     return new GovernanceControlPlane(
@@ -118,7 +174,9 @@ export function createControlPlane(
       validator,
       now,
       activationCatalog,
+      managedAuditDir,
       options.publishArtifact,
+      options.writeArtifacts,
     );
   } catch (error) {
     database.close();
@@ -137,7 +195,9 @@ class GovernanceControlPlane implements ControlPlane {
     private readonly validator: RuleValidator,
     private readonly clock: () => number,
     private readonly activationCatalog: ActivationCatalog,
+    private readonly managedAuditDir: string,
     private readonly publishArtifact?: (input: import('./contracts.ts').PublishArtifactInput) => void,
+    private readonly writeArtifacts?: (input: import('./contracts.ts').PublishArtifactWrite) => void,
   ) {
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec('PRAGMA busy_timeout = 5000');
@@ -208,6 +268,12 @@ class GovernanceControlPlane implements ControlPlane {
           }
           throw error;
         }
+
+        this.db
+          .prepare(
+            'INSERT INTO project_configs (project_id, config_json, updated_at, updated_by_json) VALUES (?, ?, ?, ?)',
+          )
+          .run(id, JSON.stringify(DEFAULT_PROJECT_CONFIG), nowIso, JSON.stringify(actor));
 
         this.appendEvent({
           projectId: id,
@@ -499,6 +565,8 @@ class GovernanceControlPlane implements ControlPlane {
           },
         });
 
+        this.retireAllTightenings(project.id, nowMs, actor, 'version_published');
+
         return {
           proposal: proposalFromRow(this.requireProposalRow(proposalId), nowMs),
           artifact: {
@@ -506,7 +574,7 @@ class GovernanceControlPlane implements ControlPlane {
             workspace: project.workspace,
             version,
             snapshot,
-            artifact: activated.artifact,
+            activationSnapshot: activated.snapshot,
           },
         };
       });
@@ -517,13 +585,15 @@ class GovernanceControlPlane implements ControlPlane {
       if (outcome.proposal === undefined) {
         throw new DomainError('internal_error');
       }
-      if (this.publishArtifact !== undefined && outcome.artifact !== undefined) {
-        try {
-          this.publishArtifact(outcome.artifact);
-        } catch {
-          // The database version is authoritative; the runtime status endpoint
-          // reports a missing/stale artifact rather than pretending a load.
-        }
+      if (outcome.artifact !== undefined) {
+        this.emitProjectArtifacts(
+          outcome.artifact.projectId,
+          outcome.artifact.workspace,
+          outcome.artifact.version,
+          'publish',
+          outcome.artifact.snapshot,
+          outcome.artifact.activationSnapshot,
+        );
       }
       return outcome.proposal;
     });
@@ -739,23 +809,645 @@ class GovernanceControlPlane implements ControlPlane {
       assertVersionNumber(version);
 
       const published = this.requireVersionRow(projectId, version);
-      const snapshot = versionFromRow(published).snapshot;
+      const base = versionFromRow(published);
+      const effective = this.loadEffectiveActivation(project, base);
+      // Temporary tightening applies to the P1 runtime projection; when no
+      // tightening is active the published legacy snapshot remains the source.
+      const rules =
+        effective.tightened
+          ? effective.snapshot.enforcement.runtime.rules
+          : base.snapshot.enforcement.rules;
       // A legal empty runtime projection means "no matching rule"; do not ask
       // the engine to validate an empty table (which is deliberately an error).
       const decision: PolicyDecision =
-        snapshot.enforcement.rules.length === 0
+        rules.length === 0
           ? {
               verdict: 'allow',
               matched_rule_ids: [],
               matched_rules: [],
               decision: 'no_match',
             }
-          : evaluatePolicy(
-              input.action,
-              snapshot.enforcement.rules,
-              this.nowMs(),
-            );
+          : evaluatePolicy(input.action, rules, this.nowMs());
       return deepFreeze(decision);
+    });
+  }
+
+  getProjectConfig(projectId: string): ProjectConfig {
+    return this.guard(() => {
+      const project = this.requireProjectRow(projectId);
+      return this.readProjectConfigFor(project);
+    });
+  }
+
+  getConfig(projectId: string): ProjectConfig {
+    return this.getProjectConfig(projectId);
+  }
+
+  updateConfig(
+    projectId: string,
+    input: UpdateProjectConfigInput,
+    actor: Actor,
+  ): ProjectConfig {
+    return this.updateProjectConfig(projectId, input, actor);
+  }
+
+  updateProjectConfig(
+    projectId: string,
+    input: UpdateProjectConfigInput,
+    actor: Actor,
+  ): ProjectConfig {
+    return this.guard(() => {
+      assertHuman(actor);
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+      const outcome = this.transaction(() => {
+        const project = this.requireProjectRow(projectId);
+        const existing = this.readProjectConfigFor(project);
+        if (!isPlainRecord(input)) throw new DomainError('invalid_request');
+        const config = normalizeProjectConfig(input, {
+          workspace: project.workspace,
+          existing,
+        });
+        this.writeProjectConfigRow(projectId, config, actor, nowIso);
+        this.syncConfiguredRolloutStates(project, config, actor, nowIso, input);
+        this.appendEvent({
+          projectId,
+          proposalId: null,
+          version: project.current_version,
+          kind: 'project_config_updated',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            workflowGateEnabled: config.workflowGate.enabled,
+            managedEnabled: config.managed.enabled,
+            tighteningEnabled: config.tightening.enabled,
+            tighteningTemplateCount: config.tightening.templates.length,
+            rolloutThresholdCount: Object.keys(config.rollout.thresholdsByRule).length,
+            rolloutRuleStateCount: Object.keys(config.rollout.ruleStates).length,
+          },
+        });
+        return { project, config };
+      });
+      if (outcome.project.current_version !== null) {
+        try {
+          const base = versionFromRow(
+            this.requireVersionRow(outcome.project.id, outcome.project.current_version),
+          );
+          const effective = this.loadEffectiveActivation(outcome.project, base);
+          this.emitProjectArtifacts(
+            outcome.project.id,
+            outcome.project.workspace,
+            base.version,
+            effective.tightened ? 'tightening' : 'publish',
+            base.snapshot,
+            effective.snapshot,
+          );
+        } catch {
+          // Configuration is committed. A clock/artifact failure is surfaced
+          // by the runtime status endpoint rather than as a false write error.
+        }
+      }
+      return outcome.config;
+    });
+  }
+
+  getRuntimeStatus(projectId: string): RuntimeStatus {
+    return this.guard(() => {
+      const project = this.requireProjectRow(projectId);
+      const base = this.requirePublishedVersion(project);
+      if (base === null) {
+        return readRuntimeStatus(project.workspace, null);
+      }
+      const effective = this.loadEffectiveActivation(project, base);
+      const expected = expectationFromPublished(base);
+      const effectiveExpectation: RuntimeExpectation = {
+        projectId: project.id,
+        version: base.version,
+        activationDigest: effective.snapshot.activationDigest,
+        policyVersion: effective.snapshot.project.projectConfigVersion,
+        epoch: effective.snapshot.epoch,
+      };
+      return readRuntimeStatus(project.workspace, expected, effectiveExpectation);
+    });
+  }
+
+  applyTemporaryTightening(
+    projectId: string,
+    input: import('./contracts.ts').ApplyTemporaryTighteningInput,
+    actor: Actor,
+  ): TemporaryTighteningStatus {
+    return this.guard(() => {
+      assertActor(actor);
+      if (!isPlainRecord(input)) throw new DomainError('invalid_request');
+      const templateId = input.templateId;
+      const ttlMs = input.ttlMs;
+      if (
+        typeof templateId !== 'string' ||
+        templateId.length === 0 ||
+        templateId.length > 160 ||
+        typeof ttlMs !== 'number' ||
+        !Number.isSafeInteger(ttlMs) ||
+        ttlMs <= 0
+      ) {
+        throw new DomainError('invalid_request');
+      }
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+
+      const outcome = this.transaction(() => {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base === null) throw new DomainError('not_found');
+        const config = this.readProjectConfigFor(project);
+        if (!config.tightening.enabled) {
+          throw new DomainError('tightening_disabled');
+        }
+        const template = config.tightening.templates.find((item) => item.id === templateId);
+        if (template === undefined) {
+          throw new DomainError('tightening_denied');
+        }
+        const context = this.createTighteningContext(project, base, config, nowMs);
+        let changedSnapshot: ProjectActivationSnapshot | null = null;
+
+        const expired = context.publisher.expire();
+        if (expired.expired.length > 0) {
+          this.retireDueTightenings(projectId, nowMs, nowIso);
+          this.writeTighteningState(projectId, expired.snapshot, nowMs, nowIso);
+          changedSnapshot = expired.snapshot;
+          this.appendEvent({
+            projectId,
+            proposalId: null,
+            version: base.version,
+            kind: 'temporary_tightening_expired',
+            actor,
+            createdAt: nowIso,
+            metadata: {
+              reason: 'ttl_elapsed',
+              expiredCount: expired.expired.length,
+              epoch: expired.snapshot.epoch,
+              activationDigest: expired.snapshot.activationDigest,
+            },
+          });
+        }
+
+        let applied: AppliedTightening;
+        try {
+          applied = context.publisher.apply(templateId, ttlMs);
+        } catch {
+          throw new DomainError('tightening_denied');
+        }
+
+        this.db
+          .prepare(
+            `INSERT INTO temporary_tightenings
+              (project_id, template_id, rule_id, rule_version, applied_at, expires_at, epoch, snapshot_json, actor_json, created_at, retired_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+          )
+          .run(
+            projectId,
+            applied.templateId,
+            applied.ruleRef.id,
+            applied.ruleRef.version,
+            applied.appliedAt,
+            applied.expiresAt,
+            applied.epoch,
+            JSON.stringify(applied.snapshot),
+            JSON.stringify(actor),
+            nowIso,
+          );
+        this.writeTighteningState(projectId, applied.snapshot, nowMs, nowIso);
+        changedSnapshot = applied.snapshot;
+        this.appendEvent({
+          projectId,
+          proposalId: null,
+          version: base.version,
+          kind: 'temporary_tightening_applied',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            templateId: applied.templateId,
+            ruleId: applied.ruleRef.id,
+            ruleVersion: applied.ruleRef.version,
+            ttlMs,
+            epoch: applied.epoch,
+            expiresAt: applied.expiresAt,
+            activationDigest: applied.snapshot.activationDigest,
+          },
+        });
+
+        return {
+          status: this.readTighteningStatus(project, base, nowMs),
+          snapshot: changedSnapshot,
+        };
+      });
+
+      if (outcome.snapshot !== null) {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base !== null) {
+          this.emitProjectArtifacts(
+            projectId,
+            project.workspace,
+            base.version,
+            'tightening',
+            base.snapshot,
+            outcome.snapshot,
+          );
+        }
+      }
+      return outcome.status;
+    });
+  }
+
+  expireTemporaryTightenings(
+    projectId: string,
+    actor: Actor = { id: 'system', role: 'human' },
+  ): TemporaryTighteningStatus {
+    return this.guard(() => {
+      assertActor(actor);
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+      const outcome = this.transaction(() => {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base === null) throw new DomainError('not_found');
+        const config = this.readProjectConfigFor(project);
+        const context = this.createTighteningContext(project, base, config, nowMs);
+        const expired = context.publisher.expire();
+        if (expired.expired.length > 0) {
+          this.retireDueTightenings(projectId, nowMs, nowIso);
+          this.writeTighteningState(projectId, expired.snapshot, nowMs, nowIso);
+          this.appendEvent({
+            projectId,
+            proposalId: null,
+            version: base.version,
+            kind: 'temporary_tightening_expired',
+            actor,
+            createdAt: nowIso,
+            metadata: {
+              reason: 'explicit_expiry',
+              expiredCount: expired.expired.length,
+              epoch: expired.snapshot.epoch,
+              activationDigest: expired.snapshot.activationDigest,
+            },
+          });
+        } else {
+          this.touchTighteningClock(projectId, nowMs, nowIso);
+        }
+        return {
+          status: this.readTighteningStatus(project, base, nowMs),
+          snapshot: expired.expired.length > 0 ? expired.snapshot : null,
+        };
+      });
+      if (outcome.snapshot !== null) {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base !== null) {
+          this.emitProjectArtifacts(
+            projectId,
+            project.workspace,
+            base.version,
+            'tightening',
+            base.snapshot,
+            outcome.snapshot,
+          );
+        }
+      }
+      return outcome.status;
+    });
+  }
+
+  listTemporaryTightenings(projectId: string): TemporaryTighteningStatus {
+    return this.guard(() => {
+      const nowMs = this.nowMs();
+      const project = this.requireProjectRow(projectId);
+      const base = this.requirePublishedVersion(project);
+      if (base === null) {
+        return deepFreeze({
+          projectId,
+          baseVersion: null,
+          epoch: 0,
+          policyVersion: null,
+          activationDigest: null,
+          lastObservedAt: null,
+          active: [],
+          expired: [],
+        } satisfies TemporaryTighteningStatus);
+      }
+      return this.readTighteningStatus(project, base, nowMs);
+    });
+  }
+
+  recordProbeRun(
+    projectId: string,
+    input: import('./contracts.ts').RecordProbeRunInput,
+    actor: Actor,
+  ): ProbeRunRecord {
+    return this.guard(() => {
+      assertActor(actor);
+      const raw = isPlainRecord(input) && Object.hasOwn(input, 'probe') ? input.probe : input;
+      let run: ProbeRun;
+      try {
+        run = createProbeRun(raw);
+      } catch {
+        throw new DomainError('invalid_request');
+      }
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+      return this.transaction(() => {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base === null) throw new DomainError('not_found');
+        const effective = this.loadEffectiveActivation(project, base).snapshot;
+        const active = effective.activeRules.find(
+          (item) => item.id === run.ruleRef.id && item.version === run.ruleRef.version,
+        );
+        if (active === undefined || run.activationDigest !== effective.activationDigest) {
+          throw new DomainError('evidence_unbound');
+        }
+        const existing = this.db
+          .prepare('SELECT * FROM probe_runs WHERE probe_digest = ?')
+          .get(run.digest) as unknown as ProbeRunRow | undefined;
+        if (existing !== undefined) {
+          if (existing.project_id !== projectId) throw new DomainError('evidence_unbound');
+          return probeRunFromRow(existing);
+        }
+        const id = randomUUID();
+        this.db
+          .prepare(
+            `INSERT INTO probe_runs
+              (id, project_id, rule_id, rule_version, probe_digest, run_json, actor_json, recorded_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            projectId,
+            run.ruleRef.id,
+            run.ruleRef.version,
+            run.digest,
+            JSON.stringify(run),
+            JSON.stringify(actor),
+            run.recordedAt,
+            nowIso,
+          );
+        this.appendEvent({
+          projectId,
+          proposalId: null,
+          version: base.version,
+          kind: 'probe_run_recorded',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            digest: run.digest,
+            ruleId: run.ruleRef.id,
+            ruleVersion: run.ruleRef.version,
+            outcome: run.outcome,
+            driver: run.driver,
+            activationDigest: run.activationDigest,
+            caseCount: run.cases.total,
+            violationCases: run.cases.violations,
+            controlCases: run.cases.controls,
+            coverageObserved: run.coverage.observed,
+            coverageRequired: run.coverage.required,
+            unauthorizedSideEffects: run.sideEffects.unauthorized,
+          },
+        });
+        const row = this.db
+          .prepare('SELECT * FROM probe_runs WHERE id = ?')
+          .get(id) as unknown as ProbeRunRow;
+        return probeRunFromRow(row);
+      });
+    });
+  }
+
+  listProbeRuns(projectId: string): ProbeRunRecord[] {
+    return this.guard(() => {
+      this.requireProjectRow(projectId);
+      const rows = this.db
+        .prepare('SELECT * FROM probe_runs WHERE project_id = ? ORDER BY recorded_at DESC, rowid DESC LIMIT 200')
+        .all(projectId) as unknown as ProbeRunRow[];
+      return deepFreeze(rows.map((row) => probeRunFromRow(row)));
+    });
+  }
+
+  evaluateRulePromotion(
+    projectId: string,
+    ruleId: string,
+    input: import('./contracts.ts').EvaluateRulePromotionInput,
+    actor: Actor,
+  ): RolloutEvaluation {
+    return this.guard(() => {
+      assertActor(actor);
+      if (!isRolloutRuleId(ruleId) || !isPlainRecord(input) || !isPlainRecord(input.current)) {
+        throw new DomainError('invalid_request');
+      }
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+      return this.transaction(() => {
+        const project = this.requireProjectRow(projectId);
+        const base = this.requirePublishedVersion(project);
+        if (base === null) throw new DomainError('not_found');
+        const effective = this.loadEffectiveActivation(project, base).snapshot;
+        const candidates = effective.activeRules.filter((item) => item.id === ruleId);
+        if (candidates.length === 0) throw new DomainError('not_found');
+        const ruleVersion = input.ruleVersion;
+        const active = ruleVersion === undefined
+          ? candidates[candidates.length - 1]!
+          : candidates.find((item) => item.version === ruleVersion);
+        if (active === undefined) throw new DomainError('not_found');
+
+        let config = this.readProjectConfigFor(project);
+        const row = this.db
+          .prepare('SELECT * FROM rule_rollouts WHERE project_id = ? AND rule_id = ?')
+          .get(projectId, ruleId) as unknown as RuleRolloutRow | undefined;
+        let currentStage: RolloutStage =
+          row !== undefined && row.rule_version === active.version
+            ? row.state
+            : (config.rollout.ruleStates[ruleId] ?? 'draft');
+
+        let thresholds: PromotionThresholds | null;
+        if (input.thresholds !== undefined) {
+          let parsed: PromotionThresholds;
+          try {
+            parsed = createPromotionThresholds(input.thresholds);
+          } catch {
+            throw new DomainError('invalid_request');
+          }
+          if (parsed.ruleRef.id !== ruleId || parsed.ruleRef.version !== active.version) {
+            throw new DomainError('invalid_request');
+          }
+          const existing = config.rollout.thresholdsByRule[ruleId] ?? null;
+          if (
+            actor.role !== 'human' &&
+            (existing === null ||
+              promotionThresholdsDigest(existing) !== promotionThresholdsDigest(parsed))
+          ) {
+            throw new DomainError('rollout_denied');
+          }
+          thresholds = parsed;
+          config = normalizeProjectConfig(
+            {
+              rollout: {
+                ...config.rollout,
+                thresholds: parsed,
+                thresholdsByRule: {
+                  ...config.rollout.thresholdsByRule,
+                  [ruleId]: parsed,
+                },
+              },
+            },
+            { workspace: project.workspace, existing: config },
+          );
+          if (actor.role === 'human') {
+            this.writeProjectConfigRow(projectId, config, actor, nowIso);
+          }
+        } else {
+          thresholds =
+            config.rollout.thresholdsByRule[ruleId] ??
+            (config.rollout.thresholds?.ruleRef.id === ruleId
+              ? config.rollout.thresholds
+              : null);
+        }
+
+        if (thresholds === null) {
+          return this.recordRolloutHold(
+            project,
+            config,
+            active.id,
+            active.version,
+            currentStage,
+            'hold',
+            ['threshold_missing'],
+            null,
+            actor,
+            nowIso,
+          );
+        }
+
+        const evidence = this.readPromotionEvidence(projectId, ruleId, active.version, input);
+        const decision = evaluatePromotion({
+          ruleRef: { id: active.id, version: active.version },
+          currentStage,
+          thresholds,
+          evidence,
+          reviewerCalibration: (input.reviewerCalibration ?? null) as never,
+          current: input.current as never,
+          now: nowMs,
+        });
+
+        if (decision.decision !== 'promote') {
+          return this.recordRolloutHold(
+            project,
+            config,
+            active.id,
+            active.version,
+            currentStage,
+            decision.decision,
+            decision.reasons,
+            thresholds,
+            actor,
+            nowIso,
+          );
+        }
+
+        const next = nextRolloutStage(currentStage);
+        if (next === null || decision.nextStage !== next) {
+          return this.recordRolloutHold(
+            project,
+            config,
+            active.id,
+            active.version,
+            currentStage,
+            'hold',
+            ['stage_transition_invalid'],
+            thresholds,
+            actor,
+            nowIso,
+          );
+        }
+
+        this.db
+          .prepare(
+            `INSERT INTO rule_rollouts (project_id, rule_id, rule_version, state, updated_at, updated_by_json)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(project_id, rule_id) DO UPDATE SET
+               rule_version = excluded.rule_version,
+               state = excluded.state,
+               updated_at = excluded.updated_at,
+               updated_by_json = excluded.updated_by_json`,
+          )
+          .run(projectId, active.id, active.version, next, nowIso, JSON.stringify(actor));
+        const updatedConfig = normalizeProjectConfig(
+          {
+            rollout: {
+              ...config.rollout,
+              ruleStates: { ...config.rollout.ruleStates, [ruleId]: next },
+              thresholdsByRule: { ...config.rollout.thresholdsByRule, [ruleId]: thresholds },
+              thresholds,
+            },
+          },
+          { workspace: project.workspace, existing: config },
+        );
+        this.writeProjectConfigRow(projectId, updatedConfig, actor, nowIso);
+        this.appendEvent({
+          projectId,
+          proposalId: null,
+          version: base.version,
+          kind: 'rollout_promoted',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            ruleId: active.id,
+            ruleVersion: active.version,
+            fromStage: currentStage,
+            toStage: next,
+            decision: decision.decision,
+            reason: decision.reasons[0] ?? 'promotion_granted',
+            thresholdDigest: promotionThresholdsDigest(thresholds),
+            evidenceCount: evidence.length,
+          },
+        });
+        return deepFreeze({
+          ruleId: active.id,
+          ruleVersion: active.version,
+          fromStage: currentStage,
+          toStage: next,
+          decision: decision.decision,
+          action: decision.decision,
+          reasons: decision.reasons,
+          state: next,
+          changed: true,
+        } satisfies RolloutEvaluation);
+      });
+    });
+  }
+
+  listRuleRollouts(projectId: string): RuleRolloutRecord[] {
+    return this.guard(() => {
+      const project = this.requireProjectRow(projectId);
+      const rows = this.db
+        .prepare('SELECT * FROM rule_rollouts WHERE project_id = ? ORDER BY rule_id ASC')
+        .all(projectId) as unknown as RuleRolloutRow[];
+      const records = rows.map((row) => ruleRolloutFromRow(row));
+      const configRow = this.requireProjectConfigRow(projectId);
+      const config = projectConfigFromRow(configRow, project.workspace);
+      const base = this.requirePublishedVersion(project);
+      const effective = base === null ? null : this.loadEffectiveActivation(project, base).snapshot;
+      const seen = new Set(records.map((record) => record.ruleId));
+      for (const [ruleId, state] of Object.entries(config.rollout.ruleStates)) {
+        if (seen.has(ruleId)) continue;
+        const active = effective?.activeRules.find((item) => item.id === ruleId);
+        records.push(deepFreeze({
+          projectId,
+          ruleId,
+          ruleVersion: active?.version ?? 1,
+          state,
+          updatedAt: configRow.updated_at,
+          updatedBy: parseStoredJson(configRow.updated_by_json) as Actor,
+        }));
+      }
+      records.sort((left, right) => left.ruleId.localeCompare(right.ruleId));
+      return deepFreeze(records);
     });
   }
 
@@ -1000,6 +1692,529 @@ class GovernanceControlPlane implements ControlPlane {
     return row;
   }
 
+  private requireProjectConfigRow(projectId: string): ProjectConfigRow {
+    const row = this.db
+      .prepare('SELECT * FROM project_configs WHERE project_id = ?')
+      .get(projectId) as unknown as ProjectConfigRow | undefined;
+    if (row === undefined) throw new DomainError('database_corrupt');
+    return row;
+  }
+
+  private readProjectConfigFor(project: ProjectRow): ProjectConfig {
+    return projectConfigFromRow(this.requireProjectConfigRow(project.id), project.workspace);
+  }
+
+  private requirePublishedVersion(project: ProjectRow): PublishedVersion | null {
+    if (project.current_version === null) return null;
+    return versionFromRow(this.requireVersionRow(project.id, project.current_version));
+  }
+
+  private loadEffectiveActivation(
+    project: ProjectRow,
+    base: PublishedVersion,
+  ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
+    const row = this.db
+      .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
+      .get(project.id) as unknown as TighteningStateRow | undefined;
+    if (row === undefined) {
+      return { snapshot: base.snapshot.activationSnapshot, tightened: false };
+    }
+    let snapshot: ProjectActivationSnapshot;
+    try {
+      snapshot = verifyProjectActivationSnapshot(deepFreeze(parseStoredJson(row.snapshot_json)));
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
+    if (
+      snapshot.project.projectId !== project.id ||
+      snapshot.project.workspace !== project.workspace ||
+      snapshot.epoch !== row.epoch ||
+      snapshot.epoch <= base.snapshot.activationSnapshot.epoch
+    ) {
+      throw new DomainError('database_corrupt');
+    }
+
+    // TTL expiry does not depend on a cleaner running. Reads and decisions
+    // compute the post-expiry projection without writing governance state; an
+    // explicit apply/expire mutation persists the same epoch transition.
+    const nowMs = this.nowMs();
+    if (row.last_observed_at > nowMs) {
+      throw new DomainError('clock_regression');
+    }
+    const due = this.db
+      .prepare(
+        'SELECT 1 AS due FROM temporary_tightenings WHERE project_id = ? AND retired_at IS NULL AND expires_at <= ? LIMIT 1',
+      )
+      .get(project.id, nowMs) as unknown as { due?: unknown } | undefined;
+    if (due !== undefined) {
+      try {
+        const config = this.readProjectConfigFor(project);
+        const context = this.createTighteningContext(project, base, config, nowMs);
+        const expired = context.publisher.expire();
+        if (expired.expired.length > 0) {
+          return { snapshot: expired.snapshot, tightened: true };
+        }
+      } catch (error) {
+        if (isDomainError(error)) throw error;
+        throw new DomainError('database_corrupt');
+      }
+    }
+    return { snapshot, tightened: true };
+  }
+
+  private writeProjectConfigRow(
+    projectId: string,
+    config: ProjectConfig,
+    actor: Actor,
+    updatedAt: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO project_configs (project_id, config_json, updated_at, updated_by_json)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+           config_json = excluded.config_json,
+           updated_at = excluded.updated_at,
+           updated_by_json = excluded.updated_by_json`,
+      )
+      .run(projectId, JSON.stringify(config), updatedAt, JSON.stringify(actor));
+  }
+
+  private syncConfiguredRolloutStates(
+    project: ProjectRow,
+    config: ProjectConfig,
+    actor: Actor,
+    nowIso: string,
+    input: UpdateProjectConfigInput,
+  ): void {
+    if (!isPlainRecord(input.rollout) || !Object.hasOwn(input.rollout, 'ruleStates')) {
+      return;
+    }
+    const base = this.requirePublishedVersion(project);
+    const effective = base === null ? null : this.loadEffectiveActivation(project, base).snapshot;
+    for (const [ruleId, state] of Object.entries(config.rollout.ruleStates)) {
+      const active = effective?.activeRules.find((item) => item.id === ruleId);
+      this.db
+        .prepare(
+          `INSERT INTO rule_rollouts (project_id, rule_id, rule_version, state, updated_at, updated_by_json)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(project_id, rule_id) DO UPDATE SET
+             rule_version = excluded.rule_version,
+             state = excluded.state,
+             updated_at = excluded.updated_at,
+             updated_by_json = excluded.updated_by_json`,
+        )
+        .run(project.id, ruleId, active?.version ?? 1, state, nowIso, JSON.stringify(actor));
+    }
+  }
+
+  private createTighteningContext(
+    project: ProjectRow,
+    base: PublishedVersion,
+    config: ProjectConfig,
+    nowMs: number,
+  ): {
+    publisher: ReturnType<typeof createTemporaryTighteningPublisher>;
+    state: TighteningStateRow | undefined;
+    rows: TemporaryTighteningRow[];
+  } {
+    const state = this.db
+      .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
+      .get(project.id) as unknown as TighteningStateRow | undefined;
+    if (state !== undefined && state.last_observed_at > nowMs) {
+      throw new DomainError('clock_regression');
+    }
+    const rows = this.db
+      .prepare('SELECT * FROM temporary_tightenings WHERE project_id = ? ORDER BY applied_at ASC, id ASC')
+      .all(project.id) as unknown as TemporaryTighteningRow[];
+    if (rows.length > 0 && nowMs < rows[rows.length - 1]!.applied_at) {
+      throw new DomainError('clock_regression');
+    }
+
+    const entries: AppliedTightening[] = [];
+    for (const row of rows) {
+      if (row.retired_at !== null) continue;
+      let snapshot: ProjectActivationSnapshot;
+      try {
+        snapshot = verifyProjectActivationSnapshot(deepFreeze(parseStoredJson(row.snapshot_json)));
+      } catch {
+        throw new DomainError('database_corrupt');
+      }
+      if (
+        snapshot.epoch !== row.epoch ||
+        snapshot.project.projectId !== project.id ||
+        snapshot.project.workspace !== project.workspace ||
+        !snapshot.activeRules.some(
+          (item) => item.id === row.rule_id && item.version === row.rule_version,
+        )
+      ) {
+        throw new DomainError('database_corrupt');
+      }
+      entries.push({
+        snapshot,
+        templateId: row.template_id,
+        ruleRef: { id: row.rule_id, version: row.rule_version },
+        appliedAt: row.applied_at,
+        expiresAt: row.expires_at,
+        epoch: row.epoch,
+      });
+    }
+
+    let currentSnapshot: ProjectActivationSnapshot | undefined;
+    if (state !== undefined) {
+      try {
+        currentSnapshot = verifyProjectActivationSnapshot(deepFreeze(parseStoredJson(state.snapshot_json)));
+      } catch {
+        throw new DomainError('database_corrupt');
+      }
+      if (
+        currentSnapshot.project.projectId !== project.id ||
+        currentSnapshot.project.workspace !== project.workspace ||
+        currentSnapshot.epoch !== state.epoch
+      ) {
+        throw new DomainError('database_corrupt');
+      }
+    }
+
+    const applicationTimes = rows.map((row) => row.applied_at);
+    const templateTimes: Record<string, number[]> = {};
+    for (const row of rows) {
+      const times = templateTimes[row.template_id] ?? [];
+      times.push(row.applied_at);
+      templateTimes[row.template_id] = times;
+    }
+    const lastObservedAt =
+      state?.last_observed_at ??
+      (rows.length > 0 ? Math.max(...applicationTimes) : nowMs);
+
+    const compiled = compileProjectActivation(this.activationCatalog, {
+      projectId: project.id,
+      workspace: project.workspace,
+      version: base.version,
+      baseVersion: Math.max(0, base.version - 1),
+      candidate: base.candidate,
+      injectionlessRuleIds: config.tightening.templates.map((template) => template.ruleRef.id),
+    });
+    if (compiled.snapshot.activationDigest !== base.snapshot.activationDigest) {
+      // The runtime catalog changed since publication. Reconstructing a
+      // tightening against a different base would be an unproven composition.
+      throw new DomainError('catalog_invalid');
+    }
+
+    let publisher: ReturnType<typeof createTemporaryTighteningPublisher>;
+    try {
+      publisher = createTemporaryTighteningPublisher({
+        compiler: compiled.compiler,
+        base: base.snapshot.activationSnapshot,
+        templates: config.tightening.templates,
+        quota: config.tightening.quota,
+        now: () => nowMs,
+        newProjectConfigVersion: `${base.snapshot.activationSnapshot.project.projectConfigVersion}+tightened`,
+        newBaseVersion: base.snapshot.activationSnapshot.project.baseVersion,
+        recovered: {
+          entries,
+          ...(currentSnapshot === undefined ? {} : { currentSnapshot }),
+          applicationTimes,
+          templateTimes,
+          lastObservedAt,
+        },
+      });
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
+    return { publisher, state, rows };
+  }
+
+  private readTighteningStatus(
+    project: ProjectRow,
+    base: PublishedVersion,
+    nowMs: number,
+  ): TemporaryTighteningStatus {
+    const state = this.db
+      .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
+      .get(project.id) as unknown as TighteningStateRow | undefined;
+    if (state !== undefined && state.last_observed_at > nowMs) {
+      throw new DomainError('clock_regression');
+    }
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM temporary_tightenings WHERE project_id = ? ORDER BY applied_at DESC, id DESC LIMIT 200',
+      )
+      .all(project.id) as unknown as TemporaryTighteningRow[];
+    const records = rows.map((row) => tighteningFromRow(row, nowMs));
+    const active = records.filter((record) => record.status === 'active');
+    const expired = records.filter((record) => record.status === 'expired').slice(0, 50);
+    let snapshot: ProjectActivationSnapshot;
+    try {
+      snapshot = this.loadEffectiveActivation(project, base).snapshot;
+    } catch (error) {
+      if (isDomainError(error)) throw error;
+      throw new DomainError('database_corrupt');
+    }
+    return deepFreeze({
+      projectId: project.id,
+      baseVersion: base.version,
+      epoch: snapshot.epoch,
+      policyVersion: snapshot.project.projectConfigVersion,
+      activationDigest: snapshot.activationDigest,
+      lastObservedAt: state?.last_observed_at ?? null,
+      active,
+      expired,
+    } satisfies TemporaryTighteningStatus);
+  }
+
+  private retireDueTightenings(projectId: string, nowMs: number, nowIso: string): void {
+    void nowIso;
+    this.db
+      .prepare(
+        'UPDATE temporary_tightenings SET retired_at = ? WHERE project_id = ? AND retired_at IS NULL AND expires_at <= ?',
+      )
+      .run(nowMs, projectId, nowMs);
+  }
+
+  private retireAllTightenings(
+    projectId: string,
+    nowMs: number,
+    actor: Actor,
+    reason: string,
+  ): void {
+    const changed = this.db
+      .prepare(
+        'UPDATE temporary_tightenings SET retired_at = ? WHERE project_id = ? AND retired_at IS NULL',
+      )
+      .run(nowMs, projectId);
+    this.db.prepare('DELETE FROM tightening_state WHERE project_id = ?').run(projectId);
+    if (Number(changed.changes) > 0) {
+      this.appendEvent({
+        projectId,
+        proposalId: null,
+        version: null,
+        kind: 'temporary_tightening_expired',
+        actor,
+        createdAt: new Date(nowMs).toISOString(),
+        metadata: {
+          reason,
+          expiredCount: Number(changed.changes),
+        },
+      });
+    }
+  }
+
+  private writeTighteningState(
+    projectId: string,
+    snapshot: ProjectActivationSnapshot,
+    nowMs: number,
+    nowIso: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO tightening_state (project_id, snapshot_json, epoch, last_observed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+           snapshot_json = excluded.snapshot_json,
+           epoch = excluded.epoch,
+           last_observed_at = excluded.last_observed_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(projectId, JSON.stringify(snapshot), snapshot.epoch, nowMs, nowIso);
+  }
+
+  private touchTighteningClock(projectId: string, nowMs: number, nowIso: string): void {
+    this.db
+      .prepare(
+        'UPDATE tightening_state SET last_observed_at = ?, updated_at = ? WHERE project_id = ? AND last_observed_at < ?',
+      )
+      .run(nowMs, nowIso, projectId, nowMs);
+  }
+
+  private emitProjectArtifacts(
+    projectId: string,
+    workspace: string,
+    version: number,
+    kind: 'publish' | 'tightening',
+    baseSnapshot: PublishedVersion['snapshot'],
+    activationSnapshot: ProjectActivationSnapshot,
+  ): void {
+    try {
+      const project = this.requireProjectRow(projectId);
+      const config = this.readProjectConfigFor(project);
+      const auditPath = managedAuditPath(this.managedAuditDir, workspace, projectId);
+      try {
+        mkdirSync(dirname(auditPath), { recursive: true, mode: 0o700 });
+      } catch {
+        // The host gate will fail closed if its journal directory is unusable.
+      }
+      const publishedAt = new Date(this.nowMs()).toISOString();
+      const projection = buildManagedProjection({
+        projectId,
+        workspace,
+        version,
+        kind,
+        snapshot: activationSnapshot,
+        config,
+        auditPath,
+        publishedAt,
+      });
+      const activationArtifact = `${JSON.stringify(activationSnapshot)}\n`;
+      const managedArtifact = `${JSON.stringify(projection)}\n`;
+      if (this.writeArtifacts !== undefined) {
+        this.writeArtifacts({
+          projectId,
+          workspace,
+          version,
+          kind,
+          activationSnapshot,
+          activationArtifact,
+          managedProjection: projection,
+          managedArtifact,
+        });
+      } else if (this.publishArtifact !== undefined) {
+        this.publishArtifact({
+          projectId,
+          workspace,
+          version,
+          snapshot: baseSnapshot,
+          artifact: activationArtifact,
+          kind,
+          managedArtifact,
+          activationSnapshot,
+          managedProjection: projection,
+        });
+      }
+      // A projection write is not a host receipt. Read the runtime report only
+      // to make the status endpoint honest; never promote it to "effective".
+      readRuntimeStatus(
+        workspace,
+        {
+          projectId,
+          version,
+          activationDigest: activationSnapshot.activationDigest,
+          policyVersion: activationSnapshot.project.projectConfigVersion,
+          epoch: activationSnapshot.epoch,
+        },
+        {
+          projectId,
+          version,
+          activationDigest: activationSnapshot.activationDigest,
+          policyVersion: activationSnapshot.project.projectConfigVersion,
+          epoch: activationSnapshot.epoch,
+        },
+      );
+    } catch {
+      // The database state is authoritative. Missing/stale artifacts surface
+      // through getRuntimeStatus() and are never reported as a host load.
+    }
+  }
+
+  private readPromotionEvidence(
+    projectId: string,
+    ruleId: string,
+    ruleVersion: number,
+    input: import('./contracts.ts').EvaluateRulePromotionInput,
+  ): ProbeRun[] {
+    if (input.evidence !== undefined) {
+      if (!Array.isArray(input.evidence) || input.evidence.length > 64) {
+        throw new DomainError('invalid_request');
+      }
+      const evidence: ProbeRun[] = [];
+      for (const raw of input.evidence) {
+        let run: ProbeRun;
+        try {
+          run = createProbeRun(raw);
+        } catch {
+          throw new DomainError('invalid_request');
+        }
+        if (run.ruleRef.id !== ruleId || run.ruleRef.version !== ruleVersion) {
+          throw new DomainError('evidence_unbound');
+        }
+        const recorded = this.db
+          .prepare('SELECT 1 AS present FROM probe_runs WHERE project_id = ? AND probe_digest = ?')
+          .get(projectId, run.digest) as unknown as { present?: unknown } | undefined;
+        if (recorded === undefined) throw new DomainError('evidence_unbound');
+        evidence.push(run);
+      }
+      return evidence;
+    }
+
+    if (input.probeRunIds !== undefined) {
+      if (!Array.isArray(input.probeRunIds) || input.probeRunIds.length > 64) {
+        throw new DomainError('invalid_request');
+      }
+      const evidence: ProbeRun[] = [];
+      for (const id of input.probeRunIds) {
+        if (typeof id !== 'string' || id.length === 0 || id.length > 200) {
+          throw new DomainError('invalid_request');
+        }
+        const row = this.db
+          .prepare(
+            'SELECT * FROM probe_runs WHERE project_id = ? AND (id = ? OR probe_digest = ?)',
+          )
+          .get(projectId, id, id) as unknown as ProbeRunRow | undefined;
+        if (row === undefined) throw new DomainError('not_found');
+        const record = probeRunFromRow(row);
+        if (record.ruleRef.id !== ruleId || record.ruleRef.version !== ruleVersion) {
+          throw new DomainError('evidence_unbound');
+        }
+        evidence.push(record.run);
+      }
+      return evidence;
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM probe_runs
+          WHERE project_id = ? AND rule_id = ? AND rule_version = ?
+          ORDER BY recorded_at DESC, rowid DESC LIMIT 64`,
+      )
+      .all(projectId, ruleId, ruleVersion) as unknown as ProbeRunRow[];
+    return rows.map((row) => probeRunFromRow(row).run);
+  }
+
+  private recordRolloutHold(
+    project: ProjectRow,
+    config: ProjectConfig,
+    ruleId: string,
+    ruleVersion: number,
+    currentStage: RolloutStage,
+    decision: 'hold' | 'reject',
+    reasons: readonly string[],
+    thresholds: PromotionThresholds | null,
+    actor: Actor,
+    nowIso: string,
+  ): RolloutEvaluation {
+    void config;
+    this.appendEvent({
+      projectId: project.id,
+      proposalId: null,
+      version: project.current_version,
+      kind: 'rollout_promotion_held',
+      actor,
+      createdAt: nowIso,
+      metadata: {
+        ruleId,
+        ruleVersion,
+        fromStage: currentStage,
+        decision,
+        reason: reasons[0] ?? 'hold',
+        reasonCodes: reasons.join(','),
+        ...(thresholds === null
+          ? {}
+          : { thresholdDigest: promotionThresholdsDigest(thresholds) }),
+      },
+    });
+    return deepFreeze({
+      ruleId,
+      ruleVersion,
+      fromStage: currentStage,
+      toStage: currentStage,
+      decision,
+      action: decision,
+      reasons,
+      state: currentStage,
+      changed: false,
+    } satisfies RolloutEvaluation);
+  }
+
   private nowMs(): number {
     const value = safeClockValue(this.clock);
     if (!Number.isFinite(value)) {
@@ -1042,4 +2257,12 @@ class GovernanceControlPlane implements ControlPlane {
       throw new DomainError('closed');
     }
   }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRolloutRuleId(value: string): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 }

@@ -1,4 +1,4 @@
-import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, HarnessRuntimeStatus, ObservationReport, PolicyDecision, Project, Proposal, PublishedVersion, RuntimeStatus, SimulateInput, ValidationResult } from '../types/index.js'
+import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, HarnessRuntimeStatus, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfig, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status?: number) { super(message); this.name = 'ApiError' }
@@ -79,6 +79,14 @@ export class ApiClient {
   validate(id: string, candidate: Candidate): Promise<ValidationResult> { return this.json(`/api/projects/${pathId(id)}/validate`, 'POST', { candidate }) }
   importYaml(id: string, yaml: string): Promise<{ valid: boolean; issues: ValidationResult['issues']; candidate: Candidate }> { return this.json(`/api/projects/${pathId(id)}/import`, 'POST', { yaml }) }
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
+  config(id: string): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`) }
+  updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
+  tightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`) }
+  applyTightening(id: string, input: { templateId: string; ttlMs: number }): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`, 'POST', input) }
+  expireTightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten/expire`, 'POST', {}) }
+  probes(id: string): Promise<ProbeRunRecord[]> { return this.json(`/api/projects/${pathId(id)}/probes`) }
+  rollouts(id: string): Promise<RuleRolloutRecord[]> { return this.json(`/api/projects/${pathId(id)}/rollout`) }
+  promoteRollout(id: string, ruleId: string, input: EvaluateRulePromotionInput): Promise<RolloutEvaluation> { return this.json(`/api/projects/${pathId(id)}/rollout/promote`, 'POST', { ruleId, ...input }) }
   proposals(id: string): Promise<Proposal[]> { return this.json(`/api/projects/${pathId(id)}/proposals`) }
   proposal(id: string): Promise<Proposal> { return this.json(`/api/proposals/${pathId(id)}`) }
   createProposal(id: string, input: CreateProposalInput): Promise<Proposal> { return this.json(`/api/projects/${pathId(id)}/proposals`, 'POST', input) }

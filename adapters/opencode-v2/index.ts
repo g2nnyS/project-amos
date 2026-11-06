@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { AuditAction } from "../../storage/jsonl.ts";
 import {
@@ -36,13 +37,29 @@ import {
   type InjectorSession,
 } from "../../injector/index.ts";
 import { createLogOnlyRecorder } from "../shared/log-only.ts";
-import { loadActivationGuidance } from "../shared/activation-guidance.ts";
+import {
+  loadActivationGuidance,
+  loadActivationRuntime,
+} from "../shared/activation-guidance.ts";
+import { readHostProjection } from "../shared/host-projection.ts";
+import {
+  OPENCODE_MANAGED_CAPABILITIES,
+  writeHarnessRuntimeReport,
+} from "../shared/runtime-report.ts";
+import type { ActivationRuntime } from "../../activation/runtime.ts";
+import { createHarnessGate, type HarnessGate } from "../../managed/harness.ts";
+import {
+  createHttpReviewProvider,
+  isValidPolicy,
+  type CalibrationEvidence,
+  type ReviewerPolicy,
+} from "../../review/index.ts";
 import {
   normalizeOpenCodeAction,
   type OpenCodeNormalization,
 } from "./normalize.ts";
 
-type ToolEvent = { tool?: unknown; input?: unknown; sessionID?: unknown };
+type ToolEvent = { tool?: unknown; input?: unknown; sessionID?: unknown; id?: unknown; status?: unknown };
 type Registration = { dispose(): unknown | Promise<unknown> };
 
 /**
@@ -128,7 +145,7 @@ interface SessionDomain {
 type PluginContext = {
   location: { directory: string };
   options: Record<string, unknown>;
-  tool: HookDomain<{ "execute.before": ToolEvent }>;
+  tool: HookDomain<{ "execute.before": ToolEvent; "execute.after": ToolEvent }>;
   shell?: HookDomain<{ "create.before": ShellCreateEvent }>;
   permission?: HookDomain<{ evaluate: PermissionEvent }>;
   session?: SessionDomain;
@@ -266,6 +283,11 @@ const ACTIVATION_GUIDANCE_ERROR = "amos_activation_guidance_error";
 interface ActivationGuidanceConfig {
   readonly snapshotPath: string;
   readonly projectId: string;
+  readonly expected?: {
+    readonly activationDigest: string;
+    readonly epoch: number;
+    readonly policyVersion: string;
+  };
 }
 
 type ActivationGuidanceState =
@@ -283,6 +305,22 @@ function readActivationGuidanceConfig(
   options: Record<string, unknown>,
   directory: string,
 ): ActivationGuidanceState {
+  const projection = readHostProjection(directory);
+  if (projection.status === "error") return { status: "error" };
+  if (projection.status === "ready") {
+    return {
+      status: "enabled",
+      config: {
+        snapshotPath: projection.projection.activation.snapshotPath,
+        projectId: projection.projection.activation.projectId,
+        expected: {
+          activationDigest: projection.projection.activationDigest,
+          epoch: projection.projection.epoch,
+          policyVersion: projection.projection.policyVersion,
+        },
+      },
+    };
+  }
   const raw = options.activation;
   if (raw === undefined) return { status: "absent" };
   if (!isRecord(raw)) return { status: "error" };
@@ -304,6 +342,167 @@ function readActivationGuidanceConfig(
     status: "enabled",
     config: { snapshotPath: resolve(directory, snapshotPath), projectId },
   };
+}
+
+interface OpenCodeManagedReviewConfig {
+  readonly endpoint: string;
+  readonly model: string;
+  readonly apiKeyEnv: string;
+  readonly policy: ReviewerPolicy;
+  readonly calibration: CalibrationEvidence | null;
+  readonly ceilingDigest: string;
+  readonly grantTtlMs?: number;
+}
+
+interface OpenCodeManagedConfig {
+  readonly auditPath: string;
+  readonly requirementEgress: "allowed" | "denied";
+  readonly review: OpenCodeManagedReviewConfig | null;
+}
+
+type OpenCodeManagedState =
+  | { readonly status: "absent" }
+  | { readonly status: "error" }
+  | { readonly status: "enabled"; readonly config: OpenCodeManagedConfig };
+
+/**
+ * Optional `managed` option for hosts that do not use `.pi/amos.json`.
+ * A generated `.pi/amos.managed.json` projection takes precedence and is
+ * handled in setup; this function only validates the explicit option shape.
+ */
+function readOpenCodeManagedState(
+  options: Record<string, unknown>,
+  directory: string,
+): OpenCodeManagedState {
+  const raw = options.managed;
+  if (raw === undefined || raw === null) return { status: "absent" };
+  if (!isRecord(raw)) return { status: "error" };
+  if (raw.enabled !== true) {
+    return raw.enabled === false ? { status: "absent" } : { status: "error" };
+  }
+  const keys = Object.keys(raw);
+  if (
+    keys.some(
+      (key) =>
+        key !== "enabled" &&
+        key !== "auditPath" &&
+        key !== "requirementEgress" &&
+        key !== "review",
+    )
+  ) {
+    return { status: "error" };
+  }
+  if (typeof raw.auditPath !== "string" || raw.auditPath.length === 0) {
+    return { status: "error" };
+  }
+  const requirementEgress = raw.requirementEgress ?? "denied";
+  if (requirementEgress !== "allowed" && requirementEgress !== "denied") {
+    return { status: "error" };
+  }
+  const review = readOpenCodeManagedReview(raw.review);
+  if (review === undefined) return { status: "error" };
+  return {
+    status: "enabled",
+    config: {
+      auditPath: resolve(directory, raw.auditPath),
+      requirementEgress,
+      review,
+    },
+  };
+}
+
+function readOpenCodeManagedReview(
+  value: unknown,
+): OpenCodeManagedReviewConfig | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const keys = Object.keys(value);
+  if (
+    keys.some(
+      (key) =>
+        key !== "endpoint" &&
+        key !== "model" &&
+        key !== "apiKeyEnv" &&
+        key !== "policy" &&
+        key !== "calibration" &&
+        key !== "ceilingDigest" &&
+        key !== "grantTtlMs",
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    typeof value.endpoint !== "string" ||
+    typeof value.model !== "string" ||
+    value.model.length === 0 ||
+    typeof value.apiKeyEnv !== "string" ||
+    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value.apiKeyEnv) ||
+    typeof value.ceilingDigest !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/.test(value.ceilingDigest) ||
+    !isValidPolicy(value.policy) ||
+    value.policy.model !== value.model
+  ) {
+    return undefined;
+  }
+  if (
+    value.grantTtlMs !== undefined &&
+    (typeof value.grantTtlMs !== "number" ||
+      !Number.isSafeInteger(value.grantTtlMs) ||
+      value.grantTtlMs <= 0 ||
+      value.grantTtlMs > 60_000)
+  ) {
+    return undefined;
+  }
+  const calibration = value.calibration;
+  if (
+    calibration !== null &&
+    calibration !== undefined &&
+    (!isRecord(calibration) ||
+      calibration.format !== "amos-review-calibration" ||
+      calibration.version !== 1)
+  ) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value.endpoint);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.search.length > 0 ||
+      url.hash.length > 0
+    ) {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return {
+    endpoint: value.endpoint,
+    model: value.model,
+    apiKeyEnv: value.apiKeyEnv,
+    policy: value.policy,
+    calibration: (calibration ?? null) as CalibrationEvidence | null,
+    ceilingDigest: value.ceilingDigest,
+    ...(value.grantTtlMs === undefined ? {} : { grantTtlMs: value.grantTtlMs }),
+  };
+}
+
+type ManagedSessionState =
+  | {
+      readonly status: "ready";
+      readonly gate: HarnessGate;
+      readonly runtime: ActivationRuntime;
+      readonly loadedAt: string;
+    };
+
+function managedCallKey(sessionID: string, callId: string): string {
+  return `${sessionID.length}:${sessionID}${callId}`;
+}
+
+function safeManagedSessionId(value: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)) return value;
+  return `session_${createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32)}`;
 }
 
 function fallbackAction(event: unknown): AuditAction {
@@ -523,6 +722,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
     async setup(ctx: PluginContext) {
       const options = ctx.options ?? {};
       const config = readConfig(options, ctx.location.directory);
+      const hostProjection = readHostProjection(config.directory);
 
       let auditErrorLogged = false;
       const recorder = createLogOnlyRecorder({
@@ -539,7 +739,10 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         },
       });
 
-      const rawGate = options.workflowGate;
+      const rawGate =
+        hostProjection.status === "ready"
+          ? hostProjection.projection.workflowGate
+          : options.workflowGate;
       let configError = false;
       let parsedConfig: WorkflowGateConfig | null = null;
       try {
@@ -547,6 +750,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       } catch {
         configError = true;
       }
+      if (hostProjection.status === "error") configError = true;
 
       const requested = configError
         ? rawGate !== undefined && rawGate !== null
@@ -598,6 +802,105 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         diagnostic(ACTIVATION_GUIDANCE_ERROR);
       }
 
+      const managedOptionState =
+        hostProjection.status === "ready"
+          ? { status: "from_projection" as const }
+          : hostProjection.status === "error"
+            ? { status: "error" as const }
+            : readOpenCodeManagedState(options, config.directory);
+      let managedConfig: OpenCodeManagedConfig | null = null;
+      let managedActivation: ActivationRuntime | null = null;
+      let managedError = hostProjection.status === "error";
+      let managedReview:
+        | {
+            provider: ReturnType<typeof createHttpReviewProvider>;
+            policy: ReviewerPolicy;
+            calibration: CalibrationEvidence | null;
+            ceilingDigest: string;
+            grantTtlMs?: number;
+          }
+        | null = null;
+
+      if (managedOptionState.status === "from_projection") {
+        const projection = hostProjection.status === "ready" ? hostProjection.projection : null;
+        if (projection !== null && projection.managed.enabled) {
+          const review = projection.managed.review;
+          managedConfig = {
+            auditPath: projection.managed.auditPath,
+            requirementEgress: projection.managed.requirementEgress,
+            review:
+              review === null
+                ? null
+                : {
+                    endpoint: review.endpoint,
+                    model: review.model,
+                    apiKeyEnv: review.apiKeyEnv,
+                    policy: review.policy,
+                    calibration: review.calibration,
+                    ceilingDigest: review.ceilingDigest,
+                    grantTtlMs: review.grantTtlMs,
+                  },
+          };
+        }
+      } else if (managedOptionState.status === "enabled") {
+        managedConfig = managedOptionState.config;
+      } else if (managedOptionState.status === "error") {
+        managedError = true;
+      }
+
+      if (managedConfig !== null) {
+        if (activationState.status !== "enabled") {
+          managedError = true;
+        } else {
+          const loaded = loadActivationRuntime({
+            snapshotPath: activationState.config.snapshotPath,
+            projectId: activationState.config.projectId,
+            workspace: config.directory,
+          });
+          if (loaded.status === "error") {
+            managedError = true;
+          } else {
+            const expected = activationState.config.expected;
+            if (
+              expected !== undefined &&
+              (loaded.runtime.activationDigest !== expected.activationDigest ||
+                loaded.runtime.epoch !== expected.epoch ||
+                loaded.runtime.snapshot.project.projectConfigVersion !== expected.policyVersion)
+            ) {
+              managedError = true;
+            } else {
+              managedActivation = loaded.runtime;
+            }
+          }
+        }
+        if (managedConfig.review !== null) {
+          try {
+            const review = managedConfig.review;
+            managedReview = {
+              provider: createHttpReviewProvider({
+                endpoint: review.endpoint,
+                model: review.model,
+                apiKeyEnv: review.apiKeyEnv,
+              }),
+              policy: review.policy,
+              calibration: review.calibration,
+              ceilingDigest: review.ceilingDigest,
+              ...(review.grantTtlMs === undefined ? {} : { grantTtlMs: review.grantTtlMs }),
+            };
+          } catch {
+            managedError = true;
+          }
+        }
+      } else if (managedError) {
+        diagnostic("amos_managed_config_error");
+      }
+
+      const managedRequested = managedConfig !== null || managedError;
+      const managedGates = new Map<string, ManagedSessionState>();
+      const managedPending = new Map<string, { readonly gate: HarnessGate; readonly callId: string }>();
+      const managedRuntimeUsed = new Set<string>();
+      const MAX_MANAGED_SESSIONS = 64;
+
       const makeInjectorSession =
         deps.createInjectorSession ??
         activationFactory ??
@@ -618,6 +921,63 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       // created exclusively from the harness user-prompt channel; no tool
       // result, file, or model text can enter here.
       const requirements = createRequirementSessionStore();
+
+      const managedCallId = (value: unknown): string | null => {
+        if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+          return null;
+        }
+        if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(value)) return value;
+        return `call_${createHash("sha256").update(value, "utf8").digest("hex").slice(0, 40)}`;
+      };
+
+      const ensureManagedGate = (
+        sessionID: string,
+      ): ManagedSessionState | { readonly status: "error" } | { readonly status: "absent" } => {
+        if (!managedRequested) return { status: "absent" };
+        if (managedError || managedConfig === null || managedActivation === null) {
+          return { status: "error" };
+        }
+        const existing = managedGates.get(sessionID);
+        if (existing !== undefined) return existing;
+        try {
+          const gate = createHarnessGate({
+            activation: managedActivation,
+            auditPath: managedConfig.auditPath,
+            sessionId: safeManagedSessionId(sessionID),
+            requirement: () => requirements.current(sessionID),
+            review: managedReview,
+            now: () => Date.now(),
+          });
+          const loadedAt = new Date().toISOString();
+          const state: ManagedSessionState = {
+            status: "ready",
+            gate,
+            runtime: managedActivation,
+            loadedAt,
+          };
+          managedGates.set(sessionID, state);
+          writeHarnessRuntimeReport({
+            directory: config.directory,
+            projectId: managedActivation.projectId,
+            activationDigest: managedActivation.activationDigest,
+            epoch: managedActivation.epoch,
+            policyVersion: managedActivation.snapshot.project.projectConfigVersion,
+            loadedAt,
+            harness: "opencode",
+            capabilities: OPENCODE_MANAGED_CAPABILITIES,
+          });
+          while (managedGates.size > MAX_MANAGED_SESSIONS) {
+            const oldest = managedGates.keys().next().value;
+            if (oldest === undefined || oldest === sessionID) break;
+            const evicted = managedGates.get(oldest);
+            if (evicted?.status === "ready") evicted.gate.close();
+            managedGates.delete(oldest);
+          }
+          return state;
+        } catch {
+          return { status: "error" };
+        }
+      };
 
       const advisoryState = (sessionID: string): AdvisoryState => {
         const existing = advisoryBySession.get(sessionID);
@@ -736,19 +1096,33 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
 
       const onPrompt = async (event: PromptEvent): Promise<void> => {
         try {
-          if (!gateEnabled || parsedConfig === null) return;
+          if (!gateEnabled && !managedRequested) return;
           const sessionID = readSessionID(event.sessionID);
           const text = readPromptText(event.prompt);
 
           // Requirement capture happens before any advisory handling so a
-          // later shell action in this turn can be assessed against the exact
-          // human message. Capture failure never blocks prompt admission; it
-          // only means a later *required* assessment fails closed.
-          if (parsedConfig.actionAssessment) {
+          // later managed confirm or shell assessment can use the exact human
+          // message. Capture failure never blocks prompt admission; it only
+          // means a later required decision fails closed.
+          if (managedRequested) {
             if (sessionID !== null) {
               if (text === null) {
-                // Empty, oversized, or unreadable new turns must not leave a
-                // stale frame available for reuse.
+                requirements.clear(sessionID);
+              } else {
+                try {
+                  requirements.captureUserMessage(
+                    sessionID,
+                    text,
+                    managedConfig?.requirementEgress ?? "denied",
+                  );
+                } catch {
+                  requirements.clear(sessionID);
+                }
+              }
+            }
+          } else if (gateEnabled && parsedConfig !== null && parsedConfig.actionAssessment) {
+            if (sessionID !== null) {
+              if (text === null) {
                 requirements.clear(sessionID);
               } else {
                 try {
@@ -766,7 +1140,10 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             requirements.clear(sessionID);
           }
 
-          if (!parsedConfig.guidance) return;
+          const guidanceEnabled =
+            (gateEnabled && parsedConfig !== null && parsedConfig.guidance) ||
+            (managedRequested && activationState.status === "enabled");
+          if (!guidanceEnabled) return;
           if (text === null || sessionID === null) return;
 
           const state = advisoryState(sessionID);
@@ -807,14 +1184,19 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       };
 
       const onContext = async (event: ContextEvent): Promise<void> => {
-        if (!gateEnabled || parsedConfig === null) return;
+        const guidanceEnabled =
+          (gateEnabled && parsedConfig !== null && parsedConfig.guidance) ||
+          (managedRequested && activationState.status === "enabled");
+        const completionReviewEnabled =
+          gateEnabled && parsedConfig !== null && parsedConfig.completionReview;
+        if (!guidanceEnabled && !completionReviewEnabled) return;
         const sessionID = readSessionID(event.sessionID);
         if (sessionID === null) return;
 
         // Advisory injection is isolated: an injector or host failure must not
         // suppress completion review below.
         try {
-          if (parsedConfig.guidance) {
+          if (guidanceEnabled) {
             const state = advisoryBySession.get(sessionID);
             if (state !== undefined) {
               const pendingPrompt = state.pendingPrompt;
@@ -847,7 +1229,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           // Advisory only; continue to completion review.
         }
 
-        if (!parsedConfig.completionReview) return;
+        if (!completionReviewEnabled) return;
         if (gate.jevError || gate.jev === null) {
           if (reviewedDigests.get(sessionID) === "jev_config_error") return;
           reviewedDigests.set(sessionID, "jev_config_error");
@@ -1163,12 +1545,56 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         }
       };
 
-      const onToolExecuteBefore = (event: ToolEvent): void => {
+      const onToolExecuteBefore = async (event: ToolEvent): Promise<void> => {
         // Normalize exactly once so audit and advisory queueing see the same
         // structural action.
         const normalized = normalizeAction(event);
         recordAudit(event, normalized);
         queueAdvisory(event, normalized);
+
+        if (managedRequested) {
+          const sessionID = readSessionID(event.sessionID);
+          if (sessionID === null) {
+            throw new Error("amos_managed_missing_session");
+          }
+          const state = ensureManagedGate(sessionID);
+          if (state.status === "absent" || state.status === "error") {
+            throw new Error("amos_managed_config_error");
+          }
+          if (normalized === null || normalized.kind !== "action") {
+            throw new Error("amos_managed_coverage_gap");
+          }
+          const callId = managedCallId(event.id);
+          if (callId === null) {
+            throw new Error("amos_managed_missing_call_id");
+          }
+          const result = await state.gate.preCall({
+            callId,
+            action: normalized.action,
+          });
+          if (result.action === "block") {
+            throw new Error(`amos_managed_${result.code}`);
+          }
+          managedPending.set(managedCallKey(sessionID, callId), {
+            gate: state.gate,
+            callId,
+          });
+          if (!managedRuntimeUsed.has(sessionID)) {
+            managedRuntimeUsed.add(sessionID);
+            writeHarnessRuntimeReport({
+              directory: config.directory,
+              projectId: state.runtime.projectId,
+              activationDigest: state.runtime.activationDigest,
+              epoch: state.runtime.epoch,
+              policyVersion: state.runtime.snapshot.project.projectConfigVersion,
+              loadedAt: state.loadedAt,
+              lastToolAt: new Date().toISOString(),
+              harness: "opencode",
+              capabilities: OPENCODE_MANAGED_CAPABILITIES,
+            });
+          }
+          return;
+        }
 
         if (!hardGateRequested) return;
         const tool = typeof event.tool === "string" ? event.tool : null;
@@ -1190,13 +1616,46 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         }
       };
 
+      const onToolExecuteAfter = (event: ToolEvent): void => {
+        const sessionID = readSessionID(event.sessionID);
+        if (sessionID === null) return;
+        const callId = managedCallId(event.id);
+        if (callId === null) return;
+        const key = managedCallKey(sessionID, callId);
+        const pending = managedPending.get(key);
+        if (pending === undefined) return;
+        managedPending.delete(key);
+        try {
+          pending.gate.recordResult(
+            pending.callId,
+            event.status === "completed" ? "executed" : "failed",
+            event.status === "completed" ? undefined : "tool_error",
+          );
+        } catch {
+          // A result-journal failure must not re-run the effect or escape the
+          // host hook; the authorization remains the last durable record.
+        }
+      };
+
       // Audit remains the first registration and is always active.
       await register(
         ctx.tool.hook("execute.before", onToolExecuteBefore),
       );
+      if (managedRequested) {
+        await register(
+          ctx.tool.hook("execute.after", onToolExecuteAfter),
+        );
+      }
 
-      if (gateEnabled && parsedConfig !== null) {
-        if (parsedConfig.guidance || parsedConfig.actionAssessment) {
+      if (
+        managedRequested ||
+        (gateEnabled && parsedConfig !== null)
+      ) {
+        if (
+          managedRequested ||
+          (parsedConfig !== null &&
+            (parsedConfig.guidance || parsedConfig.actionAssessment))
+        ) {
           await register(
             ctx.session === undefined
               ? undefined
@@ -1204,7 +1663,11 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           );
         }
 
-        if (parsedConfig.guidance || parsedConfig.completionReview) {
+        if (
+          (managedRequested && activationState.status === "enabled") ||
+          (parsedConfig !== null &&
+            (parsedConfig.guidance || parsedConfig.completionReview))
+        ) {
           await register(
             ctx.session === undefined
               ? undefined
