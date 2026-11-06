@@ -1248,6 +1248,11 @@ class GovernanceControlPlane implements ControlPlane {
         const base = this.requirePublishedVersion(project);
         if (base === null) throw new DomainError('not_found');
         const effective = this.loadEffectiveActivation(project, base).snapshot;
+        if (input.current.activationDigest !== effective.activationDigest) {
+          // The caller's binding is not the effective activation; evidence
+          // recorded against a superseded snapshot must never promote.
+          throw new DomainError('evidence_unbound');
+        }
         const candidates = effective.activeRules.filter((item) => item.id === ruleId);
         if (candidates.length === 0) throw new DomainError('not_found');
         const ruleVersion = input.ruleVersion;
@@ -1832,8 +1837,8 @@ class GovernanceControlPlane implements ControlPlane {
     }
 
     const entries: AppliedTightening[] = [];
+    const currentBaseVersion = base.snapshot.activationSnapshot.project.baseVersion;
     for (const row of rows) {
-      if (row.retired_at !== null) continue;
       let snapshot: ProjectActivationSnapshot;
       try {
         snapshot = verifyProjectActivationSnapshot(deepFreeze(parseStoredJson(row.snapshot_json)));
@@ -1850,6 +1855,10 @@ class GovernanceControlPlane implements ControlPlane {
       ) {
         throw new DomainError('database_corrupt');
       }
+      // Rows from earlier published versions stay for quota history but cannot
+      // be chained onto this base. Within the current generation, retired rows
+      // remain in the chain because later snapshots may include them.
+      if (snapshot.project.baseVersion !== currentBaseVersion) continue;
       entries.push({
         snapshot,
         templateId: row.template_id,
@@ -1857,6 +1866,7 @@ class GovernanceControlPlane implements ControlPlane {
         appliedAt: row.applied_at,
         expiresAt: row.expires_at,
         epoch: row.epoch,
+        ...(row.retired_at === null ? {} : { retiredAt: row.retired_at }),
       });
     }
 

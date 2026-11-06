@@ -182,6 +182,107 @@ test('probe evidence binds to the published activation and rollout advances one 
   assert.equal(audit.items.some((event) => event.kind === 'rollout_promoted'), true);
 });
 
+test('promotion rejects evidence bound to a superseded activation', (t) => {
+  const dir = makeTempDir(t);
+  const clock = createTestClock(START);
+  const cp = createControlPlane({
+    databasePath: join(dir, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+  });
+  t.after(() => cp.close());
+  const project = createProject(cp, join(dir, 'workspace'));
+  const candidate = makeCandidate([makeRule('rule-1')]);
+  const first = cp.createProposal(
+    project.id,
+    {
+      title: 'Publish rule',
+      rationale: 'Stale evidence fixture',
+      baseVersion: 0,
+      expiresAt: futureIso(clock),
+      candidate,
+    },
+    human(),
+  );
+  cp.decideProposal(
+    first.id,
+    { decision: 'approve', note: 'approved', expectedDigest: first.digest },
+    human(),
+  );
+  const firstDigest = cp.getVersion(project.id, 1).snapshot.activationDigest;
+  cp.updateProjectConfig(
+    project.id,
+    { rollout: { thresholds: threshold(clock.now(), 'draft', 'log_only') } },
+    human(),
+  );
+
+  const staleRun = probe(firstDigest, clock.now());
+  cp.recordProbeRun(project.id, { probe: staleRun }, agent());
+
+  // A new publication changes the effective activation. The old caller binding
+  // and its evidence must not promote after the fact.
+  const second = cp.createProposal(
+    project.id,
+    {
+      title: 'Publish rule again',
+      rationale: 'New activation fixture',
+      baseVersion: 1,
+      expiresAt: futureIso(clock),
+      candidate,
+    },
+    human(),
+  );
+  cp.decideProposal(
+    second.id,
+    { decision: 'approve', note: 'approved', expectedDigest: second.digest },
+    human(),
+  );
+  const secondDigest = cp.getVersion(project.id, 2).snapshot.activationDigest;
+  assert.notEqual(secondDigest, firstDigest);
+
+  expectDomainError(
+    () =>
+      cp.evaluateRulePromotion(
+        project.id,
+        'rule-1',
+        {
+          evidence: [staleRun],
+          current: {
+            activationDigest: firstDigest,
+            host: staleRun.host,
+            check: staleRun.check,
+            environment: staleRun.environment,
+          },
+        },
+        agent(),
+      ),
+    'evidence_unbound',
+  );
+  assert.equal(cp.listRuleRollouts(project.id).length, 0);
+
+  const freshRun = probe(secondDigest, clock.now(), {
+    runId: 'run-2',
+    artifactsDigest: sha('b'),
+  });
+  cp.recordProbeRun(project.id, { probe: freshRun }, agent());
+  const promoted = cp.evaluateRulePromotion(
+    project.id,
+    'rule-1',
+    {
+      evidence: [freshRun],
+      current: {
+        activationDigest: secondDigest,
+        host: freshRun.host,
+        check: freshRun.check,
+        environment: freshRun.environment,
+      },
+    },
+    agent(),
+  );
+  assert.equal(promoted.decision, 'promote');
+  assert.equal(promoted.toStage, 'log_only');
+});
+
 test('hold and rejection keep rollout state unchanged and record fixed reasons', (t) => {
   const dir = makeTempDir(t);
   const clock = createTestClock(START);

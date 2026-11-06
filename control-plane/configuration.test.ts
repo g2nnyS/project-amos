@@ -264,6 +264,121 @@ test('preauthorized tightening applies, persists, re-emits, expires, and survive
   fixture.cp.close();
 });
 
+test('staggered tightening expiry keeps the snapshot chain recoverable', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  const project = createProject(fixture.cp, fixture.workspace);
+  const active = makeRule('active-read', {
+    predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
+  });
+  const shortRule = makeRule('tighten-write', {
+    dimension: 'filesystem',
+    level: 1,
+    predicate: [{ op: 'op_in', args: { operations: ['file_write'] } }],
+    on_hit: 'deny',
+  });
+  const longRule = makeRule('tighten-delete', {
+    dimension: 'filesystem',
+    level: 1,
+    predicate: [{ op: 'op_in', args: { operations: ['file_delete'] } }],
+    on_hit: 'confirm',
+  });
+  const proposal = fixture.cp.createProposal(
+    project.id,
+    {
+      title: 'Publish active rule only',
+      rationale: 'Two preauthorized tightening templates.',
+      baseVersion: 0,
+      expiresAt: futureIso(clock),
+      candidate: makeCandidate([active, shortRule, longRule], {
+        includedRuleIds: [active.id],
+      }),
+    },
+    human(),
+  );
+  fixture.cp.decideProposal(
+    proposal.id,
+    { decision: 'approve', note: 'fixture approval', expectedDigest: proposal.digest },
+    human(),
+  );
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: { maxActive: 2, maxApplications: 10, windowMs: 3_600_000 },
+        templates: [
+          {
+            id: 'template-short',
+            ruleRef: { id: shortRule.id, version: 1 },
+            ruleDigest: tighteningRuleDigest(shortRule as unknown as Record<string, unknown>),
+            maxTtlMs: 120_000,
+            maxApplications: 3,
+            windowMs: 3_600_000,
+          },
+          {
+            id: 'template-long',
+            ruleRef: { id: longRule.id, version: 1 },
+            ruleDigest: tighteningRuleDigest(longRule as unknown as Record<string, unknown>),
+            maxTtlMs: 120_000,
+            maxApplications: 3,
+            windowMs: 3_600_000,
+          },
+        ],
+      },
+    },
+    human(),
+  );
+
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-short', ttlMs: 10_000 },
+    agent(),
+  );
+  clock.advance(5_000);
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-long', ttlMs: 60_000 },
+    agent(),
+  );
+  clock.advance(6_000);
+
+  const afterPartialExpiry = fixture.cp.expireTemporaryTightenings(project.id, agent());
+  assert.equal(afterPartialExpiry.active.length, 1);
+  assert.equal(afterPartialExpiry.active[0]?.templateId, 'template-long');
+  assert.equal(afterPartialExpiry.expired.length, 1);
+  assert.equal(afterPartialExpiry.expired[0]?.templateId, 'template-short');
+
+  // The surviving row's apply-time snapshot still contains the now-retired
+  // rule. Re-applying the retired template must not brick recovery.
+  const reapplied = fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-short', ttlMs: 10_000 },
+    agent(),
+  );
+  assert.equal(reapplied.active.length, 2);
+  const epoch = reapplied.epoch;
+
+  fixture.cp.close();
+  const restarted = createControlPlane({
+    databasePath: fixture.databasePath,
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: fixture.auditDir,
+    writeArtifacts: writeProjectArtifacts,
+  });
+  t.after(() => restarted.close());
+  const persisted = restarted.listTemporaryTightenings(project.id);
+  assert.equal(persisted.active.length, 2);
+  assert.equal(persisted.expired.length, 1);
+  assert.equal(persisted.epoch, epoch);
+
+  clock.advance(61_000);
+  const fullyExpired = restarted.expireTemporaryTightenings(project.id, agent());
+  assert.equal(fullyExpired.active.length, 0);
+  assert.equal(fullyExpired.expired.length, 3);
+});
+
 test('tightening rejects unapproved templates, missing enablement, and excessive TTL', (t) => {
   const clock = createTestClock(START);
   const fixture = open(t, clock);
