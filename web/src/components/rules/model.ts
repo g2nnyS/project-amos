@@ -16,9 +16,36 @@ export function predicate(op: Operator): RulePredicate {
 }
 export function values(p: RulePredicate): string[] { return Object.values(p.args)[0] ?? [] }
 export function newRule(id: string): DraftRule {
-  return { id, dimension: '', level: 0, expressivity: 'deterministic', predicate: [predicate('op_in')], narrative: '', on_hit: 'log', scope: 'project', ttl: null, owner: 'human', source: { repo: '', rev: '', path: '', section: '', lines: '', quote: '' }, probe: '', policy_class: 'security', enforcement: 'runtime' }
+  // Start from a schema-valid project rule so "add" never produces a draft
+  // that can only be fixed by filling every provenance field by hand.
+  return {
+    id,
+    dimension: 'project',
+    level: 1,
+    expressivity: 'deterministic',
+    predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
+    narrative: 'Project-specific rule; edit before publishing.',
+    on_hit: 'log',
+    scope: 'project',
+    ttl: null,
+    owner: 'human',
+    source: {
+      repo: 'local-project',
+      rev: 'v1',
+      path: '.pi/amos.json',
+      section: 'project rule',
+      lines: '1',
+      quote: 'Project-authored rule.',
+    },
+    probe: 'Project-authored rule.',
+    policy_class: 'security',
+    enforcement: 'runtime',
+  }
 }
-export function clone(candidate: Candidate): DraftCandidate { return structuredClone(candidate) as DraftCandidate }
+export function clone(candidate: Candidate): DraftCandidate {
+  // Reactive proxies cannot be structuredClone'd. Rule records are JSON data.
+  return JSON.parse(JSON.stringify(candidate)) as DraftCandidate
+}
 export function activationIssues(candidate: DraftCandidate): string[] {
   const ids = candidate.rules.map(r => r.id)
   const inc = candidate.activation.includedRuleIds

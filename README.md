@@ -11,7 +11,7 @@
 
 <p align="center">
   <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Status: three parts — Approve for me (not implemented), built-in multi-dimensional intercept rules plus user edits, dynamic engineering-norm injection; runtime enforcement NO-GO</strong>
+  <strong>Pi harness-layer blocking (explicit opt-in), independent review + one-shot grant, activation injection and audit are implemented; default adapters remain log-only. OS isolation is out of scope for this MVP.</strong>
 </p>
 
 <p align="center">
@@ -24,8 +24,19 @@
 
 Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
 
-> **Security Boundary Notice**: The security policy layer is in **Stage A (`log-only` observation)** and is **not yet a hard security boundary**.
-> Security adapters observe selected file-tool actions and log hypothetical verdicts to JSONL. A separate opt-in **engineering workflow gate** can block dangerous shell commands, inject session-pinned advisory rules, assess actions against the captured human requirement, and hold changes for local/Jev review. That gate is a workflow guardrail, not complete mediation or an OS security boundary. True "physical locking," "default deny everywhere," or "tamper-proof auditing" still require an isolated supervisor process, complete action mediation, and OS-level execution boundaries (see [Security Model & Current Guarantees](docs/security-model.md) and [Workflow Gate](docs/workflow-gate.md)).
+> **Security boundary**: Security adapters are log-only by default. Pi `.pi/amos.json` `managed.enabled` is an explicit opt-in Harness-layer gate that can block normalized tool calls and review confirms; it is **not an OS sandbox**, does not cover every entry/side effect, and its audit is not tamper-proof. The separate engineering workflow gate remains an opt-in guard. See [Security Model](docs/security-model.md), [Harness Gate ADR](docs/adr-harness-gate.md), and [Workflow Gate](docs/workflow-gate.md).
+
+---
+
+## Current Product Scope
+
+Amos now provides a limited Harness-layer MVP: a real Vue governance console publishes
+P1 project snapshots, a real Pi session loads the same snapshot for enforcement and
+advisory injection, and `deny`/`confirm`/`allow` are decided before the harness tool
+runs. `confirm` is held for an independent reviewer and a single-use grant. The default
+adapter remains log-only; managed mode is explicit opt-in and is not an OS sandbox.
+See [MVP delivery](docs/mvp-delivery.md), [Product Scope](docs/product-design.md), and
+[Implementation Status](docs/product-gap-plan.md).
 
 ---
 
@@ -65,19 +76,25 @@ In security `log-only` mode, the only side effects are writing the audit record 
 - **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
+- **P1 Project Rule Catalog + Publication**: Imports the repository YAML rules and guidance seeds, compiles project execution/advisory projections, and publishes a catalog-v2 artifact from the console. The Pi managed path consumes the same artifact for enforcement and injection.
+- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent model review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. A live probe uses a real local model, real Pi session, real reviewer, and real file effects. Not an OS sandbox; default remains log-only.
+- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Pi managed mode now wires the review/grant path; OpenCode remains log-only. OS isolation is out of scope and there is no live model calibration.
+- **Vue Governance Console & SQLite API**: Reuses the existing Vue console for login, projects, rule editing/import, validation, proposals, human approval/publish, versions, rollback, audit, and observations. SQLite remains the single primary; publication compiles catalog-v2 and writes the harness artifact. A real browser test covers login→publish→YAML export/import→runtime status→rollback. Host receipt is a same-UID runtime report, not remote attestation.
+- **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
 - **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
 - **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
-- **Local Governance Console**: A Chinese browser UI and SQLite service for projects, complete rule editing, immutable proposals, human approval/publication, version history, rollback proposals, exports, and governance audit. This is local governance, not trusted execution or per-tool authorization.
 
-### What's Not Built Yet (Required Before Enforcement)
+### Current Limitations
 
-- Complete mediation across shell commands, patches, network calls, unknown tools, and other harness entry points.
-- A trusted supervisor process and policy/audit storage isolated from the agent's writable domain.
-- Symlink-, hard-link-, bind-mount-, and TOCTOU-safe filesystem execution.
-- Authenticated one-time human approval bound to specific actions and policy snapshots, plus runtime enforcement semantics for `scope`, `owner`, `level`, and `policy_class`.
-- Live security-layer `deny` or `confirm` blocking in either adapter. The separate engineering workflow gate does not satisfy this requirement.
-- The Approve for me security shape: a host sandbox that stops a boundary crossing before a separate reviewer may approve that one escalation. The target is recorded in [Security Shape](docs/security-shape.md). It is not a plugin mode, and today's Jev path still cannot approve.
+- The default Pi/OpenCode adapters still use Stage A log-only behavior. Pi `managed.enabled` is the explicit opt-in Harness gate; OpenCode managed interception is not implemented.
+- `managed` covers normalized `read/write/edit/ls/find/grep`; shell, PowerShell, custom tools, MCP, subprocesses, bypass paths and side effects inside an allowed shell are outside the guarantee.
+- OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is **out of scope for this MVP**, not a blocker; do not claim it.
+- No publisher authentication. Snapshot verification is structural/identity consistency, not a signature; control-plane tokens and runtime reports are same-UID local observations.
+- The live reviewer is a local model with a synthetic calibration set; it is not a security certification. External provider credentials/egress were not used.
+- No complete rollout, temporary-tightening persistence, remote CI acceptance gate, or host effective-receipt across machines.
+- SQLite owner-only files, in-process HMAC, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
+- `strict/` and `autonomy/` remain local experimental libraries from the dev line; they are not the MVP managed path.
 
 ---
 
@@ -106,16 +123,6 @@ npm run audit:review -- \
 
 *(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
 
-### 3. Open the Human Governance Console
-
-```bash
-npm run console
-```
-
-Open `http://127.0.0.1:4310` and use the **human token file** named by the startup output to log in. Tokens are never printed. State defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`, outside the workspace. Do not share the human token with agents; their separate token can read and propose but cannot approve.
-
-Create a project, import the repository seed rules into a candidate, edit and validate, then submit a proposal. **Approve and publish** commits a new local version atomically; rollback also requires a new proposal. Nothing rewrites the current harness configuration or enables runtime security enforcement. Same-user processes can still access the token and database; this is not OS isolation. See [Local Governance Guide](docs/local-governance.md) for startup options, recovery, and limits.
-
 ---
 
 ## Workflow & Documentation
@@ -123,12 +130,13 @@ Create a project, import the repository seed rules into a candidate, edit and va
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
-- [Security Model & Guarantees](docs/security-model.md) · [Security Shape](docs/security-shape.md) · [G0 Gate Criteria](docs/go-no-go.md)
+- [Product Scope](docs/product-design.md) · [Implementation Status](docs/product-gap-plan.md)
+- [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
+- [Delivery Status](docs/delivery-status.md) · [AC-01–22 Acceptance Matrix](docs/acceptance-one-shot.md) · [One-Shot Verification](docs/verification-one-shot.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
+- Safety ADRs: [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
-- [Local Governance Console](docs/local-governance.md)
-- [Restricted Strict Harness](docs/strict-harness.md) — controlled Pi SDK host; memory-only staged changes, no native Shell/MCP executor.
 
 ---
 

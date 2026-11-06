@@ -5,9 +5,12 @@ security adapters' Stage A `log-only` mode. Enabling it may block a dangerous sh
 command or hold work for engineering review; that does not turn Amos into complete
 mediation or a trusted execution boundary.
 
+Current behavior and harness limitations are described below. In particular,
+OpenCode completion feedback is advisory and is not a merge block.
+
 ## What it does
 
-- Selects advisory engineering rules from a session-pinned snapshot before and during a coding run. The current DB-free adapter uses a transitional seed compiled from `guidance/`; it is not a trusted control-plane snapshot.
+- Selects advisory engineering rules from a session-pinned snapshot before and during a coding run. Current adapters compile a seed from `guidance/`; they do not use the P1 offline project catalog.
 - Assesses bash commands through a strict, closed-subset lexer before execution.
   Known destructive, privilege, interpreter, meta-executor, network, and forced-VCS
   operations are denied or require confirmation. Unknown syntax and executables are
@@ -24,6 +27,10 @@ mediation or a trusted execution boundary.
 - Never logs shell command text, file contents, credentials, or the raw diff.
 
 ## Configuration
+
+Current configuration remains file-based: Pi reads `.pi/amos.json`, and OpenCode
+reads plugin options. The examples below describe the existing loaders. The workflow
+gate is an engineering guardrail, not security enforcement.
 
 Pi reads the gate from the local, untracked `.pi/amos.json`; OpenCode reads the equivalent
 object from plugin options. The security audit configuration remains required and

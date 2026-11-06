@@ -19,7 +19,7 @@ import {
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml } from 'yaml';
 
 import {
   AuthManager,
@@ -40,8 +40,13 @@ import type {
   DecideProposalInput,
   RuleRecord,
 } from './contracts.ts';
+import {
+  parsePolicyDocument,
+  serializePolicyDocument,
+} from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import type { ObservationLogs, ObservationReport } from './observations.ts';
+import { readRuntimeStatus } from './runtime-status.ts';
 import { loadStaticAssets, type StaticAsset } from './static-assets.ts';
 
 export type {
@@ -308,8 +313,9 @@ export function createGovernanceServer(
         projectCount = null;
       }
       sendJson(res, 200, {
-        mode: 'log-only',
-        enforcement: false,
+        mode: 'managed-opt-in',
+        enforcement: true,
+        defaultEnabled: false,
         trustBoundary: false,
         ...(projectCount === null ? {} : { projectCount }),
       });
@@ -412,9 +418,7 @@ export function createGovernanceServer(
           const published = service.getVersion(id, version);
           const format = url.searchParams.get('format') ?? 'json';
           if (format === 'yaml') {
-            const yaml = stringifyYaml(effectiveRules(published.candidate), {
-              lineWidth: 0,
-            });
+            const yaml = serializePolicyDocument(published);
             const filename = `amos-policy-${safeFilenamePart(id)}-v${version}.yaml`;
             sendBytes(
               res,
@@ -465,6 +469,49 @@ export function createGovernanceServer(
         const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
         const input = parseProposalInput(body, now());
         sendJson(res, 201, service.createProposal(id, input, actor));
+        return;
+      }
+
+      if (child === 'import') {
+        requirePath(segments, 4);
+        requireMethod(method, 'POST');
+        requireAnyActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        if (typeof body.yaml !== 'string') {
+          throw new HttpError(400, 'invalid_body');
+        }
+        let parsed: ReturnType<typeof parsePolicyDocument>;
+        try {
+          parsed = parsePolicyDocument(body.yaml);
+        } catch {
+          throw new HttpError(400, 'document_invalid');
+        }
+        if (parsed.projectId !== null && parsed.projectId !== id) {
+          throw new HttpError(400, 'project_mismatch');
+        }
+        if (
+          parsed.workspace !== null &&
+          parsed.workspace !== service.getProject(id).workspace
+        ) {
+          throw new HttpError(400, 'project_mismatch');
+        }
+        const validation = service.validateCandidate(id, parsed.candidate);
+        sendJson(res, 200, {
+          valid: validation.valid,
+          issues: validation.issues,
+          candidate: parsed.candidate,
+        });
+        return;
+      }
+
+      if (child === 'runtime') {
+        requirePath(segments, 4);
+        requireMethod(method, 'GET');
+        requireAnyActor(req);
+        const project = service.getProject(id);
+        const current = service.getCurrentPolicy(id);
+        sendJson(res, 200, readRuntimeStatus(project.workspace, current));
         return;
       }
 

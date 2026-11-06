@@ -7,9 +7,33 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "esModuleInterop": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "skipLibCheck": true
   },
-  "include": ["engine/**/*.ts", "adapters/**/*.ts", "storage/**/*.ts", "decision/**/*.ts", "supervisor/**/*.ts", "guidance/**/*.ts", "injector/**/*.ts", "workflow/**/*.ts", "control-plane/**/*.ts", "strict/**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "activation/**/*.ts",
+    "adapters/**/*.ts",
+    "autonomy/**/*.ts",
+    "catalog/**/*.ts",
+    "check/**/*.ts",
+    "control-plane/**/*.ts",
+    "decision/**/*.ts",
+    "engine/**/*.ts",
+    "guidance/**/*.ts",
+    "host/**/*.ts",
+    "injector/**/*.ts",
+    "managed/**/*.ts",
+    "review/**/*.ts",
+    "rollout/**/*.ts",
+    "storage/**/*.ts",
+    "strict/**/*.ts",
+    "supervisor/**/*.ts",
+    "workflow/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

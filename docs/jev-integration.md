@@ -4,10 +4,9 @@ The `decision/` module integrates TypeSafe Jev (`POST /v1/systemone`) as an
 **optional probabilistic semantic sensor**. It never replaces the deterministic
 rule engine and it cannot grant permissions.
 
-This module is not the security auto-reviewer. The target Approve for me
-reviewer, which may approve one sandbox-stopped confirm-class escalation, is
-specified in `docs/security-shape.md` and is not implemented. Do not reuse
-`combineDeterministicWithAssessment` for that role.
+The current decision path is not an authorization or security-enforcement
+mechanism. Do not treat `combineDeterministicWithAssessment` as permission to
+execute an action.
 
 ## Boundary
 
@@ -56,6 +55,10 @@ before the provider will send it; otherwise the provider throws
 declared scope.
 
 ## Configuration and data egress
+
+Provider, model, threshold, and egress configuration remain file-based. Credentials
+should be provided through environment references or the ignored local config file;
+this Jev integration cannot authorize tool execution.
 
 Direct construction remains available:
 

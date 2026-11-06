@@ -1,4 +1,4 @@
-import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, ObservationReport, PolicyDecision, Project, Proposal, PublishedVersion, RuntimeStatus, SimulateInput, ValidationResult } from '../types/index.js'
+import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, HarnessRuntimeStatus, ObservationReport, PolicyDecision, Project, Proposal, PublishedVersion, RuntimeStatus, SimulateInput, ValidationResult } from '../types/index.js'
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status?: number) { super(message); this.name = 'ApiError' }
@@ -77,6 +77,8 @@ export class ApiClient {
   seed(): Promise<Candidate> { return this.json('/api/seed') }
   schema(): Promise<Record<string, unknown>> { return this.json('/api/schema') }
   validate(id: string, candidate: Candidate): Promise<ValidationResult> { return this.json(`/api/projects/${pathId(id)}/validate`, 'POST', { candidate }) }
+  importYaml(id: string, yaml: string): Promise<{ valid: boolean; issues: ValidationResult['issues']; candidate: Candidate }> { return this.json(`/api/projects/${pathId(id)}/import`, 'POST', { yaml }) }
+  runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
   proposals(id: string): Promise<Proposal[]> { return this.json(`/api/projects/${pathId(id)}/proposals`) }
   proposal(id: string): Promise<Proposal> { return this.json(`/api/proposals/${pathId(id)}`) }
   createProposal(id: string, input: CreateProposalInput): Promise<Proposal> { return this.json(`/api/projects/${pathId(id)}/proposals`, 'POST', input) }
@@ -99,7 +101,7 @@ export class ApiClient {
     if (epoch !== this.generation) throw stale()
     if (typeof document === 'undefined' || typeof URL.createObjectURL !== 'function') throw new ApiError('download_unavailable', '当前环境无法下载文件。')
     const url = URL.createObjectURL(blob); const link = document.createElement('a')
-    link.href = url; link.download = `amos-policy-${id.replace(/[^a-z0-9_-]/gi, '-')}-v${version}.${format}`; link.style.display = 'none'
+    link.href = url; link.download = `amos-policy-${id.replace(/[^a-z0-9_-]/gi, '-')}-v${version}.${format}`; link.hidden = true
     document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 }

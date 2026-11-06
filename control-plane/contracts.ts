@@ -1,4 +1,6 @@
 import type { PolicyDecision } from '../engine/engine.ts';
+import type { InjectionRoute } from '../injector/snapshot.ts';
+import type { ProjectActivationSnapshot } from '../activation/types.ts';
 
 /**
  * Public domain contract for the local governance product.
@@ -98,9 +100,18 @@ export interface CandidateActivation {
   readonly excludedRuleIds: string[];
 }
 
+export interface CandidateInjection {
+  /** Advisory baseline rule IDs; selected only when already activated. */
+  readonly baselineRuleIds: string[];
+  /** Optional task/path routing metadata consumed by the advisory selector. */
+  readonly routes: InjectionRoute[];
+}
+
 export interface Candidate {
   readonly rules: RuleRecord[];
   readonly activation: CandidateActivation;
+  /** Optional versioned injection configuration; omitted means defaults. */
+  readonly injection?: CandidateInjection;
 }
 
 export type ProposalStatus =
@@ -155,6 +166,9 @@ export interface PolicySnapshot {
   readonly schemaDigest: string;
   readonly candidateDigest: string;
   readonly activation: CandidateActivation;
+  /** P1 project activation snapshot consumed by the harness/runtime. */
+  readonly activationSnapshot: ProjectActivationSnapshot;
+  readonly activationDigest: string;
   readonly enforcement: PolicySnapshotLane;
   readonly advisory: PolicySnapshotLane;
   /** Flat aliases used by the console/export surface. */
@@ -253,6 +267,15 @@ export interface SimulateInput {
   readonly version?: number;
 }
 
+export interface PublishArtifactInput {
+  readonly projectId: string;
+  readonly workspace: string;
+  readonly version: number;
+  readonly snapshot: PolicySnapshot;
+  /** Deterministic P1 snapshot JSON written to the harness artifact path. */
+  readonly artifact: string;
+}
+
 export interface CreateControlPlaneOptions {
   readonly databasePath: string;
   /**
@@ -260,6 +283,17 @@ export interface CreateControlPlaneOptions {
    * service validates the schema and binds its canonical digest into storage.
    */
   readonly rawSchema: string | Record<string, unknown>;
+  /** Repository rule table for the global catalog and mandatory baseline. */
+  readonly rulesYaml?: string;
+  /** Exact `guidance/packs.ts` bytes; required for guidance seeds. */
+  readonly guidanceSource?: string;
+  readonly guidancePacks?: readonly import('../guidance/types.ts').GuidancePack[];
+  /**
+   * Optional post-commit artifact writer. Publication success is the database
+   * version; a failed artifact write is reported by the runtime status endpoint,
+   * never disguised as a host load.
+   */
+  readonly publishArtifact?: (input: PublishArtifactInput) => void;
   readonly now?: () => number;
 }
 

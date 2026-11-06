@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Ajv, type ErrorObject } from 'ajv';
 import { assertValidTable } from '../engine/engine.ts';
+import type { ProjectActivationSnapshot } from '../activation/types.ts';
 import type {
   Candidate,
   CandidateActivation,
+  CandidateInjection,
   PolicySnapshot,
   RulePredicate,
   RuleRecord,
@@ -65,6 +67,7 @@ export interface SnapshotBuildInput {
   readonly version: number;
   readonly compiled: CompiledCandidate;
   readonly schemaDigest: string;
+  readonly activationSnapshot: ProjectActivationSnapshot;
   readonly schemaVersion?: string;
   readonly compilerVersion?: string;
 }
@@ -123,10 +126,17 @@ export function createRuleValidator(
  * sets used for publication. The stored/normalized candidate keeps the raw
  * `${SESSION_WORKSPACE}` token; only glob patterns are expanded.
  */
+export interface ExternalRuleView {
+  readonly allowedRuleIds: ReadonlySet<string>;
+  readonly mandatoryIds: ReadonlySet<string>;
+  readonly globalRules: ReadonlyMap<string, RuleRecord>;
+}
+
 export function validateAndCompileCandidate(
   rawCandidate: unknown,
   workspace: string,
   validator: RuleValidator,
+  external: ExternalRuleView | null = null,
 ): CandidateCompilation {
   const issues: ValidationIssue[] = [];
 
@@ -170,7 +180,7 @@ export function validateAndCompileCandidate(
   }
 
   for (const key of Object.keys(normalized)) {
-    if (key !== 'rules' && key !== 'activation') {
+    if (key !== 'rules' && key !== 'activation' && key !== 'injection') {
       issues.push({ path: `candidate.${key}`, code: 'unknown_field' });
     }
   }
@@ -203,6 +213,13 @@ export function validateAndCompileCandidate(
         } else {
           seen.add(rule.id);
         }
+        const global = external?.globalRules.get(rule.id);
+        if (global !== undefined && canonicalJson(global) !== canonicalJson(rule)) {
+          issues.push({
+            path: `candidate.rules[${index}].id`,
+            code: 'global_rule_conflict',
+          });
+        }
 
         try {
           // Validate each rule independently so a semantic failure (for
@@ -223,7 +240,9 @@ export function validateAndCompileCandidate(
     normalized.activation,
     rawRules,
     issues,
+    external,
   );
+  const injection = validateInjection(normalized.injection, issues);
 
   const expansion =
     rawRules.length > 0
@@ -263,6 +282,7 @@ export function validateAndCompileCandidate(
   const candidate: Candidate = {
     rules: rawRules,
     activation: activationResult.candidate,
+    ...(injection === null ? {} : { injection }),
   };
   const effectiveSet = new Set(activationResult.effectiveRuleIds);
   const effectiveRules = expansion.rules.filter((rule) =>
@@ -315,6 +335,24 @@ export function candidateDigest(candidate: Candidate): string {
 export function buildPolicySnapshot(input: SnapshotBuildInput): PolicySnapshot {
   const schemaVersion = input.schemaVersion ?? RULE_SCHEMA_VERSION;
   const compilerVersion = input.compilerVersion ?? COMPILER_VERSION;
+  const activation = input.activationSnapshot;
+  const runtime = activation.enforcement.runtime;
+  if (
+    (runtime.status !== 'ready' && runtime.status !== 'empty') ||
+    runtime.projectId !== input.projectId ||
+    runtime.workspace !== input.workspace ||
+    (runtime.status === 'ready' ? runtime.rules.length === 0 : runtime.rules.length !== 0)
+  ) {
+    throw new DomainError('candidate_invalid');
+  }
+  const enforcementRules = runtime.rules as unknown as RuleRecord[];
+  const advisoryRules = activation.activeRules.flatMap((entry) =>
+    entry.rule === null ||
+    entry.injection === null ||
+    entry.rule.expressivity !== 'advisory_only'
+      ? []
+      : [entry.rule as unknown as RuleRecord],
+  );
   const common = {
     projectId: input.projectId,
     workspace: input.workspace,
@@ -324,24 +362,22 @@ export function buildPolicySnapshot(input: SnapshotBuildInput): PolicySnapshot {
     schemaDigest: input.schemaDigest,
     candidateDigest: input.compiled.candidateDigest,
     activation: input.compiled.candidate.activation,
+    activationDigest: activation.activationDigest,
+    activationSnapshot: activation,
   } as const;
 
+  // The P1 runtime projection is the single enforcement source. The legacy
+  // lane partitioning above remains only as a metadata projection for the
+  // console; it never creates a second policy table.
   const enforcement = {
-    digest: digestWithDomain(ENFORCEMENT_DIGEST_DOMAIN, {
-      ...common,
-      rules: input.compiled.enforcementRules,
-    }),
-    ruleIds: input.compiled.enforcementRules.map((rule) => rule.id),
-    rules: input.compiled.enforcementRules,
+    digest: runtime.digest,
+    ruleIds: runtime.ruleRefs.map((ref) => ref.id),
+    rules: enforcementRules,
   };
-
   const advisory = {
-    digest: digestWithDomain(ADVISORY_DIGEST_DOMAIN, {
-      ...common,
-      rules: input.compiled.advisoryRules,
-    }),
-    ruleIds: input.compiled.advisoryRules.map((rule) => rule.id),
-    rules: input.compiled.advisoryRules,
+    digest: activation.advisory.digest,
+    ruleIds: advisoryRules.map((rule) => rule.id),
+    rules: advisoryRules,
   };
 
   return {
@@ -352,11 +388,7 @@ export function buildPolicySnapshot(input: SnapshotBuildInput): PolicySnapshot {
     advisory,
     enforcementDigest: enforcement.digest,
     advisoryDigest: advisory.digest,
-    digest: digestWithDomain(SNAPSHOT_DIGEST_DOMAIN, {
-      ...common,
-      enforcementDigest: enforcement.digest,
-      advisoryDigest: advisory.digest,
-    }),
+    digest: activation.digest,
   };
 }
 
@@ -427,10 +459,45 @@ interface ActivationValidation {
   readonly effectiveRuleIds: string[];
 }
 
+function validateInjection(
+  value: unknown,
+  issues: ValidationIssue[],
+): CandidateInjection | null {
+  if (value === undefined) return null;
+  if (!isRecord(value)) {
+    issues.push({ path: 'candidate.injection', code: 'invalid_candidate' });
+    return null;
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== 'baselineRuleIds' && key !== 'routes') {
+      issues.push({ path: `candidate.injection.${key}`, code: 'unknown_field' });
+    }
+  }
+  const baselineRuleIds = readIdArray(
+    value.baselineRuleIds,
+    'candidate.injection.baselineRuleIds',
+    issues,
+  );
+  if (baselineRuleIds === null) return null;
+  if (!Array.isArray(value.routes)) {
+    issues.push({ path: 'candidate.injection.routes', code: 'invalid_candidate' });
+    return null;
+  }
+  if (value.routes.length > 128) {
+    issues.push({ path: 'candidate.injection.routes', code: 'payload_too_large' });
+    return null;
+  }
+  return {
+    baselineRuleIds,
+    routes: value.routes as CandidateInjection['routes'],
+  };
+}
+
 function validateActivation(
   value: unknown,
   rules: RuleRecord[],
   issues: ValidationIssue[],
+  external: ExternalRuleView | null,
 ): ActivationValidation | null {
   if (!isRecord(value)) {
     issues.push({ path: 'candidate.activation', code: 'invalid_candidate' });
@@ -469,9 +536,22 @@ function validateActivation(
     return null;
   }
 
-  const ruleIds = new Set(rules.map((rule) => rule.id));
+  const ruleIds = new Set([
+    ...rules.map((rule) => rule.id),
+    ...(external === null ? [] : [...external.allowedRuleIds]),
+  ]);
   checkIds(included, 'candidate.activation.includedRuleIds', ruleIds, issues);
   checkIds(excluded, 'candidate.activation.excludedRuleIds', ruleIds, issues);
+  if (external !== null) {
+    for (const id of excluded) {
+      if (external.mandatoryIds.has(id)) {
+        issues.push({
+          path: 'candidate.activation.excludedRuleIds',
+          code: 'mandatory_exclusion',
+        });
+      }
+    }
+  }
 
   if (included !== null) {
     const excludedSet = new Set(excluded);
@@ -487,14 +567,16 @@ function validateActivation(
     return null;
   }
 
+  const knownIds = [
+    ...rules.map((rule) => rule.id),
+    ...(external === null ? [] : [...external.allowedRuleIds]),
+  ];
   const selected =
-    included === null
-      ? new Set(rules.map((rule) => rule.id))
-      : new Set(included);
+    included === null ? new Set(knownIds) : new Set(included);
   const excludedSet = new Set(excluded);
-  const effectiveRuleIds = rules
-    .filter((rule) => selected.has(rule.id) && !excludedSet.has(rule.id))
-    .map((rule) => rule.id);
+  const effectiveRuleIds = knownIds.filter(
+    (id) => selected.has(id) && !excludedSet.has(id),
+  );
 
   if (effectiveRuleIds.length === 0) {
     issues.push({

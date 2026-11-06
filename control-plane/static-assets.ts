@@ -31,15 +31,17 @@ async function readBounded(path: string, limit: number): Promise<Buffer> {
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > limit) throw new Error('invalid static file');
-    const buffer = Buffer.alloc(limit + 1);
+    // Allocate only the observed size plus one probe byte. Returning a slice of
+    // a limit-sized buffer would pin up to 5 MiB per small font or stylesheet.
+    const buffer = Buffer.allocUnsafe(stat.size + 1);
     let length = 0;
     while (length < buffer.length) {
       const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
       if (bytesRead === 0) break;
       length += bytesRead;
     }
-    if (length > limit || length !== stat.size) throw new Error('invalid static file size');
-    return buffer.subarray(0, length);
+    if (length !== stat.size) throw new Error('invalid static file size');
+    return Buffer.from(buffer.subarray(0, length));
   } finally { await handle.close(); }
 }
 

@@ -2,15 +2,19 @@
   "name": "amos-g0-spike",
   "private": true,
   "type": "module",
-  "workspaces": ["web"],
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
     "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json && npm run build --workspace @amos/console",
-    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/*/*.test.js dist/decision/*.test.js dist/supervisor/*.test.js dist/guidance/*.test.js dist/injector/*.test.js dist/workflow/*.test.js dist/control-plane/*.test.js dist/strict/*.test.js && npm test --workspace @amos/console",
+    "test": "npm run build && node --test dist/engine/*.test.js dist/storage/*.test.js dist/adapters/*/*.test.js dist/decision/*.test.js dist/supervisor/*.test.js dist/guidance/*.test.js dist/injector/*.test.js dist/activation/*.test.js dist/catalog/*.test.js dist/workflow/*.test.js dist/review/*.test.js dist/host/*.test.js dist/check/*.test.js dist/rollout/*.test.js dist/managed/*.test.js dist/strict/*.test.js dist/autonomy/*.test.js dist/control-plane/*.test.js && npm test --workspace @amos/console",
     "audit:review": "npm run build && node dist/storage/audit-review-cli.js",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @amos/console",
     "console": "npm run build && node dist/control-plane/cli.js serve",
     "console:init": "npm run build && node dist/control-plane/cli.js init",
-    "console:serve": "node dist/control-plane/cli.js serve"
+    "console:serve": "node dist/control-plane/cli.js serve",
+    "e2e:smoke": "npm run build && node web/e2e/smoke.mjs",
+    "probe:live": "node dist/managed/live-probe.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",
@@ -19,6 +23,8 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^1.4.0",
+    "@opencode/plugin": "2.2.5",
+    "@opencode/sdk": "2.2.5",
     "@types/node": "^26.6.5",
     "@types/picomatch": "^4.0.3",
     "typescript": "^7.0.2"
