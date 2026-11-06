@@ -1,8 +1,8 @@
-<h1 align="center">Project-Amos</h1>
+<h1 align="center">Project Amos</h1>
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Agent 策略匹配与审计原型
+  智能体授权与监管系统
 </p>
 
 <p align="center">
@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <code>阶段 A</code> · 安全层 log-only · 工程硬门可选启用<br>
-  <strong>Pi Harness 层阻断（显式 opt-in）、独立审查 + 一次性授权、激活注入与审计已实现；默认适配器仍为 log-only。OS 隔离不在本 MVP 范围。</strong>
+  <code>Harness 层 MVP</code> · Vue 治理控制台 · Pi 受管硬门（显式启用） · Stage A 默认适配器<br>
+  <strong>端到端闭环已交付：真实 Vue 控制台发布 P1 catalog-v2 快照，Pi <code>managed.enabled</code> 执行工具前 <code>deny</code>/<code>confirm</code>/<code>allow</code> 裁决、独立 reviewer + 一次性 HMAC 授权与动态 advisory 注入；默认适配器保持 log-only，OS 隔离不在本 MVP 范围。</strong>
 </p>
 
 <p align="center">
@@ -37,43 +37,45 @@ Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1
 ## 它是怎么工作的？
 
 ```text
-工具调用事件 (Tool Event)
+[1] 受管治理与 Harness 硬门路径（Pi 显式启用：.pi/amos.json managed.enabled = true）
+Vue 治理控制台 / SQLite ── 发布 P1 catalog-v2 ──► .pi/activation.json
    │
    ▼
-适配器归一化 ── 不支持的工具 / 不可解析的 Shell ──► 写入覆盖缺口记录（不静默丢弃）
+Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动态注入系统提示词
    │
    ▼
-加载严格策略快照（按内容 Digest 寻址）
+工具调用事件 (read/write/edit/ls/find/grep)
+   ├─ deny     → 执行前直接阻断 + 写入审计记录
+   ├─ confirm  → 独立本地模型 reviewer 审查 ──► 一次性 HMAC grant ──► 放行执行一次
+   └─ allow    → 放行执行 + tool_result 审计记录 & 路径/任务级 advisory 附加
+
+[2] 默认 log-only 适配器路径（OpenCode V2 & 默认 Pi）
+工具调用事件 ──► 适配器归一化（不支持的工具 / 不可解析的 Shell → 写入覆盖缺口记录）
    │
    ▼
-确定性策略求值
-   │
-   ├─ 命中规则       → 生成假设裁决 + 固化当时的规则元数据
-   ├─ 未命中         → 显式标记 no_match（记录器按假设 deny 留痕）
-   ├─ 校验错误       → deny + engine_error
-   └─ 快照加载失败   → deny + snapshot_error
+按内容 Digest 寻址策略快照 ──► 确定性策略求值（命中 / no_match / 引擎或快照错误）
    │
    ▼
 脱敏写入 JSONL 审计日志 & 快照归档 ──► 生成防注入的人工审核表
 ```
 
-在安全 `log-only` 模式下，唯一副作用是写审计日志与快照归档。单独启用的工程工作流硬门可以阻断危险 Shell 命令或暂缓工作，但不会把安全策略层变成硬边界。
+在默认 `log-only` 模式下，唯一副作用是写审计日志与快照归档。当显式启用 Pi `managed.enabled` 时，归一化文件与检索工具调用会在执行前按已发布的 P1 快照做真实阻断与一次性授权审查。独立工程工作流硬门也可用于阻断危险 Shell 命令或暂缓工作。
 
 ---
 
 ## 目前做到了哪一步？
 
-### 已实现（Stage A 基础能力）
+### 已实现（Harness 层 MVP 与 Stage A 基础能力）
 
 - **纯函数策略引擎与快照归档**：基于严格 Schema 校验的 TypeScript 引擎，清晰区分“命中、未命中、引擎错误、未评估”。每次策略变更按内容摘要（Digest）归档完整快照（含规则原文、Schema 与有效工作区）。
-- **Supervisor 会话与停止栅栏核心**：提供进程内的已注册会话上下文、假设裁决与停止栅栏（Stop Fencing）核心逻辑（目前仅在内存中运行，尚未接入真实工具拦截）。
-- **双端安全 `log-only` 适配器**：支持 **OpenCode V2** 与 **Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
+- **Supervisor 会话与停止栅栏核心**：提供进程内的已注册会话上下文、假设裁决与停止栅栏（Stop Fencing）核心逻辑；真实 Pi 工具执行前拦截由 Harness 层阻断 MVP（`managed/`）承接。
+- **双端安全 `log-only` 默认适配器**：支持 **OpenCode V2** 与 **默认 Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
 - **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
-- **P1 离线项目规则目录**：把现有 YAML 规则和全部 guidance seed 导入版本化目录，再按项目生成执行与 advisory 投影。编译、TTL 过滤和选择已通过离线测试；现有适配器仍走当前文件快照和静态 seed 路径。
-- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；deny 在执行前阻断，confirm 先停住并交有界独立审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt。真实 Pi harness 测试覆盖 deny/allow/confirm 与真实文件副作用。不是 OS 沙箱，默认仍 log-only。
-- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成离线端到端测试。Pi managed 已接入 review/grant 路径，OpenCode 仍 log-only；OS 隔离不在本轮范围，无真实模型校准。
-- **SQLite 治理库与 API（部分）**：单主 schema、全量导入预览、baseVersion CAS 提案、human-only 审批/发布、catalog v2 编译 + 审计原子提交、独立宿主回执、回滚新版本、WAL 备份/恢复和 loopback 认证 API。Vue 治理台与真实宿主回执未交付。
+- **P1 项目规则目录与发布**：把仓库 YAML 规则和 guidance seed 导入版本化目录，按项目编译执行与 advisory 投影，并由控制台发布 catalog-v2 产物；Pi managed 路径直接消费同一产物完成执行前拦截与动态注入。
+- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；`deny` 在执行前阻断，`confirm` 先停住并交有界独立模型审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt 并在工具结果附加路径/任务级指导。已通过真实本地模型、真实 Pi 会话、真实 reviewer 与真实文件副作用的 live probe 验证。不是 OS 沙箱，默认仍 log-only。
+- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成端到端闭环。Pi managed 已接入该 review/grant 路径，OpenCode 仍 log-only；OS 隔离不在本轮范围。
+- **Vue 治理控制台与 SQLite API**：提供登录、项目创建/切换、规则编辑与 YAML 导入导出、校验、不可变提案、人工审批/发布、版本列表、回滚新版本、审计与运行期状态观察。SQLite 单主存储，发布事务原子编译 catalog-v2 并写出 `.pi/activation.json`；真实 Chromium 端到端测试已覆盖登录→发布→YAML 导出/导入→runtime 状态→回滚全链路。宿主回执为同 UID 本地 `.pi/runtime.json` 报告，非跨机器远程证明。
 - **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
