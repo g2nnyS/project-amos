@@ -1,6 +1,6 @@
 # OpenCode V2 log-only 接缝
 
-项目根 `opencode.jsonc` 加载 `dist/adapters/opencode-v2/` 中由 TypeScript 编译得到的插件。开始 OpenCode 前必须运行 `npm run build`；`hook-config.jsonc` 是同一配置的可复制样例。没有 `.opencode/` 源码 hook，也不依赖类型擦除。
+项目根 `opencode.jsonc` 是 OpenCode 的唯一仓库配置，加载 `dist/adapters/opencode-v2/` 中由 TypeScript 编译得到的插件。开始 OpenCode 前必须运行 `npm run build`。没有 `.opencode/` 源码 hook，也不依赖类型擦除。
 
 ## 工作方式
 
@@ -11,21 +11,20 @@
 - 已知非文件工具显式跳过；patch、未知工具或畸形文件 payload 记录 `unknown_payload` / `parse_error`，不静默忽略。
 - hook 不修改 input、不返回裁决、不向工具管线抛错。实际工具调用始终按 harness 原有流程继续。
 - 实时日志写入 `spike/logs/opencode.jsonl`（git 忽略），只追加。每行至少有 `ts / action / matched_rule_ids / verdict / latency_ms`，错误时增加 `error`。
-- `examples/real-opencode.jsonl` 是从真实任务日志派生的样本，不回写原始日志。
+- 从真实任务日志派生的样本可放入本地 `examples/`，不回写原始日志。
 
-当前样本来自 2026-10-24 的 OpenCode V2 standalone 会话，执行的是 fixtures 覆盖说明整理：三次读取后实际创建 `docs/fixture-coverage.md`，再读回确认。样本取原始 JSONL 第 104–108 行；写操作的假设 verdict 为 `confirm`，文件仍实际创建，验证编译后的插件保持 log-only。
+`logs/`、`examples/` 和 `review/` 都是本地观察产物目录，由 Git 忽略，不随仓库分发。取消历史样本与工作表的 Git 跟踪不删除本地证据、不修改审核结论；已有提交中的历史材料仍可查阅。正式回归测试和语言中立 fixtures 继续受版本控制。
 
 生成人审工作表（输出必须是不存在的新文件，避免覆盖已填写的结论）：
 
 ```bash
 npm run audit:review -- \
   --rules constraints/rules.yaml \
-  --log spike/logs/opencode-field-mismatch.jsonl \
   --log spike/logs/opencode.jsonl \
   --output spike/review/stage-a-review-next.md
 ```
 
-当前工作表为 `review/stage-a-review.md`。它只派生人审队列，不自动判断误拒或放行；原始 JSONL 持续追加时，后续审核应使用新文件名。
+人审工作表保存在本地 `review/`。它只派生人审队列，不自动判断误拒或放行；原始 JSONL 持续追加时，后续审核应使用新文件名。不要将机器相关的样本或工作表重新加入 Git。
 
 运行检查：
 

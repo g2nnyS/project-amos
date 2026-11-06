@@ -1,6 +1,6 @@
 # Pi Coding Agent 适配器
 
-当前状态：**Pi 1.4.0 安全适配仍为 log-only；真实安全 deny/confirm 尚未启用。** 另有独立的工程工作流硬门，可在启用后阻断危险 Shell，详见 [工作流硬门](workflow-gate.md)。真实会话样本见 `spike/examples/real-pi.jsonl`。
+当前状态：**Pi 1.4.0 安全适配仍为 log-only；真实安全 deny/confirm 尚未启用。** 另有独立的工程工作流硬门，可在启用后阻断危险 Shell，详见 [工作流硬门](workflow-gate.md)。真实会话日志与派生样本仅保存在本地，不随仓库分发。
 
 OpenCode V2 保留为参考适配器。Pi 因用户确认日常主用而解锁为第二适配器；两者只共享结构化归一化结果、快照评估和 JSONL 记录，不共享模型 provider，也不建立通用 harness 框架。
 
@@ -77,7 +77,7 @@ pi --provider kimi-coding --model kimi-for-coding-highspeed --approve
 
 文件路径支持相对路径、绝对路径、`~` 和 `~/`，并在进入引擎前折叠。shell 命令、文件内容及其他自由文本不会进入 Action Envelope 或 JSONL；有效的 shell 事件只生成 `not_evaluated` 覆盖记录，`confirmation_eligible: false`，不能据此批准动作；空白或缺失的命令记 `parse_error`。异常归一化/记录路径会留下 `deny + engine_error`；`tool_call` 和 `user_bash` 始终返回 `undefined`，不修改 input。
 
-原始日志写入 `spike/logs/pi.jsonl`，该目录被 git 忽略。真实 CLI 已运行，派生样本保存在 `spike/examples/real-pi.jsonl`，不回写原始日志。
+原始日志写入 `spike/logs/pi.jsonl`；派生样本可保存在 `spike/examples/`，不回写原始日志。两者均由 Git 忽略。下方历史验证记录不要求新检出包含当时的本地样本。
 
 ## 当前验证
 

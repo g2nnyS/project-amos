@@ -81,12 +81,8 @@ export const MANDATORY_LEGACY_RULE_REFS: readonly RuleRef[] = Object.freeze([
   Object.freeze({ id: 'credential-0-1', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'credential-0-2', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'credential-0-3', version: LEGACY_RULE_REVISION }),
-  Object.freeze({ id: 'credential-0-4', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'filesystem-0-1', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'filesystem-0-2', version: LEGACY_RULE_REVISION }),
-  Object.freeze({ id: 'filesystem-0-3', version: LEGACY_RULE_REVISION }),
-  Object.freeze({ id: 'network-0-1', version: LEGACY_RULE_REVISION }),
-  Object.freeze({ id: 'network-0-2', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'side_effect-0-1', version: LEGACY_RULE_REVISION }),
   Object.freeze({ id: 'side_effect-0-4', version: LEGACY_RULE_REVISION }),
 ]);

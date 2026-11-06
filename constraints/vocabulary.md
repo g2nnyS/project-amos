@@ -1,8 +1,8 @@
 # 封闭命中条件词表（G0 冻结）
 
-冻结时间：2026-10-24。15 条规则翻译完成后冻结；后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除 Termcp 产品专属条目后剩余 9 条。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
 
-规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 15 条规则的 `policy_class` 均为 `security`。
+规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 9 条规则的 `policy_class` 均为 `security`。
 
 当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当成已成立的能力。
 
@@ -43,6 +43,6 @@ AST/编译器/linter 的 finding 不能塞进当前三字段 action。未来受�
 
 ## 本次表达力缺口
 
-以下内容不在 action 信封内，因此没有对应命中条件：文件/请求正文、审批状态、生产环境与是否有人值守、认证启动 flag、上传字节数。对应规则已标 `advisory_only`，没有用 target 猜测这些状态。
+以下内容不在 action 信封内，因此没有对应命中条件：文件/请求正文、审批状态、生产环境与是否有人值守。对应规则已标 `advisory_only`，没有用 target 猜测这些状态。
 
 本词表刻意没有 `rate_exceeds`：当前纯函数没有调用历史或速率状态，也没有注入这类状态的 G0 接口。
