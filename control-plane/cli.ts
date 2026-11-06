@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parse as parseYaml } from 'yaml';
 
-import type { ControlPlane, RuleRecord } from './contracts.ts';
+import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts.ts';
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
 import { ObservationLogs } from './observations.ts';
 import { createControlPlane } from './store.ts';
@@ -345,9 +345,43 @@ async function optionalText(
 export function writeActivationArtifact(input: {
   readonly workspace: string;
   readonly artifact: string;
+  readonly managedArtifact?: string;
 }): void {
-  const workspace = resolve(input.workspace);
-  if (!workspace.startsWith('/') || workspace.includes('\0')) {
+  writePiFiles(
+    input.workspace,
+    input.managedArtifact === undefined
+      ? [{ name: 'activation.json', body: input.artifact }]
+      : [
+          { name: 'amos.managed.json', body: input.managedArtifact },
+          { name: 'activation.json', body: input.artifact },
+        ],
+  );
+}
+
+/**
+ * Write the generated activation snapshot and managed host projection as a
+ * pair. Each file is written to a private temp file and fsynced before either
+ * rename; the managed projection is renamed first so a crash between renames
+ * leaves a visible mismatch rather than silently loading a stale projection.
+ */
+export function writeProjectArtifacts(input: PublishArtifactWrite): void {
+  writePiFiles(input.workspace, [
+    { name: 'amos.managed.json', body: input.managedArtifact },
+    { name: 'activation.json', body: input.activationArtifact },
+  ]);
+}
+
+function writePiFiles(
+  workspaceInput: string,
+  files: readonly { readonly name: string; readonly body: string }[],
+): void {
+  const workspace = resolve(workspaceInput);
+  if (
+    !workspace.startsWith('/') ||
+    workspace.includes('\0') ||
+    files.length === 0 ||
+    files.some((file) => !/^[a-z0-9.-]+$/.test(file.name))
+  ) {
     throw new CliError('artifact_write_failed');
   }
   const dir = join(workspace, '.pi');
@@ -358,36 +392,53 @@ export function writeActivationArtifact(input: {
     existingDir = null;
   }
   if (existingDir === null) {
-    // `mkdir` without recursive first, then verify the parent itself.
     mkdirSync(dir, { mode: 0o700 });
   } else if (existingDir.isSymbolicLink() || !existingDir.isDirectory()) {
     throw new CliError('artifact_write_failed');
   }
-  const target = join(dir, 'activation.json');
+
+  const pending: Array<{ temp: string; target: string }> = [];
+  const cleanup = (): void => {
+    for (const item of pending) {
+      try { unlinkSync(item.temp); } catch { /* best effort */ }
+    }
+  };
   try {
-    const current = lstatSync(target);
-    if (current.isSymbolicLink() || !current.isFile()) {
-      throw new CliError('artifact_write_failed');
+    for (const file of files) {
+      const target = join(dir, file.name);
+      try {
+        const current = lstatSync(target);
+        if (current.isSymbolicLink() || !current.isFile()) {
+          throw new CliError('artifact_write_failed');
+        }
+      } catch (error) {
+        if (error instanceof CliError) throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') throw new CliError('artifact_write_failed');
+      }
+      const temp = join(dir, `.${file.name}.${randomBytes(12).toString('hex')}.tmp`);
+      let fd: number | null = null;
+      try {
+        fd = openSync(temp, 'wx', 0o600);
+        pending.push({ temp, target });
+        writeSync(fd, file.body, undefined, 'utf8');
+        fsyncSync(fd);
+        closeSync(fd);
+        fd = null;
+      } catch {
+        if (fd !== null) {
+          try { closeSync(fd); } catch { /* best effort */ }
+        }
+        throw new CliError('artifact_write_failed');
+      }
+      void target;
+    }
+    for (const item of pending) {
+      renameSync(item.temp, item.target);
     }
   } catch (error) {
+    cleanup();
     if (error instanceof CliError) throw error;
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') throw new CliError('artifact_write_failed');
-  }
-  const temp = join(dir, `.activation-${randomBytes(12).toString('hex')}.tmp`);
-  let fd: number | null = null;
-  try {
-    fd = openSync(temp, 'wx', 0o600);
-    writeSync(fd, input.artifact, undefined, 'utf8');
-    fsyncSync(fd);
-    closeSync(fd);
-    fd = null;
-    renameSync(temp, target);
-  } catch {
-    if (fd !== null) {
-      try { closeSync(fd); } catch { /* best effort */ }
-    }
-    try { unlinkSync(temp); } catch { /* best effort */ }
     throw new CliError('artifact_write_failed');
   }
 }
@@ -436,6 +487,8 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
     tokenFactory: options.tokenFactory,
     now: options.now,
   });
+  const managedAuditDir = join(paths.dataDir, 'managed-audit');
+  await ensurePrivateDirectory(managedAuditDir);
 
   const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
   let rawSchema: Record<string, unknown>;
@@ -469,7 +522,8 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
     rawSchema,
     rulesYaml,
     ...(guidanceSource === undefined ? {} : { guidanceSource }),
-    publishArtifact: writeActivationArtifact,
+    writeArtifacts: writeProjectArtifacts,
+    managedAuditDir,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 

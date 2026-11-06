@@ -48,6 +48,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Language check gate
+        run: npm run check:gate
+
   branch-name:
     name: Branch name convention
     # Pull requests only; push events have no head branch to validate.

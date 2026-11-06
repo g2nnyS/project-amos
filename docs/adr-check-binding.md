@@ -1,8 +1,8 @@
 # ADR：CheckBinding / FindingBatch 与 TypeScript 检查点（P7）
 
-- 状态：**格式与库实现草案，pending-human-review；无真实受管提交/CI 门**。
+- 状态：**库实现已接入本地/CI 命令行门，pending-human-review；仍无远端受管提交接纳平台**。
 - 范围：一个真实 TypeScript 检查、精确 tree 绑定、FindingBatch 接纳校验。
-- 本轮范围：**不接入远端 CI/受管提交接纳平台**；保留离线库与测试。
+- 本轮范围：`.github/workflows/ci.yml` 运行 `npm run check:gate`；不声称远端分支保护或受管提交门已经完成。
 - 关联：CHECK-01–05、ENG-03、AC-18；PRD §5.6；O6。
 
 ## 1. 为什么不改旧规则格式

@@ -111,6 +111,9 @@ export function digestTree(options: TreeDigestOptions): TreeDigestResult {
   return Object.freeze({ digest, files: paths.length, bytes });
 }
 
+/** Compatibility name used by the check-gate caller. */
+export const computeWorkspaceTreeDigest = digestTree;
+
 function readRoot(options: TreeDigestOptions): string {
   if (options === null || typeof options !== 'object') {
     throw new CheckError('invalid_options');

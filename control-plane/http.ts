@@ -46,7 +46,6 @@ import {
 } from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import type { ObservationLogs, ObservationReport } from './observations.ts';
-import { readRuntimeStatus } from './runtime-status.ts';
 import { loadStaticAssets, type StaticAsset } from './static-assets.ts';
 
 export type {
@@ -509,9 +508,95 @@ export function createGovernanceServer(
         requirePath(segments, 4);
         requireMethod(method, 'GET');
         requireAnyActor(req);
-        const project = service.getProject(id);
-        const current = service.getCurrentPolicy(id);
-        sendJson(res, 200, readRuntimeStatus(project.workspace, current));
+        sendJson(res, 200, service.getRuntimeStatus(id));
+        return;
+      }
+
+      if (child === 'config') {
+        requirePath(segments, 4);
+        if (method === 'GET') {
+          requireAnyActor(req);
+          sendJson(res, 200, service.getProjectConfig(id));
+          return;
+        }
+        requireMethod(method, 'POST');
+        const actor = requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        sendJson(res, 200, service.updateProjectConfig(id, body, actor));
+        return;
+      }
+
+      if (child === 'tighten') {
+        if (numeric === 'expire') {
+          requirePath(segments, 5);
+          requireMethod(method, 'POST');
+          const actor = requireAnyActor(req);
+          requireBrowserMutation(req, port);
+          await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+          sendJson(res, 200, service.expireTemporaryTightenings(id, actor));
+          return;
+        }
+        if (numeric !== undefined) throw new HttpError(404, 'not_found');
+        requirePath(segments, 4);
+        if (method === 'GET') {
+          requireAnyActor(req);
+          sendJson(res, 200, service.listTemporaryTightenings(id));
+          return;
+        }
+        requireMethod(method, 'POST');
+        const actor = requireAnyActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const templateId = requireTextField(body, 'templateId', 160);
+        const ttlMs = body.ttlMs;
+        if (typeof ttlMs !== 'number' || !Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+          throw new HttpError(400, 'invalid_body');
+        }
+        sendJson(res, 200, service.applyTemporaryTightening(id, { templateId, ttlMs }, actor));
+        return;
+      }
+
+      if (child === 'probes') {
+        requirePath(segments, 4);
+        if (method === 'GET') {
+          requireAnyActor(req);
+          sendJson(res, 200, service.listProbeRuns(id));
+          return;
+        }
+        requireMethod(method, 'POST');
+        const actor = requireAnyActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const probe = Object.hasOwn(body, 'probe') ? body.probe : body;
+        sendJson(res, 201, service.recordProbeRun(id, { probe }, actor));
+        return;
+      }
+
+      if (child === 'rollout') {
+        if (numeric === 'promote') {
+          requirePath(segments, 5);
+          requireMethod(method, 'POST');
+          const actor = requireAnyActor(req);
+          requireBrowserMutation(req, port);
+          const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+          const ruleId = requireTextField(body, 'ruleId', 128);
+          const input = {
+            ...(body.thresholds === undefined ? {} : { thresholds: body.thresholds }),
+            ...(body.evidence === undefined ? {} : { evidence: body.evidence }),
+            ...(body.probeRunIds === undefined ? {} : { probeRunIds: body.probeRunIds }),
+            ...(body.reviewerCalibration === undefined ? {} : { reviewerCalibration: body.reviewerCalibration }),
+            ...(body.ruleVersion === undefined ? {} : { ruleVersion: body.ruleVersion }),
+            current: body.current,
+          };
+          sendJson(res, 200, service.evaluateRulePromotion(id, ruleId, input as never, actor));
+          return;
+        }
+        if (numeric !== undefined) throw new HttpError(404, 'not_found');
+        requirePath(segments, 4);
+        requireMethod(method, 'GET');
+        requireAnyActor(req);
+        sendJson(res, 200, service.listRuleRollouts(id));
         return;
       }
 

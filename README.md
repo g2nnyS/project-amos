@@ -1,8 +1,8 @@
-<h1 align="center">Project-Amos</h1>
+<h1 align="center">Project Amos</h1>
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Agent policy matching and audit prototype
+  Deterministic policy governance, pre-execution harness gating, and verifiable audit for AI agents
 </p>
 
 <p align="center">
@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <code>Stage A</code> · log-only security layer · opt-in engineering gate<br>
-  <strong>Pi harness-layer blocking (explicit opt-in), independent review + one-shot grant, activation injection and audit are implemented; default adapters remain log-only. OS isolation is out of scope for this MVP.</strong>
+  <code>Harness-Layer MVP</code> · Vue Governance Console · Pi Managed Gate (opt-in) · Stage A Default Adapters<br>
+  <strong>End-to-end closed loop: Vue console publishes P1 catalog-v2 snapshots, Pi <code>managed.enabled</code> enforces pre-tool <code>deny</code>/<code>confirm</code>/<code>allow</code> with independent reviewer + one-shot HMAC grant and dynamic advisory injection; default adapters remain log-only and OS isolation is out of scope.</strong>
 </p>
 
 <p align="center">
@@ -43,42 +43,44 @@ See [MVP delivery](docs/mvp-delivery.md), [Product Scope](docs/product-design.md
 ## How It Works Today
 
 ```text
-Tool event
+[1] Managed Governance & Harness Gate (Pi opt-in: .pi/amos.json managed.enabled = true)
+Vue Console / SQLite ── publish P1 catalog-v2 ──► .pi/activation.json
    │
    ▼
-Adapter normalization ── unsupported tool / opaque shell ──► coverage record (never silently skipped)
+Pi session loads snapshot (writes .pi/runtime.json) + injects <amos-guidance> into system prompt
    │
    ▼
-Strict policy snapshot (content-addressed by digest)
+Tool call (read/write/edit/ls/find/grep)
+   ├─ deny     → blocked before tool runs + audit record
+   ├─ confirm  → bounded independent model reviewer ──► one-shot HMAC grant ──► execute once
+   └─ allow    → execute + tool_result audit & path/task advisory
+
+[2] Default Log-Only Adapters (OpenCode V2 & default Pi)
+Tool event ──► Adapter normalization (unsupported tool / opaque shell → coverage record)
    │
    ▼
-Deterministic evaluation
-   │
-   ├─ matched rule      → hypothetical verdict + pinned rule metadata
-   ├─ no match          → explicit no_match (recorder logs hypothetical deny)
-   ├─ validation error  → deny + engine_error
-   └─ snapshot failure  → deny + snapshot_error
+Content-addressed policy snapshot ──► Deterministic evaluation (matched / no_match / error)
    │
    ▼
 Sanitized JSONL audit log & snapshot archive ──► injection-safe human review worksheet
 ```
 
-In security `log-only` mode, the only side effects are writing the audit record and its content-addressed policy snapshot. The opt-in engineering workflow gate can separately block dangerous shell commands or hold work for review; it does not turn the security layer into a hard boundary.
+In default `log-only` mode, the only side effects are writing the audit record and its content-addressed policy snapshot. When Pi `managed.enabled` is turned on, normalized file/search tool calls are gated before execution against the published P1 snapshot. The separate engineering workflow gate can also block dangerous shell commands or hold work for review.
 
 ---
 
 ## Where Things Stand
 
-### What's Built (Stage A Foundation)
+### What's Built (Harness-Layer MVP & Stage A Foundation)
 
 - **Pure Policy Engine & Snapshot Archives**: A strict, schema-validated TypeScript engine that cleanly separates *matched*, *no match*, *engine error*, and *not evaluated*. Every policy digest archives its exact rules, schema, and workspace context under the log directory.
-- **In-Memory Supervisor Core**: Manages registered session context, hypothetical decisions, and process-local stop fencing (not yet wired to block live tool execution).
-- **Log-Only Security Adapters (OpenCode V2 & Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
+- **In-Memory Supervisor Core**: Manages registered session context, hypothetical decisions, and process-local stop fencing for in-memory supervisor workflows; live Pi tool interception is handled by the Harness-Layer Blocking MVP (`managed/`).
+- **Log-Only Security Adapters (OpenCode V2 & Default Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
 - **P1 Project Rule Catalog + Publication**: Imports the repository YAML rules and guidance seeds, compiles project execution/advisory projections, and publishes a catalog-v2 artifact from the console. The Pi managed path consumes the same artifact for enforcement and injection.
-- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent model review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. A live probe uses a real local model, real Pi session, real reviewer, and real file effects. Not an OS sandbox; default remains log-only.
-- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end in local tests. Pi managed mode now wires the review/grant path; OpenCode remains log-only. OS isolation is out of scope and there is no live model calibration.
+- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent model review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. Verified by a live probe using a real local model, real Pi session, real reviewer, and real file effects. Not an OS sandbox; default remains log-only.
+- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end. Pi managed mode wires this review/grant path; OpenCode remains log-only. OS isolation is out of scope.
 - **Vue Governance Console & SQLite API**: Reuses the existing Vue console for login, projects, rule editing/import, validation, proposals, human approval/publish, versions, rollback, audit, and observations. SQLite remains the single primary; publication compiles catalog-v2 and writes the harness artifact. A real browser test covers login→publish→YAML export/import→runtime status→rollback. Host receipt is a same-UID runtime report, not remote attestation.
 - **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.

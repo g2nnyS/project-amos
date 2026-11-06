@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ShieldAlert, FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle } from 'lucide-vue-next'
+import { ShieldAlert, FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle, Timer, Activity } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,14 @@ const auth = useAuthStore()
 const audit = ref<GovernanceEvent[]>([])
 const auditError = ref('')
 const auditLoading = ref(false)
+const configSaving = ref(false)
+const configError = ref('')
+const nowMs = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | null = null
 let generation = 0
+
+onMounted(() => { ticker = setInterval(() => { nowMs.value = Date.now() }, 1000) })
+onUnmounted(() => { if (ticker) clearInterval(ticker) })
 
 async function loadAudit() {
   const id = governance.activeProjectId
@@ -78,6 +85,63 @@ const enforcedTools = computed(() => {
   const tools = governance.runtime?.runtime?.capabilities?.enforcedTools
   return Array.isArray(tools) ? tools.join('、') : '未知'
 })
+
+const activeTightenings = computed(() => governance.tightenings?.active ?? [])
+const expiredTightenings = computed(() => (governance.tightenings?.expired ?? []).slice(0, 3))
+const recentProbes = computed(() => governance.probes.slice(0, 5))
+const canEditConfig = computed(() => auth.session?.role === 'human')
+
+function remainingTtl(expiresAt: number): string {
+  const remaining = Math.max(0, expiresAt - nowMs.value)
+  const seconds = Math.ceil(remaining / 1000)
+  if (seconds <= 0) return '已到期（等待清理）'
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return minutes > 0 ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`
+}
+
+async function setManagedEnabled(enabled: boolean): Promise<void> {
+  if (!governance.config || configSaving.value) return
+  configSaving.value = true
+  configError.value = ''
+  try {
+    await governance.updateProjectConfig({
+      managed: { ...governance.config.managed, enabled },
+    })
+  } catch (error) {
+    configError.value = error instanceof Error ? error.message : '保存项目配置失败。'
+  } finally {
+    configSaving.value = false
+  }
+}
+
+async function setTighteningEnabled(enabled: boolean): Promise<void> {
+  if (!governance.config || configSaving.value) return
+  configSaving.value = true
+  configError.value = ''
+  try {
+    await governance.updateProjectConfig({
+      tightening: { ...governance.config.tightening, enabled },
+    })
+  } catch (error) {
+    configError.value = error instanceof Error ? error.message : '保存项目配置失败。'
+  } finally {
+    configSaving.value = false
+  }
+}
+
+async function expireTightenings(): Promise<void> {
+  if (configSaving.value) return
+  configSaving.value = true
+  configError.value = ''
+  try {
+    await governance.expireTightenings()
+  } catch (error) {
+    configError.value = error instanceof Error ? error.message : '临时收紧过期失败。'
+  } finally {
+    configSaving.value = false
+  }
+}
 
 const pendingProposals = computed(() => governance.proposals.filter(p => p.status === 'pending').slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseVersion !== (governance.policy?.version ?? 0)))
@@ -250,6 +314,105 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
           </div>
         </div>
       </section>
+
+      <section class="panel mt-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">项目配置（SQLite 单一主库）</h2>
+            <p class="panel-kicker">宿主投影与运行状态均由本地治理配置派生；凭据只保存环境变量名。</p>
+          </div>
+          <Lock class="size-4 text-muted-foreground" />
+        </div>
+        <div v-if="configError" class="mx-4 mt-3 rounded-md border border-destructive/30 p-2 text-xs text-destructive" role="alert">{{ configError }}</div>
+        <div v-if="!governance.config" class="p-4 text-xs text-muted-foreground">当前项目配置不可用。</div>
+        <div v-else class="grid gap-4 p-4 text-xs lg:grid-cols-2">
+          <div class="rounded-md border border-border p-3">
+            <p class="font-semibold">受管 Harness</p>
+            <p class="mt-1 text-muted-foreground">managed 显式启用后，已接管的工具入口先停后审；confirm 仍需要独立 reviewer 与一次性授权。</p>
+            <label class="mt-3 flex items-center justify-between gap-3">
+              <span>managed.enabled</span>
+              <input
+                type="checkbox"
+                class="size-4 accent-[hsl(var(--primary))]"
+                :checked="governance.config.managed.enabled"
+                :disabled="!canEditConfig || configSaving"
+                @change="setManagedEnabled(($event.target as HTMLInputElement).checked)"
+              >
+            </label>
+            <p class="mt-2 break-all font-mono text-[10px] text-muted-foreground">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
+            <p class="mt-1 break-all font-mono text-[10px] text-muted-foreground">credential: {{ governance.config.managed.apiKeyEnv ?? '未配置环境变量引用' }}</p>
+          </div>
+          <div class="rounded-md border border-border p-3">
+            <p class="font-semibold">临时收紧</p>
+            <p class="mt-1 text-muted-foreground">仅允许人预授权的非 0 层确定性 deny/confirm 模板；TTL、配额与 epoch 由服务端执行。</p>
+            <label class="mt-3 flex items-center justify-between gap-3">
+              <span>tightening.enabled</span>
+              <input
+                type="checkbox"
+                class="size-4 accent-[hsl(var(--primary))]"
+                :checked="governance.config.tightening.enabled"
+                :disabled="!canEditConfig || configSaving"
+                @change="setTighteningEnabled(($event.target as HTMLInputElement).checked)"
+              >
+            </label>
+            <p class="mt-2 text-muted-foreground">模板 {{ governance.config.tightening.templates.length }} 个 · 配额 maxActive {{ governance.config.tightening.quota.maxActive }} / maxApplications {{ governance.config.tightening.quota.maxApplications }}</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="mt-4 grid gap-4 lg:grid-cols-2">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">临时收紧状态</h2>
+              <p class="panel-kicker">epoch {{ governance.tightenings?.epoch ?? '—' }} · {{ activeTightenings.length }} 条生效中</p>
+            </div>
+            <Timer class="size-4 text-muted-foreground" />
+          </div>
+          <div v-if="!activeTightenings.length && !expiredTightenings.length" class="p-4 text-xs text-muted-foreground">当前没有临时收紧记录。</div>
+          <div v-else class="space-y-3 p-4 text-xs">
+            <div v-for="item in activeTightenings" :key="item.id" class="rounded-md border border-warning/30 bg-warning/5 p-3">
+              <p class="font-medium">{{ item.templateId }} · {{ item.ruleRef.id }}@v{{ item.ruleRef.version }}</p>
+              <p class="mt-1 text-muted-foreground">epoch {{ item.epoch }} · 剩余 {{ remainingTtl(item.expiresAt) }}</p>
+              <p class="mt-1 break-all font-mono text-[10px] text-muted-foreground">{{ item.activationDigest }}</p>
+            </div>
+            <div v-if="expiredTightenings.length" class="text-muted-foreground">
+              <p class="mb-1">最近过期</p>
+              <p v-for="item in expiredTightenings" :key="item.id" class="break-all font-mono text-[10px]">{{ item.templateId }} · {{ item.ruleRef.id }} · epoch {{ item.epoch }}</p>
+            </div>
+            <button v-if="activeTightenings.length" type="button" class="text-xs underline disabled:opacity-50" :disabled="configSaving" @click="expireTightenings">立即清理已到期条目</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Rollout 与 Probe</h2>
+              <p class="panel-kicker">证据绑定规则版本、激活快照、宿主与环境。</p>
+            </div>
+            <Activity class="size-4 text-muted-foreground" />
+          </div>
+          <div v-if="!governance.rollouts.length && !recentProbes.length" class="p-4 text-xs text-muted-foreground">尚无 rollout 状态或 probe 证据。</div>
+          <div v-else class="space-y-3 p-4 text-xs">
+            <div v-if="governance.rollouts.length" class="overflow-x-auto">
+              <table class="data-table min-w-[360px]">
+                <thead><tr><th>规则</th><th>版本</th><th>状态</th></tr></thead>
+                <tbody>
+                  <tr v-for="row in governance.rollouts" :key="row.ruleId">
+                    <td class="break-all font-mono text-[10px]">{{ row.ruleId }}</td>
+                    <td class="num">v{{ row.ruleVersion }}</td>
+                    <td>{{ row.state }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="recentProbes.length">
+              <p class="mb-1 text-muted-foreground">最近 probe 证据</p>
+              <p v-for="probe in recentProbes" :key="probe.id" class="break-all font-mono text-[10px]">{{ probe.ruleRef.id }}@v{{ probe.ruleRef.version }} · {{ probe.run.outcome }} · violations {{ probe.run.cases.violations }} / controls {{ probe.run.cases.controls }}</p>
+            </div>
+          </div>
+        </section>
+      </div>
     </template>
   </div>
 </template>

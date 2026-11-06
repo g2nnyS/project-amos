@@ -14,7 +14,8 @@
     "console:init": "npm run build && node dist/control-plane/cli.js init",
     "console:serve": "node dist/control-plane/cli.js serve",
     "e2e:smoke": "npm run build && node web/e2e/smoke.mjs",
-    "probe:live": "node dist/managed/live-probe.js"
+    "probe:live": "node dist/managed/live-probe.js",
+    "check:gate": "npm run build && node dist/check/cli.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",

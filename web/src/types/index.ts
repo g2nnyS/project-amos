@@ -27,14 +27,22 @@ export interface HarnessRuntimeReport {
   policyVersion: string
   loadedAt: string
   lastToolAt?: string
-  harness: 'pi'
+  harness: 'pi' | 'opencode'
   mode: 'enforcing'
   capabilities: Record<string, unknown>
+}
+export interface ManagedProjectionStatus {
+  status: 'written' | 'missing' | 'invalid' | 'stale'
+  projectId: string | null
+  activationDigest: string | null
+  epoch: number | null
+  policyVersion: string | null
 }
 export interface HarnessRuntimeStatus {
   status: HarnessRuntimeState
   runtime: HarnessRuntimeReport | null
-  published: { version: number; activationDigest: string } | null
+  published: { version: number; activationDigest: string; policyVersion?: string } | null
+  projection?: ManagedProjectionStatus
 }
 export type ToastVariant = 'success' | 'error' | 'info'
 export interface ToastItem { id: string; title: string; description?: string; variant: ToastVariant }
