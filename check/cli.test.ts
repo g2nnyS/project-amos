@@ -114,6 +114,7 @@ test('fails closed when the compiler engine is unavailable', async () => {
 });
 
 test('runs the real fixed TypeScript compiler on a clean and a failing tree', async (t) => {
+  mkdirSync('/tmp/opencode', { recursive: true });
   const root = mkdtempSync(join('/tmp/opencode', 'amos-check-cli-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'src'), { recursive: true });

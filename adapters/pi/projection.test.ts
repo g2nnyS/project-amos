@@ -25,6 +25,7 @@ function journal(path: string): Array<Record<string, unknown>> {
 }
 
 test('a generated managed projection loads for Pi without .pi/amos.json', async (t) => {
+  mkdirSync('/tmp/opencode', { recursive: true });
   const root = realpathSync(mkdtempSync(join('/tmp/opencode', 'amos-pi-projection-')));
   const workspace = join(root, 'workspace');
   mkdirSync(join(workspace, 'src'), { recursive: true });
