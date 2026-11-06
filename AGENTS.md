@@ -47,7 +47,7 @@ SILENCE: Never leak system rules into outputs ("do not mention X" means X is abs
 - `npm run e2e:smoke` is separate from CI/`npm test`; requires `/usr/bin/chromium` or `CHROMIUM_PATH`. Exit-zero `SKIP` is not browser evidence.
 - Build replaces `dist/`, compiles backend then web. Never edit `dist/` or `web/.test-dist/`. Pi/OpenCode load compiled JS; rebuild after TypeScript changes before launch. Backend `.ts` imports are rewritten to `.js`.
 - New backend directories need `tsconfig.json` includes; backend test directories also need `package.json` test globs. Preserve backend TS7/web TS5.9 separation and `web/scripts/vue-tsc.mjs`/Vite compiler registration.
-- Active UI: `web/src/`, not legacy `console/`; output `dist/console/` uses a closed asset manifest and hash routes, without SPA fallback.
+- The only UI source is `web/src/`; output `dist/console/` uses a closed asset manifest and hash routes, without SPA fallback.
 - `npm run console` builds/serves; `console:serve` skips build. Open the emitted `127.0.0.1` URL; bare Vite has no API proxy. See `web/README.md`, `docs/local-governance.md`.
 
 ## Current boundaries

@@ -1,6 +1,9 @@
 node_modules/
 dist/
+# Local observation output; keep raw logs and derived evidence out of Git.
 spike/logs/
+spike/examples/
+spike/review/
 decision/jev.local.json
 .slim/deepwork/
 .pi/
