@@ -1,4 +1,5 @@
 import { boundedCopy, canonicalJson, deepFreeze, digest, list, record, text, uniqueStrings, workspace } from '../activation/json.ts';
+import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
 import { assertValidTable, evaluatePolicy } from '../engine/engine.ts';
 import { AutonomyError, ENVELOPE_DIGEST_DOMAIN, MAX_AUTHORIZATION_AGE_MS, MAX_FILE_CONTENT_BYTES } from './contracts.ts';
 import type { ActionEnvelope, AuthorizationCore, AuthorizationDecision, AuthorizationReason, AuthorizationState, CapabilityLease, TrustedSessionContext } from './contracts.ts';
@@ -125,41 +126,13 @@ function validateDelegation(child: CapabilityLease, parent: CapabilityLease): vo
 export function createAuthorizationCore(options: unknown): AuthorizationCore {
   try {
     const o = record(boundedCopy(options), ['snapshot','expectedSnapshotDigest','capabilities']);
-    const s = record(o.snapshot, [
-      'format', 'formatVersion', 'compilerVersion', 'mode', 'libraryVersion',
-      'schemaDigest', 'project', 'activeRules', 'activationDigest', 'enforcement',
-      'advisory', 'digest',
-    ]);
-    const { digest: snapshotDigest, ...content } = s;
-    if (s.format !== 'amos-project-activation'
-    || s.formatVersion !== 1
-    || s.compilerVersion !== 'amos-project-activation-v1'
-    || s.mode !== 'offline-shadow'
-    || typeof snapshotDigest !== 'string'
-    || snapshotDigest !== o.expectedSnapshotDigest
-    || digest('amos-project-activation-snapshot-v1', content) !== snapshotDigest) throw new Error('invalid_input');
-    text(s.libraryVersion); text(s.schemaDigest);
-    const project = record(s.project, [
-      'projectId', 'workspace', 'policyVersion', 'selectedRuleRefs',
-      'excludedRuleIds', 'advisoryBaselineRuleIds', 'routes',
-    ]);
-    const projectId = text(project.projectId), root = safePath(project.workspace);
-    const active = validateActiveRules(s.activeRules);
-    const activationDigest = digest('amos-project-activation-content-v1', {
-      compilerVersion: s.compilerVersion, schemaDigest: s.schemaDigest,
-      libraryVersion: s.libraryVersion, project, activeRules: active,
-    });
-    if (s.activationDigest !== activationDigest) throw new Error('invalid_input');
-    const enforcement = record(s.enforcement, ['runtime','ci','server']);
-    const runtime = record(enforcement.runtime, ['status','activationDigest','digest','rules']);
-    const rules = list(runtime.rules);
-    const projected = active.filter(x => {
-      const r = x.rule as Record<string, unknown>; return r && r.expressivity === 'deterministic' && r.enforcement === 'runtime';
-    }).map(x => x.rule);
-    if (runtime.activationDigest !== activationDigest
-    || runtime.digest !== digest('amos-activation-runtime-v1', { activationDigest, rules })
-    || canonicalJson(projected) !== canonicalJson(rules)
-    || runtime.status !== (rules.length ? 'ready' : 'empty')) throw new Error('invalid_input');
+    const snapshot = verifyProjectActivationSnapshot(deepFreeze(o.snapshot));
+    if (snapshot.digest !== o.expectedSnapshotDigest) throw new Error('invalid_input');
+    const snapshotDigest = snapshot.digest;
+    const projectId = snapshot.project.projectId;
+    const root = safePath(snapshot.project.workspace);
+    const activationDigest = snapshot.activationDigest;
+    const rules = snapshot.enforcement.runtime.rules;
     if (rules.length) assertValidTable(rules);
     const leases = list(o.capabilities).map(x => lease(x, root, projectId, snapshotDigest));
     const map = new Map<string, CapabilityLease>();

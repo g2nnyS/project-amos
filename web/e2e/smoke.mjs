@@ -261,7 +261,8 @@ try {
 
   const projectOne = 'E2E Governance Alpha'
   const projectTwo = 'E2E Governance Beta'
-  const workspace = path.join(root, 'amos-e2e-workspace')
+  const workspace = path.join(runDir, 'amos-e2e-workspace')
+  let exportedYaml = ''
 
   await check('login with human token reaches the governance shell', async () => {
     await evaluate(`(() => {
@@ -273,18 +274,21 @@ try {
     await waitFor(`${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
   })
 
+  await mkdir(workspace, { recursive: true })
   await check('create project through the shell dialog', async () => {
     await createProject(projectOne, workspace)
     await waitFor(`document.body.innerText.includes(${q(projectOne)})`)
   })
 
-  await check('seed candidate, edit a rule field and validate on the server', async () => {
+  await check('seed candidate, add a project rule and validate on the server', async () => {
     await nav('候选编辑')
     await click('button', '仓库种子')
     await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
-    const original = await evaluate(`(() => { const t = Array.from(document.querySelectorAll('label')).find(l=>l.textContent.includes('说明 narrative')); return t?.querySelector('textarea')?.value ?? null })()`)
-    assert.equal(typeof original, 'string', 'seed rule narrative missing')
-    await setByLabel('说明 narrative', `${original} E2E smoke edit`)
+    // Repository rules are the global catalog. A project adds its own rule ID
+    // instead of silently redefining the global deny table.
+    await click('button', '添加')
+    await waitFor(`document.body.innerText.includes('new-rule-1')`)
+    await setByLabel('说明 narrative', 'E2E project-specific smoke rule; never an execution authorization.')
     await click('button', '校验候选')
     await waitFor(`document.body.innerText.includes('服务端校验通过')`)
   })
@@ -398,11 +402,72 @@ try {
       const contents = await readFile(path.join(downloadDir, file), 'utf8')
       assert.ok(contents.length > 0, `${label} was empty`)
       assert.ok(!contents.includes(token), `${label} leaked the session token`)
+      if (extension === '.yaml') exportedYaml = contents
       await rm(path.join(downloadDir, file))
     }
+    assert.ok(exportedYaml.includes('format: amos-project-policy'), 'YAML export is not the versioned policy document')
+  })
+
+  await check('published snapshot artifact exists and runtime status is honest', async () => {
+    const artifactPath = path.join(workspace, '.pi', 'activation.json')
+    assert.ok(existsSync(artifactPath), 'publish did not write the harness activation artifact')
+    const artifact = JSON.parse(await readFile(artifactPath, 'utf8'))
+    assert.equal(artifact.format, 'amos-unified-rule-catalog')
+    assert.equal(artifact.project.workspace, workspace)
+    const projectId = artifact.project.projectId
+    let status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
+    assert.equal(status.status, 'never', `unexpected initial runtime status ${status.status}`)
+    // The Pi integration test and live probe prove the producer. This check
+    // exercises the console's real file/status UI contract with a report in the
+    // exact harness format, not a mocked API response.
+    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
+      format: 'amos-harness-runtime',
+      version: 1,
+      projectId,
+      activationDigest: artifact.activationDigest,
+      epoch: artifact.project.epoch,
+      policyVersion: artifact.project.projectConfigVersion,
+      loadedAt: new Date().toISOString(),
+      harness: 'pi',
+      mode: 'enforcing',
+      capabilities: {
+        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
+        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
+        preCallStop: true,
+        injection: 'system-prompt-and-tool-result',
+        singleUseReview: true,
+      },
+    }))
+    await nav('项目边界')
+    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
+    status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
+    assert.equal(status.status, 'loaded')
+  })
+
+  await check('imports the exported YAML through the same validation pipeline', async () => {
+    await nav('候选编辑')
+    await waitFor(`${visible('button')} && document.body.innerText.includes('候选来源')`)
+    await click('button', '当前策略')
+    await waitFor(`document.body.innerText.includes('规则字段')`)
+    const accepted = await evaluate(`(() => {
+      const input = document.querySelector('input[type=file]');
+      if (!input) return false;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([${q(exportedYaml)}], 'policy.yaml', { type: 'application/yaml' }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`)
+    assert.ok(accepted, 'file input missing')
+    await waitFor(`document.body.innerText.includes('导入成功')`)
+    await click('button', '校验候选')
+    await waitFor(`document.body.innerText.includes('服务端校验通过')`)
   })
 
   await check('rollback creates a new proposal and publishes a new version', async () => {
+    await nav('版本')
+    await click('a', '版本 1')
+    await waitFor(`document.body.innerText.includes('版本 1')`)
     await click('button', '创建回滚提案')
     await waitFor(visible('[role="dialog"]'))
     await setByLabel('理由', 'Synthetic rollback rationale.')
@@ -414,6 +479,30 @@ try {
     await waitFor(`document.body.innerText.includes('已批准')`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 2')`)
+    await nav('项目边界')
+    await waitFor(`document.body.innerText.includes('已加载旧版本')`)
+    const artifact = JSON.parse(await readFile(path.join(workspace, '.pi', 'activation.json'), 'utf8'))
+    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
+      format: 'amos-harness-runtime',
+      version: 1,
+      projectId: artifact.project.projectId,
+      activationDigest: artifact.activationDigest,
+      epoch: artifact.project.epoch,
+      policyVersion: artifact.project.projectConfigVersion,
+      loadedAt: new Date().toISOString(),
+      harness: 'pi',
+      mode: 'enforcing',
+      capabilities: {
+        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
+        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
+        preCallStop: true,
+        injection: 'system-prompt-and-tool-result',
+        singleUseReview: true,
+      },
+    }))
+    await nav('版本')
+    await nav('项目边界')
+    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
   })
 
   await check('simulation binds historical version provenance and clears changed input', async () => {
@@ -423,7 +512,7 @@ try {
     await waitFor(`document.querySelector('form select') && Array.from(document.querySelectorAll('form select option')).some(o => o.value === '1')`)
     await setByLabel('工具 tool', 'read')
     await setByLabel('操作 operation', 'file_read')
-    await setByLabel('目标 target', '/tmp/opencode/amos-e2e-workspace-1/example.txt')
+    await setByLabel('目标 target', `${workspace}/example.txt`)
     await setByLabel('已发布版本', '1')
     await click('button', '模拟裁决')
     await waitFor(`document.body.textContent.includes('评估来源 · 本地治理版本 1')`)
@@ -433,12 +522,12 @@ try {
       return text.includes(${q(projectOne)}) && text.includes(${q(projectId)}) && /本地快照摘要：\\s*(?:sha256:)?[a-f0-9]{64}/i.test(text);
     })()`)
     assert.equal(validProvenance, true, 'historical project/version/digest provenance missing')
-    await setByLabel('目标 target', '/tmp/opencode/amos-e2e-workspace-1/other.txt')
+    await setByLabel('目标 target', `${workspace}/other.txt`)
     await waitFor(`!document.body.textContent.includes('评估来源 · 本地治理版本 1') && document.body.textContent.includes('提交动作后显示假设裁决')`)
   })
 
   await check('project list and version data are fenced per project', async () => {
-    await createProject(projectTwo, path.join(root, 'amos-e2e-workspace-2'))
+    await createProject(projectTwo, path.join(runDir, 'amos-e2e-workspace-2'))
     await waitFor(`document.body.innerText.includes(${q(projectTwo)})`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('尚无已发布版本')`)

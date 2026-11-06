@@ -10,10 +10,31 @@ export interface BrowserSession {
   expiresAt?: number
 }
 export interface RuntimeStatus {
-  mode: 'log-only'
-  enforcement: false
+  mode: 'managed-opt-in'
+  /** Enforcement is available, not necessarily enabled for every session. */
+  enforcement: true
+  defaultEnabled: false
   trustBoundary: false
   projectCount?: number
+}
+export type HarnessRuntimeState = 'loaded' | 'stale' | 'never' | 'invalid' | 'unpublished'
+export interface HarnessRuntimeReport {
+  format: 'amos-harness-runtime'
+  version: 1
+  projectId: string
+  activationDigest: string
+  epoch: number
+  policyVersion: string
+  loadedAt: string
+  lastToolAt?: string
+  harness: 'pi'
+  mode: 'enforcing'
+  capabilities: Record<string, unknown>
+}
+export interface HarnessRuntimeStatus {
+  status: HarnessRuntimeState
+  runtime: HarnessRuntimeReport | null
+  published: { version: number; activationDigest: string } | null
 }
 export type ToastVariant = 'success' | 'error' | 'info'
 export interface ToastItem { id: string; title: string; description?: string; variant: ToastVariant }

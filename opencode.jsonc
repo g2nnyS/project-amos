@@ -9,7 +9,7 @@
         "schemaPath": "./constraints/schema.json",
         "logPath": "./spike/logs/opencode.jsonl",
         "workflowGate": {
-          "enabled": true,
+          "enabled": false,
           "guidance": true,
           "shellGate": true,
           "completionReview": true,

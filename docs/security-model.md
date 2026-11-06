@@ -1,9 +1,27 @@
 # Security model and current guarantees
 
-Status: **implementation in progress; runtime enforcement is not yet available.** The
-current adapters remain log-only. This document separates guarantees implemented in
-the repository from the deployment architecture required before `deny` or `confirm`
-can be described as a security boundary.
+Status: **limited Harness-layer MVP implemented; general runtime enforcement and OS
+isolation remain unavailable.** The default adapters remain log-only; the Pi
+`managed.enabled` path is an explicit opt-in Harness-layer gate. This document
+separates guarantees implemented in the repository from the deployment architecture
+required before `deny` or `confirm` can be described as a general security boundary.
+
+## 2026-11-05 limited Harness MVP
+
+- Pi `tool_call` is intercepted before the real tool runs; deterministic `deny`
+  blocks, `confirm` stops for an independent HTTP reviewer and a single-use HMAC
+  grant, and `tool_result` records execution.
+- Execution and advisory injection consume the same verified activation snapshot.
+  The console publishes a catalog-v2 artifact; the harness writes a same-UID
+  `.pi/runtime.json` load report.
+- This covers only the normalized tools `read/write/edit/ls/find/grep`. Shell,
+  PowerShell, custom tools, MCP, subprocesses, bypass paths, alternate harness
+  entries, and effects inside an allowed shell are outside this guarantee.
+- No independent OS identity, mount domain, bwrap/cgroup, kernel sandbox, or
+  tamper-proof audit. The runtime report is a same-UID observation, not remote
+  attestation. OS isolation is explicitly out of scope for this MVP.
+- The reviewer is a local model plus a fixed deny surface; the synthetic
+  calibration set is not a security certification.
 
 ## Threat model
 

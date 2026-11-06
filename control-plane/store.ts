@@ -32,6 +32,12 @@ import type {
   SimulateInput,
   ValidationResult,
 } from './contracts.ts';
+import {
+  compileProjectActivation,
+  createActivationCatalog,
+  validationView,
+  type ActivationCatalog,
+} from './activation.ts';
 import { openGovernanceDatabase } from './database.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import {
@@ -73,6 +79,7 @@ const DEFAULT_AUDIT_LIMIT = 50;
 interface DecisionOutcome {
   readonly proposal?: Proposal;
   readonly error?: DomainError;
+  readonly artifact?: import('./contracts.ts').PublishArtifactInput;
 }
 
 export function createControlPlane(
@@ -88,6 +95,16 @@ export function createControlPlane(
   }
 
   const validator = createRuleValidator(options.rawSchema);
+  const rawSchemaText =
+    typeof options.rawSchema === 'string'
+      ? options.rawSchema
+      : JSON.stringify(options.rawSchema);
+  const activationCatalog = createActivationCatalog({
+    rawSchema: rawSchemaText,
+    ...(options.rulesYaml === undefined ? {} : { rulesYaml: options.rulesYaml }),
+    ...(options.guidanceSource === undefined ? {} : { guidanceSource: options.guidanceSource }),
+    ...(options.guidancePacks === undefined ? {} : { guidancePacks: options.guidancePacks }),
+  });
   const now = options.now ?? Date.now;
   const database = openGovernanceDatabase(
     options.databasePath,
@@ -96,7 +113,13 @@ export function createControlPlane(
   );
 
   try {
-    return new GovernanceControlPlane(database, validator, now);
+    return new GovernanceControlPlane(
+      database,
+      validator,
+      now,
+      activationCatalog,
+      options.publishArtifact,
+    );
   } catch (error) {
     database.close();
     if (isDomainError(error)) {
@@ -113,6 +136,8 @@ class GovernanceControlPlane implements ControlPlane {
     private readonly db: DatabaseSync,
     private readonly validator: RuleValidator,
     private readonly clock: () => number,
+    private readonly activationCatalog: ActivationCatalog,
+    private readonly publishArtifact?: (input: import('./contracts.ts').PublishArtifactInput) => void,
   ) {
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec('PRAGMA busy_timeout = 5000');
@@ -206,6 +231,7 @@ class GovernanceControlPlane implements ControlPlane {
         candidate,
         project.workspace,
         this.validator,
+        validationView(this.activationCatalog),
       );
       return deepFreeze(compilation.result);
     });
@@ -364,6 +390,7 @@ class GovernanceControlPlane implements ControlPlane {
           parsedCandidate,
           project.workspace,
           this.validator,
+          validationView(this.activationCatalog),
         );
         if (compilation.compiled === null) {
           return { error: new DomainError('candidate_invalid') };
@@ -386,12 +413,20 @@ class GovernanceControlPlane implements ControlPlane {
         }
 
         const version = (project.current_version ?? 0) + 1;
+        const activated = compileProjectActivation(this.activationCatalog, {
+          projectId: project.id,
+          workspace: project.workspace,
+          version,
+          baseVersion: proposal.base_version,
+          candidate: compilation.compiled.candidate,
+        });
         const snapshot = buildPolicySnapshot({
           projectId: project.id,
           workspace: project.workspace,
           version,
           compiled: compilation.compiled,
           schemaDigest: this.validator.schemaDigest,
+          activationSnapshot: activated.snapshot,
         });
 
         this.db
@@ -466,6 +501,13 @@ class GovernanceControlPlane implements ControlPlane {
 
         return {
           proposal: proposalFromRow(this.requireProposalRow(proposalId), nowMs),
+          artifact: {
+            projectId: project.id,
+            workspace: project.workspace,
+            version,
+            snapshot,
+            artifact: activated.artifact,
+          },
         };
       });
 
@@ -474,6 +516,14 @@ class GovernanceControlPlane implements ControlPlane {
       }
       if (outcome.proposal === undefined) {
         throw new DomainError('internal_error');
+      }
+      if (this.publishArtifact !== undefined && outcome.artifact !== undefined) {
+        try {
+          this.publishArtifact(outcome.artifact);
+        } catch {
+          // The database version is authoritative; the runtime status endpoint
+          // reports a missing/stale artifact rather than pretending a load.
+        }
       }
       return outcome.proposal;
     });
@@ -690,11 +740,21 @@ class GovernanceControlPlane implements ControlPlane {
 
       const published = this.requireVersionRow(projectId, version);
       const snapshot = versionFromRow(published).snapshot;
-      const decision = evaluatePolicy(
-        input.action,
-        snapshot.enforcement.rules,
-        this.nowMs(),
-      );
+      // A legal empty runtime projection means "no matching rule"; do not ask
+      // the engine to validate an empty table (which is deliberately an error).
+      const decision: PolicyDecision =
+        snapshot.enforcement.rules.length === 0
+          ? {
+              verdict: 'allow',
+              matched_rule_ids: [],
+              matched_rules: [],
+              decision: 'no_match',
+            }
+          : evaluatePolicy(
+              input.action,
+              snapshot.enforcement.rules,
+              this.nowMs(),
+            );
       return deepFreeze(decision);
     });
   }
@@ -743,6 +803,7 @@ class GovernanceControlPlane implements ControlPlane {
       input?.candidate,
       project.workspace,
       this.validator,
+      validationView(this.activationCatalog),
     );
     if (compilation.compiled === null) {
       throw new DomainError('candidate_invalid');
@@ -982,4 +1043,3 @@ class GovernanceControlPlane implements ControlPlane {
     }
   }
 }
-

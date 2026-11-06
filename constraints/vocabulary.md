@@ -1,12 +1,12 @@
 # 封闭命中条件词表（G0 冻结）
 
-冻结时间：2026-10-24。15 条规则翻译完成后冻结；后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除 Termcp 产品专属条目后剩余 9 条。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
 
-规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 15 条规则的 `policy_class` 均为 `security`。
+规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 9 条规则的 `policy_class` 均为 `security`。
 
-当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当作已成立的能力。目标形态里这些字段在编译时把规则分到沙箱快照、工程护栏或动态注入，见 `docs/security-shape.md`；编译器未实现。
+当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当成已成立的能力。
 
-2026-11-02 的[产品设计](../docs/product-design.md)进一步规定：GUI 阶段配置以受保护 SQLite 为单一事实源，同一项目激活快照派生执行与 narrative 投影；硬规则也可有 narrative，`enforcement` 仍只是执行机制。项目身份、tags/排除、rollout、probe 运行结果、临时 epoch 和发布认证属于独立版本化记录，**不是本 Schema 新增字段**，更不是现有元数据已经有授权语义。
+P1 离线目录可从项目激活快照派生执行与 narrative 投影；硬规则也可有 narrative，`enforcement` 仍只是执行机制。项目身份、tags/排除属于目录层数据，**不是本 Schema 新增字段**，更不是现有元数据已经有授权语义。此目录尚未接入适配器。
 
 AST/编译器/linter 的 finding 不能塞进当前三字段 action。未来受保护 check runner 和 check-binding 需要单独 ADR、版本化信封及兼容测试；本词表不新增 `finding`、regex 或语言语义操作符。无法用当前七算子表达的规则仍保持 advisory 或独立工程检查，不假装已有引擎裁决。
 
@@ -43,6 +43,6 @@ AST/编译器/linter 的 finding 不能塞进当前三字段 action。未来受�
 
 ## 本次表达力缺口
 
-以下内容不在 action 信封内，因此没有对应命中条件：文件/请求正文、审批状态、生产环境与是否有人值守、认证启动 flag、上传字节数。对应规则已标 `advisory_only`，没有用 target 猜测这些状态。
+以下内容不在 action 信封内，因此没有对应命中条件：文件/请求正文、审批状态、生产环境与是否有人值守。对应规则已标 `advisory_only`，没有用 target 猜测这些状态。
 
 本词表刻意没有 `rate_exceeds`：当前纯函数没有调用历史或速率状态，也没有注入这类状态的 G0 接口。

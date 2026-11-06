@@ -1,3 +1,5 @@
+import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
+import type { ProjectActivationSnapshot } from '../activation/types.ts';
 import { SNAPSHOT_FORMAT, deepFreeze } from './compiler.ts';
 import type {
   Actor,
@@ -129,6 +131,22 @@ export function versionFromRow(row: VersionRow): PublishedVersion {
     snapshot.advisoryDigest !== advisory.digest
   ) {
     throw new DomainError('database_corrupt');
+  }
+
+  if (snapshot.activationSnapshot !== undefined) {
+    try {
+      const activation = snapshot.activationSnapshot as ProjectActivationSnapshot;
+      deepFreeze(activation);
+      const verified = verifyProjectActivationSnapshot(activation);
+      if (
+        snapshot.activationDigest !== verified.activationDigest ||
+        snapshot.digest !== verified.digest
+      ) {
+        throw new DomainError('database_corrupt');
+      }
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
   }
 
   return deepFreeze({

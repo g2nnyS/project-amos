@@ -36,6 +36,7 @@ import {
   type InjectorSession,
 } from "../../injector/index.ts";
 import { createLogOnlyRecorder } from "../shared/log-only.ts";
+import { loadActivationGuidance } from "../shared/activation-guidance.ts";
 import {
   normalizeOpenCodeAction,
   type OpenCodeNormalization,
@@ -257,6 +258,51 @@ function readConfig(
     rulesPath: requiredPath(options, "rulesPath", directory),
     schemaPath: requiredPath(options, "schemaPath", directory),
     logPath: requiredPath(options, "logPath", directory),
+  };
+}
+
+const ACTIVATION_GUIDANCE_ERROR = "amos_activation_guidance_error";
+
+interface ActivationGuidanceConfig {
+  readonly snapshotPath: string;
+  readonly projectId: string;
+}
+
+type ActivationGuidanceState =
+  | { readonly status: "absent" }
+  | { readonly status: "enabled"; readonly config: ActivationGuidanceConfig }
+  | { readonly status: "error" };
+
+/**
+ * Optional, explicit migration bridge to an activation-backed advisory
+ * session. A malformed configuration is reported as an error instead of
+ * falling back to the global guidance seed; the security recorder is
+ * unaffected because this is advisory-only.
+ */
+function readActivationGuidanceConfig(
+  options: Record<string, unknown>,
+  directory: string,
+): ActivationGuidanceState {
+  const raw = options.activation;
+  if (raw === undefined) return { status: "absent" };
+  if (!isRecord(raw)) return { status: "error" };
+  const keys = Object.keys(raw);
+  if (keys.some((key) => key !== "snapshotPath" && key !== "projectId")) {
+    return { status: "error" };
+  }
+  const snapshotPath = raw.snapshotPath;
+  const projectId = raw.projectId;
+  if (
+    typeof snapshotPath !== "string" ||
+    snapshotPath.trim().length === 0 ||
+    typeof projectId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(projectId)
+  ) {
+    return { status: "error" };
+  }
+  return {
+    status: "enabled",
+    config: { snapshotPath: resolve(directory, snapshotPath), projectId },
   };
 }
 
@@ -533,8 +579,28 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
 
       if (configError) diagnostic(WORKFLOW_GATE_CONFIG_ERROR);
 
+      const activationState = readActivationGuidanceConfig(
+        options,
+        config.directory,
+      );
+      let activationFactory: (() => InjectorSession) | null = null;
+      if (activationState.status === "enabled") {
+        const loaded = loadActivationGuidance({
+          snapshotPath: activationState.config.snapshotPath,
+          projectId: activationState.config.projectId,
+          workspace: config.directory,
+        });
+        if (loaded.status === "error") {
+          diagnostic(ACTIVATION_GUIDANCE_ERROR);
+        }
+        activationFactory = loaded.createSession;
+      } else if (activationState.status === "error") {
+        diagnostic(ACTIVATION_GUIDANCE_ERROR);
+      }
+
       const makeInjectorSession =
         deps.createInjectorSession ??
+        activationFactory ??
         (() => createInjectorSession(getProjectSeedSnapshot()));
 
       type AdvisoryState = {

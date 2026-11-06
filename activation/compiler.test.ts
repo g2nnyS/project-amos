@@ -7,6 +7,8 @@ import { evaluatePolicy, evaluateWithMatches } from '../engine/engine.ts';
 import { selectAdvisoryRules } from '../injector/select.ts';
 import { renderAdvisoryBlock } from '../injector/render.ts';
 import { createSnapshotStore } from '../storage/snapshot.ts';
+import { GUIDANCE_PACKS } from '../guidance/packs.ts';
+import { migrateLegacyCatalog } from '../catalog/migration.ts';
 import { createProjectActivationCompiler } from './compiler.ts';
 import { ActivationError, type ProjectActivationSnapshot } from './types.ts';
 import { entry, injection, json, NOW, options, project, RAW_SCHEMA, rule } from './test-support.ts';
@@ -47,6 +49,14 @@ test('prompt selection, routing suppression and zero rendering budget never filt
   const selection = selectAdvisoryRules(native, { prompt: 'typescript' });
   assert.ok(!selection.selected.some(({ id }) => id === 'typescript'));
   assert.equal(renderAdvisoryBlock({ snapshot: native, rules: selection.selected, maxCharacters: 0 }).text, '');
+  for (const input of [
+    { prompt: 'typescript', paths: ['/work/typescript/src/a.ts'] },
+    { prompt: 'unrelated', taskTags: ['security'] },
+    { prompt: 'python', areas: ['python'], languages: ['python'] },
+  ]) {
+    const selected = selectAdvisoryRules(native, input);
+    renderAdvisoryBlock({ snapshot: native, rules: selected.selected, maxCharacters: 300 });
+  }
   assert.deepEqual(json(snapshot.enforcement), before);
   assert.equal(evaluatePolicy({ tool: 'fs', operation: 'file_write', target: '/work/typescript/src/a.ts' }, snapshot.enforcement.runtime.rules, NOW).verdict, 'confirm');
 });
@@ -59,7 +69,7 @@ test('hard rule narratives and pure advice are derived from their same rule vers
   const hard = rules.find(({ id }) => id === 'typescript')!;
   const advice = rules.find(({ id }) => id === 'advice')!;
   assert.equal(hard.pairedRuleId, 'typescript');
-  assert.equal(hard.narrative, snapshot.activeRules.find(({ id }) => id === 'typescript')!.rule.narrative);
+  assert.equal(hard.narrative, snapshot.activeRules.find(({ id }) => id === 'typescript')!.rule!.narrative);
   assert.equal(hard.narrativeVersion, 1);
   assert.equal(advice.pairedRuleId, null);
   assert.ok(!snapshot.enforcement.runtime.rules.some((item) => item.id === 'advice'));
@@ -150,14 +160,14 @@ test('snapshots are deterministic, deep-frozen, independent of caller mutation, 
   const snapshot = compiler.compile(input);
   assert.equal(compiler.compile(json(input)).digest, snapshot.digest);
   assert.equal(compiler.compile(Object.fromEntries(Object.entries(input).reverse())).digest, snapshot.digest);
-  assert.notEqual(compiler.compile(project({ policyVersion: 'policy-2' })).digest, snapshot.digest);
+  assert.notEqual(compiler.compile(project({ projectConfigVersion: 'policy-2' })).digest, snapshot.digest);
   assert.equal(Object.isFrozen(opts), false);
   assert.equal(Object.isFrozen(input), false);
   (opts.rules[1].rule as Record<string, unknown>).narrative = 'caller changed';
   assert.equal(compiler.compile(input).digest, snapshot.digest);
   assert.ok(Object.isFrozen(snapshot.enforcement.runtime.rules[0]));
   assert.ok(Object.isFrozen(advisory(snapshot).rules[0].keywords));
-  assert.throws(() => { (snapshot.activeRules[0].rule as Record<string, unknown>).on_hit = 'log'; }, TypeError);
+  assert.throws(() => { (snapshot.activeRules[0]!.rule as Record<string, unknown>).on_hit = 'log'; }, TypeError);
   assert.equal(snapshot.mode, 'offline-shadow');
 });
 
@@ -195,12 +205,12 @@ test('verification rejects foreign identities, mixed projections, content drift 
   assert.equal(compiler.verify(json(snapshot), identity).digest, snapshot.digest);
   assert.throws(() => compiler.verify(snapshot, { ...identity, projectId: 'other' }), ActivationError);
   assert.throws(() => compiler.verify(snapshot, { ...identity, workspace: '/work/other' }), ActivationError);
-  const newer = compiler.compile(project({ policyVersion: 'policy-2' }));
+  const newer = compiler.compile(project({ projectConfigVersion: 'policy-2' }));
   assert.throws(() => compiler.verify({ ...snapshot, advisory: newer.advisory }, identity), ActivationError);
   assert.throws(() => compiler.verify({ ...snapshot, enforcement: newer.enforcement }, identity), ActivationError);
   assert.throws(() => compiler.verify({ ...snapshot, extra: 'not ignored' }, identity), ActivationError);
   const tampered = json(snapshot) as unknown as { activeRules: { rule: Record<string, unknown> }[] };
-  tampered.activeRules[0].rule.on_hit = 'log';
+  tampered.activeRules[0]!.rule!.on_hit = 'log';
   assert.throws(() => compiler.verify(tampered, identity), ActivationError);
 });
 
@@ -234,9 +244,19 @@ test('the real YAML source compiles to the same expanded rules without changing 
   const rules = parse(readFileSync('constraints/rules.yaml', 'utf8')) as Record<string, unknown>[];
   const legacy = createSnapshotStore().load('constraints/rules.yaml', 'constraints/schema.json', { sessionWorkspace: '/work/golden' });
   assert.ok(legacy.snapshot);
-  const compiler = createProjectActivationCompiler({ rawSchema: RAW_SCHEMA, libraryVersion: 'import-1', rules: rules.map((item) => ({ version: 1, rule: item, injection: null })), mandatoryRuleRefs: [] });
-  const snapshot = compiler.compile(project({ workspace: '/work/golden', selectedRuleRefs: rules.map((item) => ({ id: item.id as string, version: 1 })), advisoryBaselineRuleIds: [] }));
-  assert.deepEqual(json(snapshot.activeRules.map((item) => item.rule)), json(legacy.snapshot.table));
+  const catalog = migrateLegacyCatalog({
+    rulesYaml: readFileSync('constraints/rules.yaml', 'utf8'),
+    rawSchema: RAW_SCHEMA,
+    guidanceSource: readFileSync('guidance/packs.ts', 'utf8'),
+    guidancePacks: GUIDANCE_PACKS,
+  });
+  const compiler = createProjectActivationCompiler(catalog.compilerOptions);
+  const refs = rules.map((item) => ({ id: item.id as string, version: 1 }));
+  const snapshot = compiler.compile(project({ workspace: '/work/golden', selectedRuleRefs: refs, advisoryBaselineRuleIds: [] }));
+  assert.deepEqual(
+    json(snapshot.activeRules.filter((item) => item.rule !== null).map((item) => item.rule).sort((a, b) => String(a?.id).localeCompare(String(b?.id)))),
+    json([...legacy.snapshot.table].sort((a, b) => String(a.id).localeCompare(String(b.id)))),
+  );
   assert.notEqual(snapshot.digest, legacy.snapshot.digest);
   assert.equal(createSnapshotStore().load('constraints/rules.yaml', 'constraints/schema.json', { sessionWorkspace: '/work/golden' }).snapshot?.digest, legacy.snapshot.digest);
 });
@@ -251,8 +271,15 @@ test('legacy fixture verdicts and fail-closed cases survive the offline activati
       let compiler;
       try {
         compiler = createProjectActivationCompiler({
-          rawSchema: RAW_SCHEMA, libraryVersion: 'fixture-1', mandatoryRuleRefs: [],
-          rules: (Array.isArray(fixture.table) ? fixture.table : [fixture.table]).map((item) => ({ version: 1, rule: item, injection: null })),
+          rawSchema: RAW_SCHEMA, catalogVersion: 'fixture-v2', mandatoryRuleRefs: [],
+          rules: (Array.isArray(fixture.table) ? fixture.table : [fixture.table]).map((item) => ({
+            id: (item as Record<string, unknown>)?.id as string,
+            version: 1,
+            rule: item,
+            narrative: null,
+            provenance: { kind: 'legacy-constraints-yaml', sourceDigest: `sha256:${'a'.repeat(64)}` },
+            injection: null,
+          })),
         });
       } catch (error) {
         assert.ok(error instanceof ActivationError, fixture.name);

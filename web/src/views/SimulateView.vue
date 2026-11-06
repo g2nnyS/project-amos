@@ -63,7 +63,7 @@ async function simulate() {
     <PageHeader title="动作模拟" description="使用已发布策略进行假设评估；不会执行或授权动作。" />
 
     <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      模拟使用引擎默认值，结果不等同于运行时 log-only 记录器，也不是执行许可。仅支持已发布版本。
+      模拟使用发布快照的运行时规则投影，结果不是执行许可；它不启动 Harness，也不产生工具副作用。仅支持已发布版本。
     </div>
 
     <div v-if="governance.loading" class="panel p-5 text-sm" role="status">正在加载项目数据…</div>

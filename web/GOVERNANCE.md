@@ -9,8 +9,8 @@ integrations, fake account/workspace data and all mock API fallbacks.
 
 ## Actual behavior and boundaries
 
-`../console/app.js` and `../docs/local-governance.md` describe the existing real
-behavior to preserve. The backend contract is `../control-plane/contracts.ts`.
+`../docs/local-governance.md` describes the real behavior to preserve; the
+current UI lives in `src/`. The backend contract is `../control-plane/contracts.ts`.
 Use the existing `/api/*` endpoints without adding governance/execution APIs.
 
 - Real human-token login, bootstrap CSRF, session renewal/expiry/logout.
@@ -153,8 +153,8 @@ connection status, finance metrics, or unavailable configuration switches.
 
 - One root npm workspace lock; root npm ci installs frontend dependencies.
 - Root build compiles server then web into dist/console; only that UI is served
-  by npm run console / console:serve. Old console assets are removed only after
-  frontend owners have finished consulting them (orchestrator does removal).
+  by npm run console / console:serve. The superseded root console/ assets and
+  their legacy-only tests have been removed; do not restore a second UI.
 - Flatten Vite output; bounded closed build asset manifest; load exact bytes
   before listen, O_NOFOLLOW + ordinary-file/size/name checks, fail startup for
   malformed/missing/symlink/unknown assets. No request-derived disk lookup.

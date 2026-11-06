@@ -43,12 +43,14 @@ export interface InjectionSelection {
   readonly selected: readonly AdvisoryRule[];
   readonly usedFallback: boolean;
   readonly matched: boolean;
+  readonly fallbackReason: 'no_signal_match' | 'routing_error' | null;
 }
 
 interface PreparedRule {
   readonly rule: AdvisoryRule;
-  readonly index: number;
   readonly areas: ReadonlySet<string>;
+  readonly languages: ReadonlySet<string>;
+  readonly frameworks: ReadonlySet<string>;
   readonly pathHints: readonly string[];
   readonly taskTags: ReadonlySet<string>;
   readonly keywordTokens: readonly (readonly string[])[];
@@ -59,6 +61,8 @@ interface Signals {
   readonly promptTokens: readonly string[];
   readonly paths: readonly string[];
   readonly areas: ReadonlySet<string>;
+  readonly languages: ReadonlySet<string>;
+  readonly frameworks: ReadonlySet<string>;
   readonly taskTags: ReadonlySet<string>;
   readonly alreadyInjected: ReadonlySet<string>;
 }
@@ -66,47 +70,59 @@ interface Signals {
 /**
  * Select individual rules from `snapshot.rules` only.
  *
- * Scoring: area 400, path glob 300, structured task tag 200, prompt keyword
- * token sequence 100, plus the rule's specificity and priority/1000. A matched
- * route may add rules (route specificity becomes part of the candidate score)
- * or suppress rules. Suppression is authoritative over signal and add matches.
+ * Ordering is level ascending first; within a level, structured matches and
+ * prompt relevance decide order, then legacy priority/specificity, then a
+ * stable bytewise ID/version tie-break. Advisory routing never selects execution.
  */
 export function selectAdvisoryRules(
   snapshot: AdvisorySnapshot,
   input?: InjectionInput | null,
 ): InjectionSelection {
   const signals = normalizeSignals(input);
-  const prepared = snapshot.rules.map((rule, index) => prepareRule(rule, index));
+  const prepared = snapshot.rules.map((rule) => prepareRule(rule));
   const byId = new Map(prepared.map((entry) => [entry.rule.id, entry] as const));
 
   const candidateScores = new Map<string, number>();
+  const applicable = new Set<string>();
   let matched = false;
 
   for (const entry of prepared) {
     if (signals.alreadyInjected.has(entry.rule.id)) {
       continue;
     }
-    let score = 0;
+    if (
+      signals.languages.size > 0 && entry.languages.size > 0 &&
+      !intersects(signals.languages, entry.languages)
+    ) continue;
+    if (
+      signals.frameworks.size > 0 && entry.frameworks.size > 0 &&
+      !intersects(signals.frameworks, entry.frameworks)
+    ) continue;
+    applicable.add(entry.rule.id);
+    let structuralScore = 0;
     if (intersects(signals.areas, entry.areas)) {
-      score += AREA_SCORE;
+      structuralScore += AREA_SCORE;
     }
     if (matchesAnyPath(signals.paths, entry.pathHints)) {
-      score += PATH_SCORE;
+      structuralScore += PATH_SCORE;
     }
     if (intersects(signals.taskTags, entry.taskTags)) {
-      score += TASK_TAG_SCORE;
+      structuralScore += TASK_TAG_SCORE;
     }
-    if (
+    if (intersects(signals.languages, entry.languages)) {
+      structuralScore += AREA_SCORE;
+    }
+    if (intersects(signals.frameworks, entry.frameworks)) {
+      structuralScore += AREA_SCORE;
+    }
+    const promptScore =
       entry.keywordTokens.some((tokens) =>
         includesSequence(signals.promptTokens, tokens),
-      )
-    ) {
-      score += KEYWORD_SCORE;
-    }
+      ) ? KEYWORD_SCORE : 0;
 
-    if (score > 0) {
+    if (structuralScore > 0 || promptScore > 0) {
       matched = true;
-      candidateScores.set(entry.rule.id, score + entry.intrinsicScore);
+      candidateScores.set(entry.rule.id, structuralScore * 1_000_000 + promptScore * 1_000 + entry.intrinsicScore);
     }
   }
 
@@ -121,7 +137,7 @@ export function selectAdvisoryRules(
       suppressed.add(id);
     }
     for (const id of route.add) {
-      if (signals.alreadyInjected.has(id) || !byId.has(id)) {
+      if (signals.alreadyInjected.has(id) || !applicable.has(id)) {
         continue;
       }
       const previous = routeAddSpecificity.get(id);
@@ -139,7 +155,7 @@ export function selectAdvisoryRules(
     if (entry === undefined) {
       continue;
     }
-    const score = routeSpecificity + entry.intrinsicScore;
+    const score = 1_000_000_000 + routeSpecificity * 1_000_000 + entry.intrinsicScore;
     const existing = candidateScores.get(id) ?? Number.NEGATIVE_INFINITY;
     if (score > existing) {
       candidateScores.set(id, score);
@@ -150,7 +166,7 @@ export function selectAdvisoryRules(
   }
 
   if (!matched) {
-    return fallbackSelection(prepared, signals, snapshot.baselineRuleIds);
+    return fallbackSelection(prepared.filter((entry) => applicable.has(entry.rule.id)), signals, 'no_signal_match');
   }
 
   const candidates: AdvisoryRuleCandidate[] = [];
@@ -162,11 +178,13 @@ export function selectAdvisoryRules(
     candidates.push({ rule: entry.rule, score });
   }
   candidates.sort((left, right) => {
+    const levelDelta = left.rule.level - right.rule.level;
+    if (levelDelta !== 0) return levelDelta;
     const scoreDelta = right.score - left.score;
     if (scoreDelta !== 0) {
       return scoreDelta;
     }
-    return indexOf(prepared, left.rule.id) - indexOf(prepared, right.rule.id);
+    return compareRef(left.rule, right.rule);
   });
 
   return Object.freeze({
@@ -174,57 +192,45 @@ export function selectAdvisoryRules(
     selected: Object.freeze(candidates.map((candidate) => candidate.rule)),
     usedFallback: false,
     matched: true,
+    fallbackReason: null,
   });
 }
 
 function fallbackSelection(
   prepared: readonly PreparedRule[],
   signals: Signals,
-  baselineRuleIds: readonly string[],
+  reason: 'no_signal_match' | 'routing_error',
 ): InjectionSelection {
-  const byId = new Map(prepared.map((entry) => [entry.rule.id, entry] as const));
-  const chose: AdvisoryRuleCandidate[] = [];
-  const chosenIds = new Set<string>();
-
-  // Baseline rules first, in snapshot baseline order. They are active rules in
-  // this snapshot, never global pack constants.
-  for (const id of baselineRuleIds) {
-    if (
-      chosenIds.has(id) ||
-      signals.alreadyInjected.has(id)
-    ) {
-      continue;
-    }
-    const entry = byId.get(id);
-    if (entry === undefined) {
-      continue;
-    }
-    chosenIds.add(id);
-    chose.push(Object.freeze({ rule: entry.rule, score: entry.intrinsicScore }));
-  }
-
-  const remaining = prepared
-    .filter(
-      (entry) =>
-        !chosenIds.has(entry.rule.id) &&
-        !signals.alreadyInjected.has(entry.rule.id),
-    )
+  // The caller supplies either applicable active rules for a normal miss or
+  // all active rules after a routing error. Never consult a global library.
+  const chose = prepared
+    .filter((entry) => !signals.alreadyInjected.has(entry.rule.id))
     .sort((left, right) => {
+      const levelDelta = left.rule.level - right.rule.level;
+      if (levelDelta !== 0) return levelDelta;
       const scoreDelta = right.intrinsicScore - left.intrinsicScore;
-      return scoreDelta !== 0 ? scoreDelta : left.index - right.index;
-    });
-
-  for (const entry of remaining) {
-    chosenIds.add(entry.rule.id);
-    chose.push(Object.freeze({ rule: entry.rule, score: entry.intrinsicScore }));
-  }
+      return scoreDelta !== 0 ? scoreDelta : compareRef(left.rule, right.rule);
+    })
+    .map((entry) => Object.freeze({ rule: entry.rule, score: entry.intrinsicScore }));
 
   return Object.freeze({
     candidates: Object.freeze([...chose]),
     selected: Object.freeze(chose.map((candidate) => candidate.rule)),
     usedFallback: true,
     matched: false,
+    fallbackReason: reason,
   });
+}
+
+/** Route-failure fallback: every active narrative from this snapshot, never a global pack. */
+export function selectAllActiveAdvisoryRules(
+  snapshot: AdvisorySnapshot,
+  input?: InjectionInput | null,
+  reason: 'no_signal_match' | 'routing_error' = 'routing_error',
+): InjectionSelection {
+  const signals = normalizeSignals(input);
+  const prepared = snapshot.rules.map((rule) => prepareRule(rule));
+  return fallbackSelection(prepared, signals, reason);
 }
 
 function normalizeSignals(input?: InjectionInput | null): Signals {
@@ -252,6 +258,8 @@ function normalizeSignals(input?: InjectionInput | null): Signals {
   }
 
   const areas = normalizeLowerSet(record.areas, MAX_SELECTION_AREAS);
+  const languages = normalizeLowerSet(record.languages, MAX_SELECTION_AREAS);
+  const frameworks = normalizeLowerSet(record.frameworks, MAX_SELECTION_AREAS);
   const taskTags = normalizeLowerSet(record.taskTags, MAX_SELECTION_TASK_TAGS);
   const alreadyInjected = new Set<string>();
   if (Array.isArray(record.alreadyInjected)) {
@@ -269,16 +277,19 @@ function normalizeSignals(input?: InjectionInput | null): Signals {
     promptTokens: tokenize(prompt),
     paths,
     areas,
+    languages,
+    frameworks,
     taskTags,
     alreadyInjected,
   };
 }
 
-function prepareRule(rule: AdvisoryRule, index: number): PreparedRule {
+function prepareRule(rule: AdvisoryRule): PreparedRule {
   return {
     rule,
-    index,
     areas: new Set(rule.areas.map((area) => area.toLowerCase())),
+    languages: new Set(rule.languages.map((language) => language.toLowerCase())),
+    frameworks: new Set(rule.frameworks.map((framework) => framework.toLowerCase())),
     pathHints: rule.pathHints,
     taskTags: new Set(rule.taskTags.map((tag) => tag.toLowerCase())),
     keywordTokens: rule.keywords
@@ -431,9 +442,10 @@ function intersects(
   return false;
 }
 
-function indexOf(prepared: readonly PreparedRule[], id: string): number {
-  const entry = prepared.find((candidate) => candidate.rule.id === id);
-  return entry === undefined ? Number.MAX_SAFE_INTEGER : entry.index;
+function compareRef(left: AdvisoryRule, right: AdvisoryRule): number {
+  if (left.id < right.id) return -1;
+  if (left.id > right.id) return 1;
+  return left.ruleVersion - right.ruleVersion;
 }
 
 /**

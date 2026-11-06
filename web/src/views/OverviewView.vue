@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ShieldAlert, FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -33,7 +33,8 @@ async function loadAudit() {
   }
 }
 
-watch(() => governance.activeProjectId, () => void loadAudit(), { immediate: true })
+watch(() => governance.activeProjectId, () => { void loadAudit(); void governance.refreshRuntime() }, { immediate: true })
+onMounted(() => { void loadAudit(); void governance.refreshRuntime() })
 
 const stats = computed(() => [
   { label: '当前版本', value: governance.activeProject?.currentVersion == null ? '尚未发布' : `v${governance.activeProject.currentVersion}`, note: governance.activeProject?.currentVersion == null ? '项目无已发布治理版本' : '已发布本地治理版本' },
@@ -62,6 +63,22 @@ const activationNote = computed(() => {
   return `显式包含 ${activation.includedRuleIds.length} 条`
 })
 
+const runtimeLabel = computed(() => {
+  switch (governance.runtime?.status) {
+    case 'loaded': return '已加载当前版本'
+    case 'stale': return '已加载旧版本'
+    case 'never': return '尚无受管会话加载'
+    case 'invalid': return '加载报告无效'
+    case 'unpublished': return '尚无已发布版本'
+    default: return '运行时状态不可用'
+  }
+})
+const runtimeTone = computed(() => governance.runtime?.status === 'loaded' ? 'text-success' : governance.runtime?.status === 'stale' ? 'text-warning' : 'text-muted-foreground')
+const enforcedTools = computed(() => {
+  const tools = governance.runtime?.runtime?.capabilities?.enforcedTools
+  return Array.isArray(tools) ? tools.join('、') : '未知'
+})
+
 const pendingProposals = computed(() => governance.proposals.filter(p => p.status === 'pending').slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseVersion !== (governance.policy?.version ?? 0)))
 const eventLabels: Record<string, string> = { project_created: '创建项目', proposal_created: '创建提案', proposal_approved: '批准提案', proposal_rejected: '拒绝提案', proposal_withdrawn: '撤回提案', proposal_expired: '提案过期', version_published: '发布版本' }
@@ -76,7 +93,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
     </PageHeader>
 
     <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      <strong class="text-foreground">运行边界：</strong>Stage A 为 log-only；本地治理发布不改变运行时配置，不授权工具执行。同 UID 访问并非可信隔离。已发布版本与运行时状态相互独立。
+      <strong class="text-foreground">运行边界：</strong>发布写入本地治理版本与 Harness 快照产物；受管 Pi 会话在启动时加载并校验该快照，只有显式启用 managed 的工具入口才标记为 enforced。旧插件默认仍是 log-only。同 UID 访问并非可信隔离，也不是 OS 沙箱。
     </div>
 
     <div v-if="governance.error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.initialize()">重试</button></div>
@@ -148,7 +165,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
               </div>
               <div class="flex items-start gap-2 text-xs text-muted-foreground">
                 <ShieldAlert class="mt-0.5 size-4" />
-                <span>运行期策略状态未知：本控制台只显示本地治理发布记录。</span>
+                <span>运行期状态来自受管 Harness 的加载报告；数据库发布成功不等于宿主已加载。</span>
               </div>
             </div>
           </section>
@@ -203,7 +220,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
         <div class="panel-header">
           <div>
             <h2 class="panel-title">本地配置与运行状态</h2>
-            <p class="panel-kicker">区分已发布治理候选与运行时未知状态</p>
+            <p class="panel-kicker">发布版本、快照产物与会话加载报告分别展示</p>
           </div>
         </div>
         <div class="grid gap-4 p-4 text-xs lg:grid-cols-2">
@@ -218,7 +235,18 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
           </div>
           <div class="rounded-md border border-dashed border-border p-3">
             <p class="font-semibold">运行时执行状态</p>
-            <p class="mt-2 text-muted-foreground">Stage A 为 log-only。本控制台不显示运行时适配器是否已加载或生效任何规则；运行时状态需通过独立运维路径确认。</p>
+            <div class="mt-2 space-y-1 text-muted-foreground">
+              <p :class="runtimeTone"><strong class="text-foreground">状态：</strong>{{ runtimeLabel }}</p>
+              <p v-if="governance.runtime?.runtime">
+                会话版本：{{ governance.runtime.runtime.policyVersion }} ·
+                加载时间：{{ new Date(governance.runtime.runtime.loadedAt).toLocaleString('zh-CN') }}
+                <template v-if="governance.runtime.runtime.lastToolAt"> · 最近工具调用：{{ new Date(governance.runtime.runtime.lastToolAt).toLocaleString('zh-CN') }}</template>
+              </p>
+              <p v-if="governance.runtime?.runtime" class="break-all font-mono text-[10px]">activation：{{ governance.runtime.runtime.activationDigest }}</p>
+              <p v-if="governance.runtime?.runtime">受管工具：{{ enforcedTools }}；未支持工具在执行前阻断。</p>
+              <p v-if="governance.runtime?.status === 'stale'">新发布版本只由后续会话加载；当前会话固定使用已加载快照。重新开始受管会话后再确认。</p>
+              <p v-if="governance.runtime?.status === 'never'">尚未有受管 Pi 会话加载当前发布版本。发布成功不代表宿主生效。</p>
+            </div>
           </div>
         </div>
       </section>

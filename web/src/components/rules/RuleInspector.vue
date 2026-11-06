@@ -93,7 +93,7 @@ const activationLabel = computed(() => {
             <div><dt class="text-[11px] text-muted-foreground">运行时部署状态</dt><dd>未知</dd></div>
           </dl>
           <div class="rounded-md border border-warning/30 bg-warning/5 p-3 text-[11px] leading-relaxed text-warning">
-            以上为规则声明的治理语义。Stage A 为 log-only；本地治理发布不改变运行时配置，也不授权工具执行。
+            以上为规则声明的治理语义。发布写入版本与快照产物；只有显式启用 managed 的 Harness 会话才会在工具调用前执行这些规则。
           </div>
         </TabsContent>
         <TabsContent value="evidence" class="mt-0 space-y-4 text-xs">

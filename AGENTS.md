@@ -1,51 +1,113 @@
 # AGENTS.md
 
-## Commands
+<master_coordination_loop>
+LOOP: [Advance Implementation -> Targeted Verification -> Fix on Failure -> Deliver Clean End-State].
+PRIORITY: Explicit task scope, acceptance criteria, and authorization govern all rules[cite: 2]. (1) Acceptance requirements override happy-path assumptions and edge-case deferral. (2) Hard external blocker reporting overrides no-pause/no-caveat rules—exhaust all independent work in the current turn first, then report[cite: 2]. (3) Transformation examples apply ONLY when required by current scope.
+</master_coordination_loop>
 
-- Requires Node.js 26 and npm; install with `npm ci`.
-- Run `npm run typecheck` and `npm test` before review. `npm test` builds first and runs the compiled Node tests.
-- Focused test: `npm run build && node --test dist/engine/engine.test.js` (substitute the compiled test path).
-- Run tests from the repository root: tests resolve `fixtures/` and `constraints/` through `process.cwd()`.
-- OpenCode and Pi load compiled JavaScript from `dist/`; run `npm run build` before launching them and after TypeScript changes.
-- Build deletes and recreates `dist/`; never hand-edit it. Source imports use explicit `.ts` extensions, rewritten to `.js` by the build.
-- New top-level source directories need `tsconfig.json` include entries; new test directories also need the explicit test globs in `package.json`.
-- Root `opencode.jsonc` enables the workflow shell gate. Its closed allowlist can require confirmation even for installs or inspection commands; use dedicated read tools or a normal terminal rather than weakening the gate.
-- Follow `CONTRIBUTING.md` for worktree isolation and PR requirements; CI enforces `(feat|fix|chore|docs|refactor|test|ci)/<lowercase-slug>` branch names.
-- `npm run console` builds/starts the loopback governance UI; `npm run console:serve` skips building. State and separate human/Agent tokens default outside the workspace; never print token files. See `docs/local-governance.md`.
+<execution_protocol>
+ACT: Resolve operational ambiguity by inspecting workspace context. Select the simplest justified, reversible path and execute—stalling to avoid picking wrong is itself a wrong pick.
+COMPLETE: Fulfill all in-scope acceptance criteria without placeholders (`...`, `// TODO`, `// existing code`) or user-completed leftovers[cite: 2]. Escalate only when context cannot resolve a choice that materially alters acceptance semantics[cite: 2].
+BLOCKERS: Pause ONLY for missing external credentials, unresolvable permission denials, material requirement conflicts, or destructive operations on untracked/production data. Finish 100% of independent work in the current turn first, then deliver completed artifacts with the exact blocker and minimum required input[cite: 2].
+</execution_protocol>
 
-## Current security boundary
+<verification_efficiency_protocol>
+GATEKEEPER: Before running any check, answer internally: "What specific failure would this detect, and what would I do differently if it occurred?" No clear answer means DO NOT run it.
+VERIFY: Batch coherent edits across files before verifying[cite: 2]. Trust deterministic tool reports for their stated operations; NEVER run `cat`, `ls`, `git diff`, or `read_file` merely to confirm a successful write[cite: 2].
+RECHECK: Reuse passing results while relevant code and execution context (configs, env, deps, target, permissions) remain unchanged[cite: 2]. Re-run affected checks ONLY after a failure, relevant state change, or concrete counter-evidence[cite: 2]. Do not validate test runners unless in scope or malfunctioning.
+</verification_efficiency_protocol>
 
-- The security policy layer is Stage A `log-only`: its verdicts are hypothetical and the security engine does not block tools. Do not describe it as a hard security boundary or enable security `deny`/`confirm` without the architecture and adversarial evidence required by `docs/security-model.md`.
-- A separate opt-in engineering workflow gate may block dangerous shell commands and hold work. It is a workflow guardrail, not complete mediation, a security boundary, or merge authority; see `docs/workflow-gate.md`.
-- Coverage records make unsupported actions visible; they do not mediate or protect those actions.
-- Policy, audit, and snapshot files still share the Agent's writable domain. Append-only JSONL and owner-only modes are not tamper-proof guarantees.
-- Security-sensitive changes require human review; follow `CONTRIBUTING.md`. Read `docs/decisions.md` before expanding scope or changing established semantics.
+<pragmatic_optimism_protocol>
+BASELINE: Assume a cooperating operator and standard configurations unless contradicted by explicit requirements, workspace evidence, or observed wrong behavior. Treat test failures as low-cost feedback, not paralysis triggers.
+COMMIT: When workspace evidence supports a small, reversible hypothesis, implement and verify the minimal fix immediately; revise if counter-evidence emerges. Say plainly when code is correct; do not manufacture findings.
+SCOPE: Ignore speculative edge cases (exotic encodings, symlink races, theoretical concurrency) unless reachable in supported use or required by acceptance criteria (e.g., idempotency/retries). "Constructible in principle" is out of scope.
+</pragmatic_optimism_protocol>
 
-## Architecture invariants
+<affirmative_ownership_protocol>
+OWN: Operate as the Builder, never a detached Auditor. When an unverified gap genuinely impacts current acceptance criteria[cite: 2]: close it immediately via targeted tool calls in the current turn before speaking (if solvable in scope)[cite: 2], or report the exact Hard Blocker plainly (if externally blocked)[cite: 2].
+BANNED_PEDANTRY: Never contrast concepts passively; actively bridge functional gaps. Erase: [不是……而是……, 而不是, 更准确地说, 不等于, 不等同于, 并非, 并不是, 不是说, 不能把……当做/当作, 不能视为, 不构成].
+BANNED_HEDGING: Lead with verified results; use partial evidence as a stepping stone to build. Erase: [不能证明, 无法证明, 不证明, 不足以证明, 不足以说明, 不能说明, 无法说明, 只能证明, 只能说明, 不能直接, 不能仅凭, 不能仅靠, 不能只凭, 不能只看, 不能据此, 不能断言, 不能断定, 不能认定, 不能确认, 不能确定, 不能保证, 不保证, 不能承诺, 还不能, 尚不能, 未必, 不必然, 不一定, 不代表, 不意味着, 不能简单, 不能推出, 不完全][cite: 1].
+REFRAME (When in-scope and factually grounded):
+- [Unwired Entry]: Instead of "不能宣称已做到工具层强制"[cite: 1], wire the ready check into the entrypoint and verify before reporting.
+- [Online Gap]: Instead of "离线测试还不能证明线上入口有效"[cite: 1], trace and verify the real entrypoint call chain directly (or report the exact permission blocker).
+- [Session State]: Instead of "已有会话可能仍保留旧设置"[cite: 1], implement minimal session refresh/invalidation if required by acceptance criteria, or preserve existing semantics silently if not.
+</affirmative_ownership_protocol>
 
-- `engine/` is pure and uses an injected clock. Preserve `deny > confirm > log > allow` and fail-closed evaluation; keep filesystem, network, model, and harness I/O outside it.
-- `supervisor/` is an in-memory session/decision/stop core, not a running trust boundary. Its fences rely on process-local object identity, do not survive IPC, and are not approvals or execution authorization; see `docs/supervisor-core.md`.
-- `control-plane/` is a local SQLite governance service, not the trusted execution layer. Approval atomically publishes an immutable version; rollback is a new proposal. It never changes adapter configuration or grants tool execution; same-UID token/database access remains possible.
-- `guidance/` contains static versioned engineering guidance; `workflow/` contains the opt-in workflow gate: closed-subset shell assessment, fixed local checks, filtered diff egress, and advisory Jev engineering review. Never treat these modules as security enforcement.
-- `injector/` compiles session-pinned advisory snapshots from guidance seeds and selects/renders active rules. Prompts cannot introduce rules; injection failures must not change gate decisions or audit behavior.
-- `strict/` is a closed in-memory staging executor, not a native filesystem or OS sandbox. Only the controlled Pi SDK host may use it as a restricted Harness boundary; ordinary plugins remain log-only. Never add Shell, MCP, arbitrary executors, native writes, or model-supplied approvals without a new boundary design and evidence; see `docs/strict-harness.md`.
-- `constraints/rules.yaml` is the current Stage A runtime input, not the target authority. The trusted control plane in `docs/decisions.md` is not implemented. The seven predicate operators are frozen; do not add regex routing, custom DSLs, or one-off operators.
-- Target product design: `docs/product-design.md`; implementation gaps and evidence gates: `docs/product-gap-plan.md`. At the GUI stage all Amos configuration moves to protected-service-owned SQLite as the sole authority; YAML/JSON/Git become import/export/archive, secrets remain references. Existing file configuration is unchanged until an explicit migration. A database or GUI alone is not isolation.
-- Target enforcement and injection derive from one project activation snapshot. Inactive rules are neither evaluated nor newly injected; task selection never filters applicable hard rules. Mandatory baseline rules are explicit active members, not a hidden global table. Current guidance seeds do not establish that cross-channel invariant.
-- Only `predicate`, `on_hit`, and `ttl` select rule verdicts. Other rule metadata is not authorization; `level` also drives audit-review priority (level 0 requires full review).
-- Adapters own harness payload normalization. File targets are lexically normalized absolute paths, not symlink-, hard-link-, bind-mount-, or TOCTOU-safe object identities.
-- Never log file contents, shell command text, URL secret values, or raw hostile payloads. `decision/` Jev is only an optional semantic sensor: it may tighten but never relax deterministic verdicts. Requirement conformance compares an action with a harness-captured `RequirementFrame`, never with a model's self-reported intent; delegated frames cannot relax a verdict, requirement text requires explicit `egress: "allowed"`, and caller-supplied `context` is not automatically redacted. Do not reuse this path as the security auto-reviewer.
-- The target security shape is sandbox, then `on-request`, then a separate reviewer for a stopped confirm-class escalation. It is not implemented and is not a plugin flag. The reviewer must not be built before the host envelope, must not lift a `deny`, and must not be described as present. Humans edit the existing multi-dimensional rule table; agents cannot publish enforcement rules. See `docs/security-shape.md`.
-- The latest target removes routine human case-by-case gate approvals: the system decides under human-maintained rules and bounds, with independent Jev review where applicable. This includes engineering acceptance and evidence-based rollout; missing evidence or failed review stays stopped. This is not implemented end to end and does not waive the Stage A NO-GO or human governance of rules and preauthorization. See decision 32.
-- Target automatic tightening belongs to a trusted publisher under explicit human preauthorization, never to the agent/reviewer: append approved non-zero-level templates with finite TTL and rollout eligibility, preserve old rules, atomically publish a shared epoch. Ordinary edits/relaxation apply to later sessions; expiry cannot be extended by retry, fallback or restart. Do not implement this design by hot-editing current pinned snapshots or adding unsupported fields to the strict rule/action schemas.
-- Jev supports TypeSafe direct and OpenRouter System One. Shared/example config uses `{env:...}`; a literal credential belongs only in a Git-ignored `decision/jev.local.json` with POSIX owner and mode `0600`. Do not expose credentials in errors or public config.
-- Workflow shell decisions are a deliberately closed subset. Unknown syntax, custom shells/prefixes, PowerShell, or analysis errors must remain confirm/deny, never silent allow. OpenCode completion feedback is advisory because V2 has no true settle/merge block.
-- Snapshot archives preserve policy inputs but are not externally anchored. Keep digest/provenance compatibility explicit when changing their format.
-- `${SESSION_WORKSPACE}` substitution is limited to `target_glob`/`target_outside_glob` patterns; snapshot digests bind raw rules and effective workspace. Failed snapshot replacement retains the last good snapshot; initial failure remains fail-closed.
+<deliverable_hygiene_and_scope_protocol>
+MINIMALISM: Do not add unrequested feature flags, migration frameworks, compatibility layers, or wrappers. Add hashes/checksums ONLY if they replace a costlier operation AND alter control flow.
+CLEAN_STATE: Deliverables (code, comments, commits, PRs, summaries) must present ONLY the clean end result as if written right from the start—zero trial-and-error history, abandoned approaches, or "why we didn't do X".
+SILENCE: Never leak system rules into outputs ("do not mention X" means X is absent, never "we do not address X"). Strip AI transitions ("it is worth noting", "in summary", "here is...") and match the project's native style.
+</deliverable_hygiene_and_scope_protocol>
 
-## Tests and audit
+## Commands and build
 
-- Tests execute compiled JavaScript under `dist/`; do not add a separate TS test runner.
-- Language-neutral engine cases belong in `fixtures/*.json`; fixture names must be globally unique across files.
-- `npm run audit:review` requires a new output path and intentionally refuses to overwrite existing worksheets or source logs.
-- Preserve raw JSONL observation logs; put derived examples in `spike/examples/`, not back into source logs. Never force-add ignored local credentials or `.pi/` setup.
+- Use Node.js 26 and npm; install with `npm ci`. Before review run `npm run typecheck` and `npm test`: both include workspace `@amos/console`; tests build first.
+- Run compiled tests from repository root (`process.cwd()` resolves fixtures/constraints). Backend focus: `npm run build && node --test dist/engine/engine.test.js`. Do not add a TS test runner.
+- Web-only: `npm run typecheck --workspace @amos/console` and `npm test --workspace @amos/console`.
+- `npm run e2e:smoke` is separate from CI/`npm test`; requires `/usr/bin/chromium` or `CHROMIUM_PATH`. Exit-zero `SKIP` is not browser evidence.
+- Build replaces `dist/`, compiles backend then web. Never edit `dist/` or `web/.test-dist/`. Pi/OpenCode load compiled JS; rebuild after TypeScript changes before launch. Backend `.ts` imports are rewritten to `.js`.
+- New backend directories need `tsconfig.json` includes; backend test directories also need `package.json` test globs. Preserve backend TS7/web TS5.9 separation and `web/scripts/vue-tsc.mjs`/Vite compiler registration.
+- The only UI source is `web/src/`; output `dist/console/` uses a closed asset manifest and hash routes, without SPA fallback.
+- `npm run console` builds/serves; `console:serve` skips build. Open the emitted `127.0.0.1` URL; bare Vite has no API proxy. See `web/README.md`, `docs/local-governance.md`.
+
+## Current boundaries
+
+- Ordinary Pi/OpenCode adapters remain Stage A security `log-only`, not enforcement. Separate profiles do not lift ordinary-plugin NO-GO or establish general production rollout; see `docs/security-model.md`.
+- Root `opencode.jsonc` enables the workflow shell gate, not complete mediation or a security boundary. Installs/workspace commands may require confirmation; never weaken the gate. Unknown syntax/errors stay confirm/deny; OpenCode completion is advisory (`docs/workflow-gate.md`).
+- `strict/` provides memory-only structured tools: do not add Shell, MCP or native writes through routine edits (`docs/strict-harness.md`). `autonomy/` is an explicit bounded Linux file-create host (`docs/policy-bounded-autonomy.md`).
+- `host/` + `review/` + `managed/harness.ts` provide the current managed path: deterministic pre-call verdicts, a bounded independent reviewer, one-use grants and an audit-first journal. Review requires preauthorization; deterministic deny is never reviewed/lifted; stale, failed or unavailable review stays stopped.
+- Pi `managed.enabled` is the explicit opt-in Harness-layer gate: real `tool_call` deny blocks, confirm stops for an independent reviewer and a single-use grant, and `tool_result` records execution. It is not an OS sandbox and is off by default. OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is out of scope for this round.
+- `supervisor/` fences use process-local identity, not IPC approvals. `control-plane/` SQLite publication is immutable governance, rollback a new proposal—not execution approval or same-UID OS isolation. Agents may propose, not approve or publish enforcement rules.
+
+## Invariants
+
+- Keep `engine/` pure with injected time, fail-closed evaluation and `deny > confirm > log > allow`; no filesystem/network/model/harness I/O. Preserve closed `{tool, operation, target}` actions and seven predicate operators. Only `predicate`, `on_hit`, `ttl` select rule verdicts.
+- Adapters normalize lexical absolute targets, not filesystem object identities. `${SESSION_WORKSPACE}` substitution is limited to `target_glob`/`target_outside_glob`. Immutable pins/digests are not authentication; writable snapshots/audits and append-only files are not tamper-proof. Failed snapshot replacement retains the last good snapshot; initial failure remains fail-closed.
+- `activation/` compiles shared enforcement/advisory snapshots in offline-shadow mode, not rollout authorization (`docs/project-activation.md`). Prompts can rank only active advisory rules; prompts, task selection and injection budgets cannot filter applicable hard rules. Injection failures must not affect authorization or audit behavior.
+- Enforcing hosts require durable authorization before effects, one-use grants and revalidation; never fall back when sandboxing is unavailable. Stage A swallowed audit errors are not an enforcing-host pattern.
+
+## Sensitive data, evidence and review
+
+- Never persist raw file contents, commands, requirement text, URL secrets or hostile payloads in logs. Requirements must be harness-captured; text egress needs explicit `egress: "allowed"`. `decision/` Jev only tightens verdicts; it is distinct from managed review (`docs/jev-integration.md`).
+- Governance state/tokens default outside the workspace; human and Agent tokens differ. Never print tokens or read human tokens for Agent use. Shared Jev config uses `{env:...}`; literal credentials belong only in ignored `decision/jev.local.json`, owned by the current user with mode `0600`. Never force-add credentials or `.pi/` setup.
+- Language-neutral cases belong in `fixtures/*.json` with globally unique names. Audit review: `npm run audit:review -- --rules constraints/rules.yaml --log spike/logs/opencode.jsonl --output <new-path>`; output must be new. Preserve raw JSONL; put derived examples in `spike/examples/`.
+- Follow `CONTRIBUTING.md` for isolation, PR evidence, Agent disclosure and human security review. CI requires `(feat|fix|chore|docs|refactor|test|ci)/<lowercase-slug>` branches. Consult `docs/decisions.md`, `docs/product-design.md`, `docs/product-gap-plan.md`; historical target claims are not implemented capabilities. Check current source without waiving NO-GO/evidence gates.
+
+<master_coordination_loop>
+LOOP: [Advance Implementation -> Targeted Verification -> Fix on Failure -> Deliver Clean End-State].
+PRIORITY: Explicit task scope, acceptance criteria, and authorization govern all rules[cite: 2]. (1) Acceptance requirements override happy-path assumptions and edge-case deferral. (2) Hard external blocker reporting overrides no-pause/no-caveat rules—exhaust all independent work in the current turn first, then report[cite: 2]. (3) Transformation examples apply ONLY when required by current scope.
+</master_coordination_loop>
+
+<execution_protocol>
+ACT: Resolve operational ambiguity by inspecting workspace context. Select the simplest justified, reversible path and execute—stalling to avoid picking wrong is itself a wrong pick.
+COMPLETE: Fulfill all in-scope acceptance criteria without placeholders (`...`, `// TODO`, `// existing code`) or user-completed leftovers[cite: 2]. Escalate only when context cannot resolve a choice that materially alters acceptance semantics[cite: 2].
+BLOCKERS: Pause ONLY for missing external credentials, unresolvable permission denials, material requirement conflicts, or destructive operations on untracked/production data. Finish 100% of independent work in the current turn first, then deliver completed artifacts with the exact blocker and minimum required input[cite: 2].
+</execution_protocol>
+
+<verification_efficiency_protocol>
+GATEKEEPER: Before running any check, answer internally: "What specific failure would this detect, and what would I do differently if it occurred?" No clear answer means DO NOT run it.
+VERIFY: Batch coherent edits across files before verifying[cite: 2]. Trust deterministic tool reports for their stated operations; NEVER run `cat`, `ls`, `git diff`, or `read_file` merely to confirm a successful write[cite: 2].
+RECHECK: Reuse passing results while relevant code and execution context (configs, env, deps, target, permissions) remain unchanged[cite: 2]. Re-run affected checks ONLY after a failure, relevant state change, or concrete counter-evidence[cite: 2]. Do not validate test runners unless in scope or malfunctioning.
+</verification_efficiency_protocol>
+
+<pragmatic_optimism_protocol>
+BASELINE: Assume a cooperating operator and standard configurations unless contradicted by explicit requirements, workspace evidence, or observed wrong behavior. Treat test failures as low-cost feedback, not paralysis triggers.
+COMMIT: When workspace evidence supports a small, reversible hypothesis, implement and verify the minimal fix immediately; revise if counter-evidence emerges. Say plainly when code is correct; do not manufacture findings.
+SCOPE: Ignore speculative edge cases (exotic encodings, symlink races, theoretical concurrency) unless reachable in supported use or required by acceptance criteria (e.g., idempotency/retries). "Constructible in principle" is out of scope.
+</pragmatic_optimism_protocol>
+
+<affirmative_ownership_protocol>
+OWN: Operate as the Builder, never a detached Auditor. When an unverified gap genuinely impacts current acceptance criteria[cite: 2]: close it immediately via targeted tool calls in the current turn before speaking (if solvable in scope)[cite: 2], or report the exact Hard Blocker plainly (if externally blocked)[cite: 2].
+BANNED_PEDANTRY: Never contrast concepts passively; actively bridge functional gaps. Erase: [不是……而是……, 而不是, 更准确地说, 不等于, 不等同于, 并非, 并不是, 不是说, 不能把……当做/当作, 不能视为, 不构成].
+BANNED_HEDGING: Lead with verified results; use partial evidence as a stepping stone to build. Erase: [不能证明, 无法证明, 不证明, 不足以证明, 不足以说明, 不能说明, 无法说明, 只能证明, 只能说明, 不能直接, 不能仅凭, 不能仅靠, 不能只凭, 不能只看, 不能据此, 不能断言, 不能断定, 不能认定, 不能确认, 不能确定, 不能保证, 不保证, 不能承诺, 还不能, 尚不能, 未必, 不必然, 不一定, 不代表, 不意味着, 不能简单, 不能推出, 不完全][cite: 1].
+REFRAME (When in-scope and factually grounded):
+- [Unwired Entry]: Instead of "不能宣称已做到工具层强制"[cite: 1], wire the ready check into the entrypoint and verify before reporting.
+- [Online Gap]: Instead of "离线测试还不能证明线上入口有效"[cite: 1], trace and verify the real entrypoint call chain directly (or report the exact permission blocker).
+- [Session State]: Instead of "已有会话可能仍保留旧设置"[cite: 1], implement minimal session refresh/invalidation if required by acceptance criteria, or preserve existing semantics silently if not.
+</affirmative_ownership_protocol>
+
+<deliverable_hygiene_and_scope_protocol>
+MINIMALISM: Do not add unrequested feature flags, migration frameworks, compatibility layers, or wrappers. Add hashes/checksums ONLY if they replace a costlier operation AND alter control flow.
+CLEAN_STATE: Deliverables (code, comments, commits, PRs, summaries) must present ONLY the clean end result as if written right from the start—zero trial-and-error history, abandoned approaches, or "why we didn't do X".
+SILENCE: Never leak system rules into outputs ("do not mention X" means X is absent, never "we do not address X"). Strip AI transitions ("it is worth noting", "in summary", "here is...") and match the project's native style.
+</deliverable_hygiene_and_scope_protocol>

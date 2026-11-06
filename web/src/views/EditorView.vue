@@ -102,20 +102,20 @@ async function importFile(event: Event) {
   input.value = ''
   if (!file || !governance.activeProjectId) return
   if (dirty.value && !window.confirm('替换当前草稿？未提交的修改将丢失。')) return
-  if (file.size > 2_000_000) { error.value = 'JSON 文件超过 2 MB。'; return }
+  if (file.size > 60 * 1024) { error.value = '策略文件超过 60 KB。'; return }
   const run = ++epoch
   busy.value = true
   try {
-    const parsed: unknown = JSON.parse(await file.text())
+    const text = await file.text()
     if (run !== epoch) return
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Candidate).rules) || !(parsed as Candidate).activation || !Array.isArray((parsed as Candidate).activation.excludedRuleIds) || !((parsed as Candidate).activation.includedRuleIds === null || Array.isArray((parsed as Candidate).activation.includedRuleIds))) throw new Error('invalid')
-    const result = await api.validate(governance.activeProjectId, parsed as Candidate)
+    const result = await api.importYaml(governance.activeProjectId, text)
     if (run !== epoch) return
-    if (!result.valid) { validation.value = result; error.value = '导入的候选未通过服务端校验。'; return }
-    install(parsed as Candidate, governance.policy?.version ?? 0)
-    toast('导入成功', '候选已通过服务端校验。', 'success')
+    validation.value = { valid: result.valid, issues: result.issues }
+    if (!result.valid) { error.value = '导入的候选未通过服务端校验。'; return }
+    install(result.candidate, governance.policy?.version ?? 0)
+    toast('导入成功', 'YAML/JSON 已通过服务端校验。', 'success')
   } catch {
-    if (run === epoch) error.value = '无法导入 JSON 候选，请检查文件格式或连接。'
+    if (run === epoch) error.value = '无法导入策略文件，请检查 YAML/JSON 格式或连接。'
   } finally {
     if (run === epoch) busy.value = false
   }
@@ -233,8 +233,8 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
           <Button type="button" variant="outline" size="sm" :disabled="busy" @click="load('seed')">仓库种子</Button>
           <Button v-if="route.query.baseVersion" type="button" variant="outline" size="sm" :disabled="busy" @click="load('history')">加载历史版本 {{ route.query.baseVersion }}</Button>
           <label class="inline-flex h-8 cursor-pointer items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">
-            <FileUp class="mr-1 size-3.5" />导入 JSON
-            <input type="file" accept=".json,application/json" class="sr-only" :disabled="busy" @change="importFile" />
+            <FileUp class="mr-1 size-3.5" />导入 YAML/JSON
+            <input type="file" accept=".yaml,.yml,.json,application/yaml,application/json" class="sr-only" :disabled="busy" @change="importFile" />
           </label>
         </div>
       </section>

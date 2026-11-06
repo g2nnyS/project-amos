@@ -2,6 +2,8 @@
 
 状态：**目标设计，2026-11-02 修订；不是已实现能力清单。** 本轮只更新设计和文档，不迁移配置、不启用安全强制执行。当前实现与十一项差距的证据、实施顺序和验收见 [差距闭环](product-gap-plan.md)。安全运行期仍为 **NO-GO**。
 
+> **2026-11-05 实现补充**：限定范围 Harness 层 MVP 已交付并验证：Vue 控制台发布 P1 项目快照，真实 Pi `managed` 会话消费同一快照执行 deny/confirm/allow，confirm 经独立 reviewer + 一次性授权，advisory 同源注入，并写 runtime 报告供控制台读取。它不是 OS 沙箱，默认仍 log-only；完整范围与证据见 [MVP 交付](mvp-delivery.md)。
+
 ## 1. 产品承诺与边界
 
 产品始终是三块，缺一不可：

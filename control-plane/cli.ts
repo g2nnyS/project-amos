@@ -7,7 +7,18 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, type Stats } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+  type Stats,
+} from 'node:fs';
 import {
   chmod,
   lstat,
@@ -44,6 +55,7 @@ export interface CliPaths {
   readonly agentTokenPath: string;
   readonly schemaPath: string;
   readonly rulesPath: string;
+  readonly guidancePath: string;
   readonly staticDir: string;
 }
 
@@ -105,6 +117,7 @@ export function resolveCliPaths(options: CliPathOptions = {}): CliPaths {
     agentTokenPath: join(dataDir, AGENT_TOKEN_FILE),
     schemaPath: join(rootDir, 'constraints', 'schema.json'),
     rulesPath: join(rootDir, 'constraints', 'rules.yaml'),
+    guidancePath: join(rootDir, 'guidance', 'packs.ts'),
     staticDir: join(rootDir, 'dist', 'console'),
   };
 }
@@ -299,6 +312,8 @@ export async function initializeState(
     service = createControlPlane({
       databasePath: paths.databasePath,
       rawSchema,
+      ...(await optionalText(paths.rulesPath, 'rulesYaml')),
+      ...(await optionalText(paths.guidancePath, 'guidanceSource')),
       ...(options.now === undefined ? {} : { now: options.now }),
     });
   } catch {
@@ -308,6 +323,73 @@ export async function initializeState(
   }
 
   return { humanToken, agentToken };
+}
+
+async function optionalText(
+  path: string,
+  key: 'rulesYaml' | 'guidanceSource',
+): Promise<Record<string, string>> {
+  try {
+    return { [key]: await readFile(path, 'utf8') };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Publish the harness artifact next to the project's `.pi` configuration.
+ * This is an explicit local-governance side effect, not proof of host load.
+ * The write is atomic within the target directory; it never follows a symlink
+ * and never creates a path outside the declared workspace.
+ */
+export function writeActivationArtifact(input: {
+  readonly workspace: string;
+  readonly artifact: string;
+}): void {
+  const workspace = resolve(input.workspace);
+  if (!workspace.startsWith('/') || workspace.includes('\0')) {
+    throw new CliError('artifact_write_failed');
+  }
+  const dir = join(workspace, '.pi');
+  let existingDir: ReturnType<typeof lstatSync> | null = null;
+  try {
+    existingDir = lstatSync(dir);
+  } catch {
+    existingDir = null;
+  }
+  if (existingDir === null) {
+    // `mkdir` without recursive first, then verify the parent itself.
+    mkdirSync(dir, { mode: 0o700 });
+  } else if (existingDir.isSymbolicLink() || !existingDir.isDirectory()) {
+    throw new CliError('artifact_write_failed');
+  }
+  const target = join(dir, 'activation.json');
+  try {
+    const current = lstatSync(target);
+    if (current.isSymbolicLink() || !current.isFile()) {
+      throw new CliError('artifact_write_failed');
+    }
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw new CliError('artifact_write_failed');
+  }
+  const temp = join(dir, `.activation-${randomBytes(12).toString('hex')}.tmp`);
+  let fd: number | null = null;
+  try {
+    fd = openSync(temp, 'wx', 0o600);
+    writeSync(fd, input.artifact, undefined, 'utf8');
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(temp, target);
+  } catch {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* best effort */ }
+    }
+    try { unlinkSync(temp); } catch { /* best effort */ }
+    throw new CliError('artifact_write_failed');
+  }
 }
 
 async function loadSeedRules(path: string): Promise<RuleRecord[]> {
@@ -368,6 +450,13 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
   }
 
   const seed = await loadSeedRules(paths.rulesPath);
+  const rulesYaml = await readFile(paths.rulesPath, 'utf8');
+  let guidanceSource: string | undefined;
+  try {
+    guidanceSource = await readFile(paths.guidancePath, 'utf8');
+  } catch {
+    guidanceSource = undefined;
+  }
   const auditLogs = (options.auditLogs ?? []).map((path) => {
     if (!isAbsolute(path)) {
       throw new CliError('audit_log_must_be_absolute');
@@ -378,6 +467,9 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
   const service = createControlPlane({
     databasePath: paths.databasePath,
     rawSchema,
+    rulesYaml,
+    ...(guidanceSource === undefined ? {} : { guidanceSource }),
+    publishArtifact: writeActivationArtifact,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
@@ -592,7 +684,7 @@ export async function runCli(
   }
 
   io.stdout(`Amos Governance 本地控制台: ${handle.url}`);
-  io.stdout('模式: log-only（仅记录/观察）；不阻断工具执行，也不是受信执行边界。');
+  io.stdout('模式: managed opt-in（显式启用后 Harness 工具调用可被阻断）；默认关闭，不是 OS 沙箱或受信执行边界。');
   io.stdout(`人类令牌文件: ${handle.paths.humanTokenPath}`);
   io.stdout(`Agent 令牌文件: ${handle.paths.agentTokenPath}`);
   io.stdout('令牌内容不会显示；浏览器使用人类令牌登录，Agent 使用 Bearer 令牌。');
