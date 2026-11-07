@@ -1,10 +1,12 @@
 /**
- * Bounded security reviewer.
+ * Bounded reviewer protocol wrapper (retained, not a managed approval path).
  *
- * The reviewer is an extra gate for actions already stopped at `confirm`. It can
- * only tighten: every missing, malformed, timed-out, failed, uncalibrated, or
- * low-confidence answer stops the action. The deterministic engine remains
- * authoritative, and `deny`/`allow`/`log` inputs are never reviewed.
+ * The managed `confirm` branch is reviewed by the Jev semantic reviewer in
+ * `jev-reviewer.ts`; that is the only approval path. This module keeps the
+ * projection/schema/calibration/deadline tightening logic and its tests so a
+ * second semantic judgement cannot be reintroduced by wiring a neutral
+ * provider: it can only tighten, never widen, and it never reads a requirement
+ * from a tool result, file, or model output.
  */
 
 import {
