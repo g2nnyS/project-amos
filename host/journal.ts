@@ -53,6 +53,29 @@ export interface AuthorizationEntry {
   readonly epoch: number;
   readonly executionDigest: string;
   readonly activationDigest: string;
+  readonly requirementVersion?: number;
+  readonly requirementDigest?: string;
+  readonly review?: ReviewAuditEntry;
+}
+
+/**
+ * Structured semantic-review facts. Never contains requirement text, model
+ * prose, a provider body, a credential or a target outside the workspace.
+ */
+export interface ReviewAuditEntry {
+  readonly model: string;
+  readonly questionVersion: string;
+  readonly policyDigest: string;
+  readonly requirementDigest: string;
+  readonly actionDigest: string;
+  readonly snapshotDigest: string;
+  readonly risk: number;
+  readonly confidence: number;
+  readonly resultCode: string;
+  readonly calibrationVersion: number;
+  readonly calibrationDigest: string;
+  readonly grantId: string;
+  readonly grantNonce: string;
 }
 
 export interface ResultEntry {

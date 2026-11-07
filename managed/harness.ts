@@ -18,15 +18,18 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ActivationRuntime } from '../activation/runtime.ts';
 import { evaluatePolicy, type PolicyDecision } from '../engine/engine.ts';
-import type { RequirementFrame } from '../decision/requirement.ts';
+import {
+  isRequirementFrame,
+  requirementFrameDigest,
+  type RequirementFrame,
+} from '../decision/requirement.ts';
 import {
   buildReviewProjection,
-  createBoundedReviewer,
   createOneShotAuthority,
-  type CalibrationEvidence,
+  type ManagedReviewFacts,
+  type ManagedSemanticReviewer,
   type OneShotAuthority,
   type OneShotRequest,
-  type ReviewProvider,
   type ReviewerPolicy,
 } from '../review/index.ts';
 import {
@@ -43,22 +46,40 @@ export const HARNESS_GATE_FORMAT = 'amos-harness-gate' as const;
 export const HARNESS_CAPABILITY_ID = 'harness' as const;
 
 export interface HarnessReviewOptions {
-  readonly provider: ReviewProvider;
+  readonly reviewer: ManagedSemanticReviewer;
   readonly policy: ReviewerPolicy;
-  readonly calibration: CalibrationEvidence | null;
   readonly ceilingDigest: string;
   readonly grantTtlMs?: number;
+}
+
+/**
+ * Current requirement state for one session. Only `ready` authorizes a
+ * confirm; every other status stops the action with its own fixed code.
+ */
+export interface HarnessRequirementState {
+  readonly status:
+    | 'ready'
+    | 'missing'
+    | 'conflict'
+    | 'revoked'
+    | 'expired'
+    | 'corrupt'
+    | 'owner_mismatch'
+    | 'unavailable';
+  readonly frame: RequirementFrame | null;
+  readonly version: number | null;
+  readonly digest: string | null;
 }
 
 export interface HarnessGateOptions {
   readonly activation: ActivationRuntime;
   readonly auditPath: string;
   readonly sessionId: string;
-  /** Current harness-captured user frame, or a getter for the session's frame. */
+  /** Current harness-captured requirement state, or a getter for it. */
   readonly requirement:
-    | RequirementFrame
+    | HarnessRequirementState
     | null
-    | (() => RequirementFrame | null);
+    | (() => HarnessRequirementState | null);
   readonly review: HarnessReviewOptions | null;
   readonly now?: () => number;
 }
@@ -156,27 +177,23 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
     now,
     maxTtlMs: MAX_GRANT_TTL_MS,
   });
-  const reviewer =
-    options.review === null
-      ? null
-      : createBoundedReviewer({
-          provider: options.review.provider,
-          policy: options.review.policy,
-          calibration: options.review.calibration,
-          now,
-        });
+  const reviewer: ManagedSemanticReviewer | null =
+    options.review === null ? null : options.review.reviewer;
 
   const decided = new Set<string>();
+  const inFlight = new Set<string>();
   const allowed = new Set<string>();
   let closed = false;
 
-  const currentRequirement = (): RequirementFrame | null => {
+  const resolveRequirement = (): HarnessRequirementState => {
     try {
-      return typeof options.requirement === 'function'
-        ? options.requirement()
-        : options.requirement;
+      const raw =
+        typeof options.requirement === 'function'
+          ? options.requirement()
+          : options.requirement;
+      return readRequirementState(raw);
     } catch {
-      return null;
+      return { status: 'unavailable', frame: null, version: null, digest: null };
     }
   };
 
@@ -205,6 +222,13 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
     decision: AuthorizationEntry['decision'],
     action: HarnessAction,
     matchedRuleIds: readonly string[],
+    binding?: {
+      readonly version: number;
+      readonly digest: string;
+      readonly grantId: string;
+      readonly grantNonce: string;
+      readonly facts: ManagedReviewFacts;
+    },
   ): AuthorizationEntry {
     return {
       format: JOURNAL_FORMAT,
@@ -220,6 +244,27 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
       epoch: runtime.epoch,
       executionDigest: execution.digest,
       activationDigest: runtime.activationDigest,
+      ...(binding === undefined
+        ? {}
+        : {
+            requirementVersion: binding.version,
+            requirementDigest: binding.digest,
+            review: {
+              model: binding.facts.model,
+              questionVersion: binding.facts.questionVersion,
+              policyDigest: binding.facts.policyDigest,
+              requirementDigest: binding.facts.requirementDigest,
+              actionDigest: binding.facts.actionDigest,
+              snapshotDigest: binding.facts.snapshotDigest,
+              risk: binding.facts.risk,
+              confidence: binding.facts.confidence,
+              resultCode: 'approved',
+              calibrationVersion: binding.facts.calibrationVersion,
+              calibrationDigest: binding.facts.calibrationDigest,
+              grantId: binding.grantId,
+              grantNonce: binding.grantNonce,
+            },
+          }),
     };
   }
 
@@ -282,6 +327,16 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
         matchedRuleIds: [],
       };
     }
+    if (journal.poisonedOperationIds.has(call.callId)) {
+      return finishBlock(
+        call.callId,
+        'deny',
+        call.action,
+        [],
+        'replay_denied',
+        'stopped',
+      );
+    }
     if (decided.has(call.callId)) {
       return {
         action: 'block',
@@ -333,6 +388,15 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
           'unavailable',
         );
       }
+      if (inFlight.has(call.callId)) {
+        return {
+          action: 'block',
+          code: 'replay_denied',
+          review: 'stopped',
+          matchedRuleIds: matched,
+        };
+      }
+      inFlight.add(call.callId);
       try {
         const at = safeNow(now);
         const policy = options.review.policy;
@@ -340,6 +404,36 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
           at +
           (Number.isFinite(policy.timeoutMs) ? Math.max(1, policy.timeoutMs) : 1_000) +
           5_000;
+        const state = resolveRequirement();
+        if (state.status !== 'ready') {
+          return finishBlock(
+            call.callId,
+            'confirm_required',
+            call.action,
+            matched,
+            `requirement_${state.status}`,
+            'stopped',
+          );
+        }
+        const frame = state.frame;
+        const version = state.version;
+        const requirementDigest = state.digest;
+        if (
+          frame === null ||
+          version === null ||
+          requirementDigest === null ||
+          requirementFrameDigest(frame) !== requirementDigest
+        ) {
+          return finishBlock(
+            call.callId,
+            'confirm_required',
+            call.action,
+            matched,
+            'requirement_binding',
+            'stopped',
+          );
+        }
+
         const requestDigest = actionDigest(call);
         const projection = buildReviewProjection({
           attemptId: attemptId(call.callId),
@@ -354,7 +448,7 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
           capabilityId: HARNESS_CAPABILITY_ID,
           requestedBytes: 0,
           deadline,
-          requirement: currentRequirement(),
+          requirement: frame,
           requirementEgress: policy.requirementEgress,
           targetEgress: policy.targetEgress,
           questionVersion: policy.questionVersion,
@@ -362,6 +456,7 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
         });
         const reviewed = await reviewer.review({
           projection,
+          requirement: frame,
           deterministicVerdict: 'confirm',
         });
         if (reviewed.status !== 'approved') {
@@ -370,11 +465,40 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
             'confirm_required',
             call.action,
             matched,
-            reviewed.status === 'denied' ? 'review_denied' : `review_${reviewed.status}`,
+            `review_${reviewed.code}`,
             reviewed.status === 'denied' ? 'denied' : 'stopped',
           );
         }
+        const facts = reviewed.facts;
+        if (
+          facts.requirementDigest !== requirementDigest ||
+          facts.actionDigest !== requestDigest ||
+          facts.snapshotDigest !== execution.digest ||
+          facts.model !== policy.model ||
+          facts.questionVersion !== policy.questionVersion ||
+          facts.policyDigest !== policy.policyDigest
+        ) {
+          return finishBlock(
+            call.callId,
+            'confirm_required',
+            call.action,
+            matched,
+            'review_binding',
+            'stopped',
+          );
+        }
 
+        const approvedAt = safeNow(now);
+        if (approvedAt >= projection.deadline) {
+          return finishBlock(
+            call.callId,
+            'confirm_required',
+            call.action,
+            matched,
+            'review_deadline',
+            'stopped',
+          );
+        }
         const grantTtl = readGrantTtl(options.review.grantTtlMs);
         const request: OneShotRequest = {
           requestId: attemptId(call.callId),
@@ -385,11 +509,28 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
           epoch: runtime.epoch,
           snapshotDigest: execution.digest,
           capabilityId: HARNESS_CAPABILITY_ID,
-          expiresAt: at + grantTtl,
+          expiresAt: approvedAt + grantTtl,
           ceilingDigest: options.review.ceilingDigest,
+          requirementVersion: version,
+          requirementDigest,
         };
-        const grant = authority.issue(request, at);
-        if (!authority.consume(grant, request, at)) {
+        const grant = authority.issue(request, approvedAt);
+        const after = resolveRequirement();
+        if (
+          after.status !== 'ready' ||
+          after.version !== version ||
+          after.digest !== requirementDigest
+        ) {
+          return finishBlock(
+            call.callId,
+            'confirm_required',
+            call.action,
+            matched,
+            'requirement_changed',
+            'stopped',
+          );
+        }
+        if (!authority.consume(grant, request, safeNow(now))) {
           return finishBlock(
             call.callId,
             'confirm_required',
@@ -401,7 +542,13 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
         }
         try {
           journal.appendAuthorization(
-            authorization(call.callId, 'allow', call.action, matched),
+            authorization(call.callId, 'allow', call.action, matched, {
+              version,
+              digest: requirementDigest,
+              grantId: grant.requestId,
+              grantNonce: grant.nonce,
+              facts,
+            }),
           );
         } catch {
           return {
@@ -428,6 +575,8 @@ function buildGate(options: HarnessGateOptions): HarnessGate {
           'review_failed',
           'stopped',
         );
+      } finally {
+        inFlight.delete(call.callId);
       }
     }
 
@@ -645,6 +794,74 @@ function readGrantTtl(value: unknown): number {
     throw new HarnessGateError();
   }
   return value;
+}
+
+
+const REQUIREMENT_STATUSES = [
+  'ready',
+  'missing',
+  'conflict',
+  'revoked',
+  'expired',
+  'corrupt',
+  'owner_mismatch',
+  'unavailable',
+] as const;
+
+/**
+ * Validate a caller-supplied requirement state. A bare frame, an unknown
+ * status, or a state whose frame/digest/version disagree is `unavailable`, so a
+ * malformed requirement surface can never authorize a confirm.
+ */
+function readRequirementState(value: unknown): HarnessRequirementState {
+  const unavailable: HarnessRequirementState = {
+    status: 'unavailable',
+    frame: null,
+    version: null,
+    digest: null,
+  };
+  if (value === null || value === undefined) {
+    return { status: 'missing', frame: null, version: null, digest: null };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return unavailable;
+  }
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  if (
+    typeof status !== 'string' ||
+    !(REQUIREMENT_STATUSES as readonly string[]).includes(status)
+  ) {
+    return unavailable;
+  }
+  if (status !== 'ready') {
+    return record.frame === null &&
+      record.version === null &&
+      record.digest === null
+      ? {
+          status: status as HarnessRequirementState['status'],
+          frame: null,
+          version: null,
+          digest: null,
+        }
+      : unavailable;
+  }
+  const frame = record.frame;
+  const version = record.version;
+  const digest = record.digest;
+  if (!isRequirementFrame(frame)) {
+    return unavailable;
+  }
+  if (
+    typeof version !== 'number' ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    typeof digest !== 'string' ||
+    !DIGEST_PATTERN.test(digest)
+  ) {
+    return unavailable;
+  }
+  return { status: 'ready', frame, version, digest };
 }
 
 function readId(value: unknown): string {

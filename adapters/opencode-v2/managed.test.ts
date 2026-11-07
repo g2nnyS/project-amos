@@ -287,3 +287,109 @@ test('an invalid managed projection fails closed', async (t) => {
     (error: unknown) => String(error).includes('amos_managed_config_error'),
   );
 });
+
+test('a legacy managed reviewer config stops with an explicit migration code', async (t) => {
+  const fixture = createFixture([rule('confirm-write', 'confirm', 'src/confirm.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const plugin = await setup(t, {
+    ...managedOptions(fixture),
+    workspace: fixture.workspace,
+    managed: {
+      enabled: true,
+      auditPath: fixture.managedAudit,
+      requirementEgress: 'allowed',
+      review: {
+        endpoint: 'http://127.0.0.1:1/review',
+        model: 'legacy-reviewer',
+        apiKeyEnv: 'LEGACY_REVIEW_KEY',
+        policy: { id: 'policy_1' },
+        calibration: null,
+        ceilingDigest: `sha256:${'e'.repeat(64)}`,
+      },
+    },
+  });
+  await assert.rejects(
+    plugin.call('execute.before', writeEvent(fixture, 'confirm.ts', 'call-legacy')),
+    (error: unknown) => String(error).includes('reviewer_migration_required'),
+  );
+  assert.equal(existsSync(fixture.managedAudit), false);
+});
+
+test('a legacy reviewer in a generated projection preserves the migration code', async (t) => {
+  const fixture = createFixture([rule('confirm-write', 'confirm', 'src/confirm.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const legacy = projection(fixture);
+  legacy.managed = {
+    ...(legacy.managed as Record<string, unknown>),
+    review: {
+      endpoint: 'http://127.0.0.1:9/review',
+      model: 'legacy-reviewer',
+      apiKeyEnv: 'AMOS_REVIEW_KEY',
+    },
+  };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(legacy),
+  );
+  const plugin = await setup(t, {
+    ...managedOptions(fixture),
+    workspace: fixture.workspace,
+  });
+  await assert.rejects(
+    plugin.call('execute.before', writeEvent(fixture, 'confirm.ts', 'call-legacy-projection')),
+    (error: unknown) => String(error).includes('amos_managed_reviewer_migration_required'),
+  );
+  assert.equal(existsSync(fixture.managedAudit), false);
+});
+
+test('a Jev reviewer config with an unreadable config file fails closed', async (t) => {
+  const fixture = createFixture([rule('confirm-write', 'confirm', 'src/confirm.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const polish = {
+    id: 'policy_1',
+    model: 'jev-latest',
+    questionVersion: 'jev-questions/v2',
+    minConfidence: 0.7,
+    maxRisk: 0.5,
+    timeoutMs: 2_000,
+    maxAttempts: 1 as const,
+    requirementEgress: 'allowed' as const,
+    targetEgress: 'workspace-relative' as const,
+    minimumCases: 2,
+    maximumFalseAllowRate: 0,
+    expiresAt: Date.now() + 3_600_000,
+    policyDigest: `sha256:${'d'.repeat(64)}`,
+  };
+  const plugin = await setup(t, {
+    ...managedOptions(fixture),
+    workspace: fixture.workspace,
+    managed: {
+      enabled: true,
+      auditPath: fixture.managedAudit,
+      requirementEgress: 'allowed',
+      review: {
+        reviewer: 'jev',
+        jevConfigPath: join(fixture.root, 'missing-jev.local.json'),
+        policy: polish,
+        calibration: {
+          format: 'amos-review-calibration',
+          version: 1,
+          model: 'jev-latest',
+          questionVersion: 'jev-questions/v2',
+          policyDigest: polish.policyDigest,
+          caseSetDigest: `sha256:${'f'.repeat(64)}`,
+          cases: 10,
+          unsafeCases: 4,
+          falseAllows: 0,
+          evaluatedAt: Date.now() - 1_000,
+          expiresAt: Date.now() + 3_600_000,
+        },
+        ceilingDigest: `sha256:${'e'.repeat(64)}`,
+      },
+    },
+  });
+  await assert.rejects(
+    plugin.call('execute.before', writeEvent(fixture, 'confirm.ts', 'call-jev')),
+    (error: unknown) => String(error).includes('amos_managed_reviewer_unavailable'),
+  );
+});

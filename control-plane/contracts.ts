@@ -306,11 +306,19 @@ export interface ProjectWorkflowGateConfig {
 /**
  * Non-secret managed-host settings. Credentials are represented only by an
  * environment-variable name; a literal key is rejected on write.
+ *
+ * `reviewer` is the discriminator for the managed review semantics. `'jev'`
+ * selects the Jev provider that reads `jevConfigPath`; `null` with any legacy
+ * reviewer field present is the stopped migration state. The legacy
+ * `reviewEndpoint`/`reviewModel`/`apiKeyEnv` fields stay stored so the
+ * migration gate can recognize an old configuration, and are never projected.
  */
 export interface ProjectManagedConfig {
   readonly enabled: boolean;
   readonly requirementEgress: 'allowed' | 'denied';
   readonly grantTtlMs: number;
+  readonly reviewer: 'jev' | null;
+  readonly jevConfigPath: string | null;
   readonly reviewEndpoint: string | null;
   readonly reviewModel: string | null;
   readonly apiKeyEnv: string | null;

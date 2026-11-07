@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { tighteningRuleDigest } from '../activation/tighten.ts';
+import { readHostProjection } from '../adapters/shared/host-projection.ts';
 import { writeHarnessRuntimeReport } from '../adapters/shared/runtime-report.ts';
 import { writeProjectArtifacts } from './cli.ts';
 import type { ControlPlane } from './contracts.ts';
@@ -484,4 +486,311 @@ test('a backward restart clock fails closed instead of extending a tightening', 
       ),
     'clock_regression',
   );
+});
+
+const JEV_POLICY_DIGEST = `sha256:${'d'.repeat(64)}`;
+
+function jevManagedConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const now = Date.parse(START);
+  return {
+    enabled: true,
+    reviewer: 'jev',
+    jevConfigPath: '/etc/amos/jev.json',
+    ceilingDigest: `sha256:${'e'.repeat(64)}`,
+    reviewPolicy: {
+      id: 'policy-jev',
+      model: 'jev-reviewer',
+      questionVersion: 'questions/v1',
+      minConfidence: 0.7,
+      maxRisk: 0.5,
+      timeoutMs: 2_000,
+      maxAttempts: 1,
+      requirementEgress: 'denied',
+      targetEgress: 'workspace-relative',
+      minimumCases: 2,
+      maximumFalseAllowRate: 0.1,
+      expiresAt: now + 3_600_000,
+      policyDigest: JEV_POLICY_DIGEST,
+    },
+    reviewCalibration: {
+      format: 'amos-review-calibration',
+      version: 1,
+      model: 'jev-reviewer',
+      questionVersion: 'questions/v1',
+      policyDigest: JEV_POLICY_DIGEST,
+      caseSetDigest: `sha256:${'f'.repeat(64)}`,
+      cases: 10,
+      unsafeCases: 4,
+      falseAllows: 0,
+      evaluatedAt: now - 1_000,
+      expiresAt: now + 3_600_000,
+    },
+    ...overrides,
+  };
+}
+
+function readManagedProjection(workspace: string): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(join(workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as Record<string, unknown>;
+}
+
+function projectionKeys(value: unknown, keys: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) projectionKeys(item, keys);
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      keys.push(key);
+      projectionKeys(child, keys);
+    }
+  }
+  return keys;
+}
+
+test('a Jev reviewer publishes a bound review projection without legacy reviewer fields', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+
+  const updated = fixture.cp.updateProjectConfig(
+    project.id,
+    { managed: jevManagedConfig() },
+    human(),
+  );
+  assert.equal(updated.managed.reviewer, 'jev');
+  assert.equal(updated.managed.jevConfigPath, '/etc/amos/jev.json');
+
+  publishFixture(fixture, project.id);
+  const projection = readManagedProjection(fixture.workspace) as {
+    managed: {
+      enabled: boolean;
+      reviewer: string | null;
+      jevConfigPath: string | null;
+      review: {
+        reviewer: string;
+        jevConfigPath: string;
+        policy: { id: string };
+        calibration: { format: string };
+        ceilingDigest: string;
+        grantTtlMs: number;
+      } | null;
+    };
+  };
+  assert.equal(projection.managed.reviewer, 'jev');
+  assert.equal(projection.managed.jevConfigPath, '/etc/amos/jev.json');
+  assert.notEqual(projection.managed.review, null);
+  assert.deepEqual(Object.keys(projection.managed.review ?? {}).sort(), [
+    'calibration',
+    'ceilingDigest',
+    'grantTtlMs',
+    'jevConfigPath',
+    'policy',
+    'reviewer',
+  ]);
+  assert.equal(projection.managed.review?.reviewer, 'jev');
+  assert.equal(projection.managed.review?.jevConfigPath, '/etc/amos/jev.json');
+  assert.equal(projection.managed.review?.policy.id, 'policy-jev');
+  assert.equal(projection.managed.review?.calibration.format, 'amos-review-calibration');
+  assert.equal(projection.managed.review?.ceilingDigest, `sha256:${'e'.repeat(64)}`);
+  assert.equal(projection.managed.review?.grantTtlMs, 20_000);
+  const hostProjection = readHostProjection(fixture.workspace);
+  assert.equal(hostProjection.status, 'ready');
+  if (hostProjection.status === 'ready') {
+    assert.equal(hostProjection.projection.managed.review?.grantTtlMs, 20_000);
+  }
+
+  const keys = new Set(projectionKeys(projection));
+  for (const retired of ['apiKeyEnv', 'reviewEndpoint', 'reviewModel', 'endpoint']) {
+    assert.equal(keys.has(retired), false, retired);
+  }
+});
+
+test('a legacy independent-HTTP reviewer config stops with reviewer_migration_required', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        {
+          managed: {
+            reviewEndpoint: 'http://127.0.0.1:9/review',
+            reviewModel: 'legacy-reviewer',
+            apiKeyEnv: 'AMOS_REVIEW_KEY',
+          },
+        },
+        human(),
+      ),
+    'reviewer_migration_required',
+    409,
+  );
+
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: { reviewEndpoint: 'http://127.0.0.1:9/review' } },
+        human(),
+      ),
+    'reviewer_migration_required',
+    409,
+  );
+
+  const stored = fixture.cp.getProjectConfig(project.id).managed;
+  assert.equal(stored.reviewer, null);
+  assert.equal(stored.reviewEndpoint, null);
+  assert.equal(stored.reviewModel, null);
+  assert.equal(stored.apiKeyEnv, null);
+  assert.equal(existsSync(join(fixture.workspace, '.pi', 'amos.managed.json')), false);
+});
+
+test('a Jev reviewer requires the full binding and rejects the retired fields', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+
+  expectDomainError(
+    () => fixture.cp.updateProjectConfig(project.id, { managed: { reviewer: 'jev' } }, human()),
+    'invalid_request',
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: jevManagedConfig({ jevConfigPath: null }) },
+        human(),
+      ),
+    'invalid_request',
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: jevManagedConfig({ reviewCalibration: null }) },
+        human(),
+      ),
+    'invalid_request',
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        {
+          managed: jevManagedConfig({
+            reviewEndpoint: 'http://127.0.0.1:9/review',
+            reviewModel: 'legacy-reviewer',
+            apiKeyEnv: 'AMOS_REVIEW_KEY',
+          }),
+        },
+        human(),
+      ),
+    'invalid_request',
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: jevManagedConfig({ jevConfigPath: 'relative/jev.json' }) },
+        human(),
+      ),
+    'invalid_request',
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: jevManagedConfig({ reviewer: 'other' }) },
+        human(),
+      ),
+    'invalid_request',
+  );
+});
+
+test('managed without a semantic reviewer stays valid and projects a null review', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+
+  const updated = fixture.cp.updateProjectConfig(
+    project.id,
+    { managed: { enabled: true } },
+    human(),
+  );
+  assert.equal(updated.managed.enabled, true);
+  assert.equal(updated.managed.reviewer, null);
+  assert.equal(updated.managed.jevConfigPath, null);
+
+  publishFixture(fixture, project.id);
+  const projection = readManagedProjection(fixture.workspace) as {
+    managed: { enabled: boolean; reviewer: string | null; jevConfigPath: string | null; review: unknown };
+  };
+  assert.equal(projection.managed.enabled, true);
+  assert.equal(projection.managed.reviewer, null);
+  assert.equal(projection.managed.jevConfigPath, null);
+  assert.equal(projection.managed.review, null);
+});
+
+test('a stored pre-Jev reviewer stays readable, stops the host, and migrates in place', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+
+  const legacyManaged = {
+    enabled: true,
+    reviewEndpoint: 'http://127.0.0.1:9/review',
+    reviewModel: 'legacy-reviewer',
+    apiKeyEnv: 'AMOS_REVIEW_KEY',
+    ceilingDigest: `sha256:${'e'.repeat(64)}`,
+    reviewPolicy: (jevManagedConfig().reviewPolicy as Record<string, unknown>),
+    reviewCalibration: (jevManagedConfig().reviewCalibration as Record<string, unknown>),
+  };
+  const db = new DatabaseSync(fixture.databasePath);
+  const row = db
+    .prepare('SELECT config_json FROM project_configs WHERE project_id = ?')
+    .get(project.id) as { config_json: string };
+  const storedConfig = JSON.parse(row.config_json) as { managed: Record<string, unknown> };
+  storedConfig.managed = legacyManaged;
+  db.prepare('UPDATE project_configs SET config_json = ? WHERE project_id = ?')
+    .run(JSON.stringify(storedConfig), project.id);
+  db.close();
+
+  const observed = fixture.cp.getProjectConfig(project.id);
+  assert.equal(observed.managed.reviewer, null);
+  assert.equal(observed.managed.reviewEndpoint, 'http://127.0.0.1:9/review');
+
+  publishFixture(fixture, project.id);
+  const projection = readManagedProjection(fixture.workspace) as {
+    managed: { reviewer: string | null; review: unknown };
+  };
+  assert.equal(projection.managed.reviewer, null);
+  assert.equal(projection.managed.review, null);
+
+  expectDomainError(
+    () => fixture.cp.updateProjectConfig(project.id, { managed: { enabled: false } }, human()),
+    'reviewer_migration_required',
+    409,
+  );
+
+  const migrated = fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      managed: jevManagedConfig({
+        reviewEndpoint: null,
+        reviewModel: null,
+        apiKeyEnv: null,
+      }),
+    },
+    human(),
+  );
+  assert.equal(migrated.managed.reviewer, 'jev');
+  assert.equal(migrated.managed.reviewEndpoint, null);
+  assert.equal(migrated.managed.reviewModel, null);
+  assert.equal(migrated.managed.apiKeyEnv, null);
 });

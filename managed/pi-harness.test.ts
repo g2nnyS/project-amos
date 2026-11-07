@@ -31,16 +31,12 @@ import {
   project as projectInput,
 } from '../activation/test-support.ts';
 import type { VersionedRule } from '../activation/types.ts';
-import {
-  localReviewFacts,
-  type LocalReviewPolicy,
-} from '../review/local-provider.ts';
 
 const ROOT = process.cwd();
 const RULES = join(ROOT, 'constraints', 'rules.yaml');
 const SCHEMA = join(ROOT, 'constraints', 'schema.json');
 const ADAPTER = join(ROOT, 'dist', 'adapters', 'pi', 'index.js');
-const KEY_ENV = 'AMOS_PI_HARNESS_TEST_KEY';
+let projectSeq = 0;
 
 const roots: string[] = [];
 after(() => {
@@ -50,19 +46,22 @@ after(() => {
 interface Fixture {
   readonly root: string;
   readonly project: string;
+  readonly projectId: string;
   readonly auditDir: string;
   readonly managedAudit: string;
   readonly faux: ReturnType<typeof createFauxCore>;
 }
 
 interface ManagedReviewConfig {
-  readonly endpoint: string;
-  readonly model: string;
-  readonly apiKeyEnv: string;
+  readonly reviewer: 'jev';
+  readonly jevConfigPath: string;
   readonly policy: Record<string, unknown>;
   readonly calibration: Record<string, unknown>;
   readonly ceilingDigest: string;
 }
+
+const JEV_MODEL = 'jev-latest';
+const JEV_QUESTIONS_VERSION = 'jev-questions/v2';
 
 function digest(char: string): string {
   return `sha256:${char.repeat(64)}`;
@@ -89,16 +88,23 @@ function rule(
 function createFixture(
   rules: readonly VersionedRule[],
   options: {
-    readonly review?: ManagedReviewConfig | null;
+    readonly review?: Omit<ManagedReviewConfig, 'jevConfigPath'> | null;
+    readonly rawReview?: unknown;
     readonly auditInsideWorkspace?: boolean;
     readonly malformedManaged?: boolean;
+    readonly jevBaseUrl?: string;
   } = {},
 ): Fixture {
   mkdirSync('/tmp/opencode', { recursive: true });
   const root = mkdtempSync(join('/tmp/opencode', 'amos-pi-harness-'));
   roots.push(root);
   const project = realpathSync(root);
+  const projectId = `harness-project-${++projectSeq}`;
   const workspace = join(project, 'workspace');
+  const stateDir = join(project, 'state');
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  // Requirement state lives outside the workspace, as in production.
+  process.env.XDG_STATE_HOME = stateDir;
   mkdirSync(join(workspace, 'src'), { recursive: true });
   mkdirSync(join(workspace, '.pi', 'extensions'), { recursive: true });
   const auditDir = join(project, 'audit');
@@ -113,7 +119,7 @@ function createFixture(
   });
   const snapshot = compiler.compile(
     projectInput({
-      projectId: 'harness-project',
+      projectId,
       workspace,
       selectedRuleRefs: rules.map(({ id, version }) => ({ id, version })),
     }),
@@ -129,13 +135,30 @@ function createFixture(
     'utf8',
   );
 
+  const jevConfigPath = join(project, 'jev.local.json');
+  if (options.jevBaseUrl !== undefined) {
+    writeFileSync(
+      jevConfigPath,
+      JSON.stringify({
+        schema_version: 1,
+        provider: 'typesafe',
+        baseUrl: options.jevBaseUrl,
+        apiKey: 'harness-test-key',
+        defaultModel: JEV_MODEL,
+        models: [JEV_MODEL],
+        assessmentRequired: true,
+        policy: { reviewRisk: 0.5, denyRisk: 0.8, minConfidence: 0.6 },
+      }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+  }
   const managedAudit = join(auditDir, 'managed.jsonl');
   const config: Record<string, unknown> = {
     mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(auditDir, 'shadow.jsonl'),
-    activation: { snapshotPath: '.pi/activation.json', projectId: 'harness-project' },
+    activation: { snapshotPath: '.pi/activation.json', projectId },
     managed: options.malformedManaged
       ? { enabled: 'yes', auditPath: 42 }
       : {
@@ -143,9 +166,12 @@ function createFixture(
           auditPath: options.auditInsideWorkspace
             ? join(workspace, 'managed.jsonl')
             : managedAudit,
-          ...(options.review === undefined || options.review === null
-            ? {}
-            : { review: options.review }),
+          requirementEgress: 'allowed',
+          ...(options.rawReview !== undefined
+            ? { review: options.rawReview }
+            : options.review === undefined || options.review === null
+              ? {}
+              : { review: { ...options.review, jevConfigPath } }),
         },
   };
   writeFileSync(
@@ -156,6 +182,7 @@ function createFixture(
 
   return {
     root: project,
+    projectId,
     project: workspace,
     auditDir,
     managedAudit,
@@ -225,33 +252,51 @@ function toolResult(session: unknown): Record<string, unknown> {
   return result;
 }
 
-async function reviewerServer(
-  policy: LocalReviewPolicy,
-): Promise<{
-  readonly endpoint: string;
+interface JevServer {
+  readonly baseUrl: string;
   readonly requests: string[];
   close(): Promise<void>;
-}> {
+}
+
+/**
+ * Loopback stand-in for the hosted Jev decision service. It answers the fixed
+ * question set with a `match`/low-risk/high-confidence fact object; the real
+ * provider, request filter, schema validation and threshold logic all run.
+ */
+async function jevServer(
+  answers: {
+    readonly requirementMatch?: 'match' | 'partial' | 'mismatch' | 'unclear';
+    readonly riskScore?: number;
+    readonly confidence?: number;
+  } = {},
+): Promise<JevServer> {
   const requests: string[] = [];
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     requests.push(body);
     res.setHeader('content-type', 'application/json');
-    try {
-      const parsed = JSON.parse(body) as {
-        projection: Parameters<typeof localReviewFacts>[1];
-      };
-      res.end(JSON.stringify(localReviewFacts(policy, parsed.projection)));
-    } catch {
-      res.statusCode = 400;
-      res.end(JSON.stringify({ error: 'invalid_projection' }));
-    }
+    res.end(
+      JSON.stringify({
+        model: JEV_MODEL,
+        answers: {
+          intent: { type: 'choice', choice: 'feature', confidence: answers.confidence ?? 0.95 },
+          requirementMatch: {
+            type: 'choice',
+            choice: answers.requirementMatch ?? 'match',
+            confidence: answers.confidence ?? 0.95,
+          },
+          sensitiveArea: { type: 'noul', noul: 0.05 },
+          irreversible: { type: 'noul', noul: 0.05 },
+          risk: { type: 'score', score: answers.riskScore ?? 0 },
+        },
+      }),
+    );
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
   return {
-    endpoint: `http://127.0.0.1:${port}/review`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     close: () =>
       new Promise<void>((resolve) => {
@@ -260,33 +305,20 @@ async function reviewerServer(
   };
 }
 
-function localPolicy(allowedTargets: readonly string[]): LocalReviewPolicy {
-  return {
-    allowedTools: ['write'],
-    allowedOperations: ['file_write'],
-    allowedTargets,
-    deniedTargets: [],
-    risk: 0.1,
-    confidence: 0.9,
-  };
-}
-
-function reviewConfig(endpoint: string): ManagedReviewConfig {
+function reviewConfig(): Omit<ManagedReviewConfig, 'jevConfigPath'> {
   const now = Date.now();
   const policyDigest = digest('d');
   return {
-    endpoint,
-    model: 'local-reviewer',
-    apiKeyEnv: KEY_ENV,
+    reviewer: 'jev',
     policy: {
       id: 'policy_1',
-      model: 'local-reviewer',
-      questionVersion: 'questions/v1',
+      model: JEV_MODEL,
+      questionVersion: JEV_QUESTIONS_VERSION,
       minConfidence: 0.7,
       maxRisk: 0.5,
       timeoutMs: 2_000,
       maxAttempts: 1,
-      requirementEgress: 'denied',
+      requirementEgress: 'allowed',
       targetEgress: 'workspace-relative',
       minimumCases: 2,
       maximumFalseAllowRate: 0,
@@ -296,8 +328,8 @@ function reviewConfig(endpoint: string): ManagedReviewConfig {
     calibration: {
       format: 'amos-review-calibration',
       version: 1,
-      model: 'local-reviewer',
-      questionVersion: 'questions/v1',
+      model: JEV_MODEL,
+      questionVersion: JEV_QUESTIONS_VERSION,
       policyDigest,
       caseSetDigest: digest('f'),
       cases: 10,
@@ -391,14 +423,12 @@ describe('real Pi harness managed interception', () => {
     session.dispose();
   });
 
-  it('reviews through real loopback HTTP and executes the approved write once', async () => {
-    const reviewer = await reviewerServer(localPolicy(['src/confirm.ts']));
-    const previous = process.env[KEY_ENV];
-    process.env[KEY_ENV] = 'test-key';
+  it('reviews through the real Jev path and executes the approved write once', async () => {
+    const reviewer = await jevServer();
     try {
       const fixture = createFixture(
         [rule('confirm-write', 'confirm', 'src/confirm.ts')],
-        { review: reviewConfig(reviewer.endpoint) },
+        { review: reviewConfig(), jevBaseUrl: reviewer.baseUrl },
       );
       const { session } = await runPrompt(fixture, 'write confirm', [
         writeCall(fixture, 'confirm.ts', 'APPROVED_ONCE'),
@@ -415,8 +445,13 @@ describe('real Pi harness managed interception', () => {
       const sent = reviewer.requests[0];
       assert.match(sent, /"target":"src\/confirm\.ts"/);
       assert.doesNotMatch(sent, /APPROVED_ONCE/);
-      assert.doesNotMatch(sent, new RegExp(fixture.project.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-      assert.doesNotMatch(sent, /requirementText/);
+      assert.doesNotMatch(
+        sent,
+        new RegExp(fixture.project.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      );
+      // Egress is explicitly allowed here, so the frame text is the only user
+      // content in the request and it is bounded to the requirement field.
+      assert.match(sent, /"requirement":\{"text":"write confirm"/);
 
       const entries = journal(fixture.managedAudit);
       assert.equal(entries[0].decision, 'allow');
@@ -424,6 +459,14 @@ describe('real Pi harness managed interception', () => {
         (entries[0].matchedRuleIds as readonly string[])[0],
         'confirm-write',
       );
+      const review = entries[0].review as Record<string, unknown>;
+      assert.equal(review.model, JEV_MODEL);
+      assert.equal(review.questionVersion, JEV_QUESTIONS_VERSION);
+      assert.equal(review.resultCode, 'approved');
+      assert.equal(typeof review.requirementDigest, 'string');
+      assert.equal(typeof review.actionDigest, 'string');
+      assert.equal(typeof review.grantId, 'string');
+      assert.equal(typeof entries[0].requirementVersion, 'number');
       assert.equal(entries[1].status, 'executed');
       assert.equal(
         entries.filter((entry) => entry.event === 'authorization').length,
@@ -431,20 +474,16 @@ describe('real Pi harness managed interception', () => {
       );
       session.dispose();
     } finally {
-      if (previous === undefined) delete process.env[KEY_ENV];
-      else process.env[KEY_ENV] = previous;
       await reviewer.close();
     }
   });
 
-  it('blocks when the independent reviewer returns mismatch', async () => {
-    const reviewer = await reviewerServer(localPolicy(['src/other.ts']));
-    const previous = process.env[KEY_ENV];
-    process.env[KEY_ENV] = 'test-key';
+  it('blocks when the Jev reviewer answers mismatch', async () => {
+    const reviewer = await jevServer({ requirementMatch: 'mismatch' });
     try {
       const fixture = createFixture(
         [rule('confirm-write', 'confirm', 'src/confirm.ts')],
-        { review: reviewConfig(reviewer.endpoint) },
+        { review: reviewConfig(), jevBaseUrl: reviewer.baseUrl },
       );
       const { session } = await runPrompt(fixture, 'write confirm', [
         writeCall(fixture, 'confirm.ts', 'MUST_NOT_EXIST'),
@@ -454,14 +493,12 @@ describe('real Pi harness managed interception', () => {
       assert.equal(existsSync(join(fixture.project, 'src', 'confirm.ts')), false);
       const result = toolResult(session);
       assert.equal(result.isError, true);
-      assert.match(JSON.stringify(result.content), /amos_managed_review_denied/);
+      assert.match(JSON.stringify(result.content), /amos_managed_review_mismatch/);
       const entries = journal(fixture.managedAudit);
       assert.equal(entries[0].decision, 'confirm_required');
       assert.equal(entries[1].status, 'stopped');
       session.dispose();
     } finally {
-      if (previous === undefined) delete process.env[KEY_ENV];
-      else process.env[KEY_ENV] = previous;
       await reviewer.close();
     }
   });
@@ -481,7 +518,7 @@ describe('real Pi harness managed interception', () => {
     const report = runtimeReport(fixture);
     assert.ok(report, 'expected the real harness runtime report');
     assert.equal(report.format, 'amos-harness-runtime');
-    assert.equal(report.projectId, 'harness-project');
+    assert.equal(report.projectId, fixture.projectId);
     assert.equal(report.policyVersion, 'policy-1');
     assert.equal(report.mode, 'enforcing');
     assert.match(String(report.activationDigest), /^sha256:[a-f0-9]{64}$/);
@@ -494,6 +531,37 @@ describe('real Pi harness managed interception', () => {
       injection: 'system-prompt-and-tool-result',
       singleUseReview: true,
     });
+    session.dispose();
+  });
+
+
+  it('stops on a legacy HTTP reviewer config with an explicit migration code', async () => {
+    const fixture = createFixture(
+      [rule('confirm-write', 'confirm', 'src/confirm.ts')],
+      {
+        rawReview: {
+          endpoint: 'http://127.0.0.1:1/review',
+          model: 'legacy-reviewer',
+          apiKeyEnv: 'LEGACY_REVIEW_KEY',
+          policy: {},
+          calibration: null,
+          ceilingDigest: digest('e'),
+        },
+      },
+    );
+    const { session } = await runPrompt(fixture, 'write confirm', [
+      writeCall(fixture, 'confirm.ts', 'MUST_NOT_EXIST'),
+      fauxAssistantMessage('done'),
+    ]);
+
+    assert.equal(existsSync(join(fixture.project, 'src', 'confirm.ts')), false);
+    const result = toolResult(session);
+    assert.equal(result.isError, true);
+    assert.match(
+      JSON.stringify(result.content),
+      /amos_managed_reviewer_migration_required/,
+    );
+    assert.equal(existsSync(fixture.managedAudit), false);
     session.dispose();
   });
 

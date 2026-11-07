@@ -27,6 +27,11 @@ import {
 } from "../../decision/combine.ts";
 import { buildJevAssessmentAudit } from "../../decision/audit.ts";
 import { createRequirementSessionStore } from "../../decision/session.ts";
+import {
+  createRequirementRegistry,
+  defaultRequirementRegistryPath,
+  type RequirementRegistry,
+} from "../../decision/requirement-registry.ts";
 import type { RequirementFrame } from "../../decision/requirement.ts";
 import type { Verdict } from "../../engine/engine.ts";
 import {
@@ -47,9 +52,14 @@ import {
   writeHarnessRuntimeReport,
 } from "../shared/runtime-report.ts";
 import type { ActivationRuntime } from "../../activation/runtime.ts";
-import { createHarnessGate, type HarnessGate } from "../../managed/harness.ts";
 import {
-  createHttpReviewProvider,
+  createHarnessGate,
+  type HarnessGate,
+  type HarnessRequirementState,
+  type HarnessReviewOptions,
+} from "../../managed/harness.ts";
+import {
+  createJevManagedReviewer,
   isValidPolicy,
   type CalibrationEvidence,
   type ReviewerPolicy,
@@ -345,9 +355,8 @@ function readActivationGuidanceConfig(
 }
 
 interface OpenCodeManagedReviewConfig {
-  readonly endpoint: string;
-  readonly model: string;
-  readonly apiKeyEnv: string;
+  readonly reviewer: "jev";
+  readonly jevConfigPath: string;
   readonly policy: ReviewerPolicy;
   readonly calibration: CalibrationEvidence | null;
   readonly ceilingDigest: string;
@@ -362,7 +371,7 @@ interface OpenCodeManagedConfig {
 
 type OpenCodeManagedState =
   | { readonly status: "absent" }
-  | { readonly status: "error" }
+  | { readonly status: "error"; readonly code?: string }
   | { readonly status: "enabled"; readonly config: OpenCodeManagedConfig };
 
 /**
@@ -400,6 +409,9 @@ function readOpenCodeManagedState(
     return { status: "error" };
   }
   const review = readOpenCodeManagedReview(raw.review);
+  if (review === LEGACY_REVIEWER) {
+    return { status: "error", code: "reviewer_migration_required" };
+  }
   if (review === undefined) return { status: "error" };
   return {
     status: "enabled",
@@ -411,36 +423,37 @@ function readOpenCodeManagedState(
   };
 }
 
+const LEGACY_REVIEWER = "reviewer_migration_required" as const;
+
 function readOpenCodeManagedReview(
   value: unknown,
-): OpenCodeManagedReviewConfig | null | undefined {
+): OpenCodeManagedReviewConfig | null | undefined | typeof LEGACY_REVIEWER {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) return undefined;
   const keys = Object.keys(value);
+  // Legacy HTTP-reviewer fields are an explicit migration stop.
   if (
     keys.some(
       (key) =>
-        key !== "endpoint" &&
-        key !== "model" &&
-        key !== "apiKeyEnv" &&
+        key !== "reviewer" &&
+        key !== "jevConfigPath" &&
         key !== "policy" &&
         key !== "calibration" &&
         key !== "ceilingDigest" &&
         key !== "grantTtlMs",
     )
   ) {
-    return undefined;
+    return LEGACY_REVIEWER;
   }
   if (
-    typeof value.endpoint !== "string" ||
-    typeof value.model !== "string" ||
-    value.model.length === 0 ||
-    typeof value.apiKeyEnv !== "string" ||
-    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value.apiKeyEnv) ||
+    value.reviewer !== "jev" ||
+    typeof value.jevConfigPath !== "string" ||
+    value.jevConfigPath.length === 0 ||
+    value.jevConfigPath.includes("\0") ||
+    !isAbsolute(value.jevConfigPath) ||
     typeof value.ceilingDigest !== "string" ||
     !/^sha256:[a-f0-9]{64}$/.test(value.ceilingDigest) ||
-    !isValidPolicy(value.policy) ||
-    value.policy.model !== value.model
+    !isValidPolicy(value.policy)
   ) {
     return undefined;
   }
@@ -463,24 +476,9 @@ function readOpenCodeManagedReview(
   ) {
     return undefined;
   }
-  try {
-    const url = new URL(value.endpoint);
-    if (
-      (url.protocol !== "http:" && url.protocol !== "https:") ||
-      url.username.length > 0 ||
-      url.password.length > 0 ||
-      url.search.length > 0 ||
-      url.hash.length > 0
-    ) {
-      return undefined;
-    }
-  } catch {
-    return undefined;
-  }
   return {
-    endpoint: value.endpoint,
-    model: value.model,
-    apiKeyEnv: value.apiKeyEnv,
+    reviewer: "jev",
+    jevConfigPath: value.jevConfigPath,
     policy: value.policy,
     calibration: (calibration ?? null) as CalibrationEvidence | null,
     ceilingDigest: value.ceilingDigest,
@@ -806,20 +804,16 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         hostProjection.status === "ready"
           ? { status: "from_projection" as const }
           : hostProjection.status === "error"
-            ? { status: "error" as const }
+            ? { status: "error" as const, code: hostProjection.code }
             : readOpenCodeManagedState(options, config.directory);
       let managedConfig: OpenCodeManagedConfig | null = null;
       let managedActivation: ActivationRuntime | null = null;
       let managedError = hostProjection.status === "error";
-      let managedReview:
-        | {
-            provider: ReturnType<typeof createHttpReviewProvider>;
-            policy: ReviewerPolicy;
-            calibration: CalibrationEvidence | null;
-            ceilingDigest: string;
-            grantTtlMs?: number;
-          }
-        | null = null;
+      let managedErrorCode =
+        hostProjection.status === "error" && hostProjection.code !== undefined
+          ? `amos_managed_${hostProjection.code}`
+          : "amos_managed_config_error";
+      let managedReview: HarnessReviewOptions | null = null;
 
       if (managedOptionState.status === "from_projection") {
         const projection = hostProjection.status === "ready" ? hostProjection.projection : null;
@@ -832,9 +826,8 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
               review === null
                 ? null
                 : {
-                    endpoint: review.endpoint,
-                    model: review.model,
-                    apiKeyEnv: review.apiKeyEnv,
+                    reviewer: review.reviewer,
+                    jevConfigPath: review.jevConfigPath,
                     policy: review.policy,
                     calibration: review.calibration,
                     ceilingDigest: review.ceilingDigest,
@@ -846,6 +839,9 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         managedConfig = managedOptionState.config;
       } else if (managedOptionState.status === "error") {
         managedError = true;
+        managedErrorCode = managedOptionState.code === undefined
+          ? "amos_managed_config_error"
+          : `amos_managed_${managedOptionState.code}`;
       }
 
       if (managedConfig !== null) {
@@ -876,26 +872,125 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         if (managedConfig.review !== null) {
           try {
             const review = managedConfig.review;
+            const jev = loadJevConfig(review.jevConfigPath);
             managedReview = {
-              provider: createHttpReviewProvider({
-                endpoint: review.endpoint,
-                model: review.model,
-                apiKeyEnv: review.apiKeyEnv,
+              reviewer: createJevManagedReviewer({
+                provider: jev.assessmentProvider,
+                policy: review.policy,
+                calibration: review.calibration,
               }),
               policy: review.policy,
-              calibration: review.calibration,
               ceilingDigest: review.ceilingDigest,
               ...(review.grantTtlMs === undefined ? {} : { grantTtlMs: review.grantTtlMs }),
             };
           } catch {
             managedError = true;
+            managedErrorCode = "amos_managed_reviewer_unavailable";
           }
         }
       } else if (managedError) {
-        diagnostic("amos_managed_config_error");
+        diagnostic(managedErrorCode);
       }
 
       const managedRequested = managedConfig !== null || managedError;
+
+      function managedRequirementRegistry(
+        directory: string,
+        activation: ActivationRuntime | null,
+      ): RequirementRegistry | null {
+        const uid = typeof process.getuid === "function" ? process.getuid() : null;
+        if (uid === null || activation === null) {
+          return null;
+        }
+        const path = defaultRequirementRegistryPath(activation.projectId);
+        const existing = requirementRegistries.get(path);
+        if (existing !== undefined) {
+          return existing;
+        }
+        try {
+          const registry = createRequirementRegistry({
+            path,
+            projectId: activation.projectId,
+            ownerUid: uid,
+            now: () => Date.now(),
+          });
+          requirementRegistries.set(path, registry);
+          return registry;
+        } catch {
+          return null;
+        }
+      }
+
+      function captureManagedRequirement(
+        directory: string,
+        sessionID: string,
+        text: string,
+        egress: "allowed" | "denied",
+      ): void {
+        const registry = managedRequirementRegistry(directory, managedActivation);
+        if (registry === null) {
+          return;
+        }
+        try {
+          registry.captureUserMessage({
+            sessionId: safeManagedSessionId(sessionID),
+            text,
+            egress,
+            declaredScope: [],
+            actor: "user",
+            capturedBy: "harness",
+            epoch: managedActivation?.epoch ?? 0,
+          });
+        } catch {
+          // The gate resolves the persisted state and stops when not ready.
+        }
+      }
+
+      function revokeManagedRequirement(
+        directory: string,
+        sessionID: string,
+      ): void {
+        const registry = managedRequirementRegistry(directory, managedActivation);
+        if (registry === null) {
+          return;
+        }
+        try {
+          registry.revoke(safeManagedSessionId(sessionID));
+        } catch {
+          // Fail closed through the gate resolution.
+        }
+      }
+
+      function managedRequirementState(
+        directory: string,
+        sessionID: string,
+      ): HarnessRequirementState {
+        const unavailable: HarnessRequirementState = {
+          status: "unavailable",
+          frame: null,
+          version: null,
+          digest: null,
+        };
+        const registry = managedRequirementRegistry(directory, managedActivation);
+        if (registry === null) {
+          return unavailable;
+        }
+        try {
+          const resolved = registry.resolve(
+            safeManagedSessionId(sessionID),
+            managedActivation?.epoch ?? 0,
+          );
+          return {
+            status: resolved.status,
+            frame: resolved.frame,
+            version: resolved.version,
+            digest: resolved.digest,
+          };
+        } catch {
+          return unavailable;
+        }
+      }
+
       const managedGates = new Map<string, ManagedSessionState>();
       const managedPending = new Map<string, { readonly gate: HarnessGate; readonly callId: string }>();
       const managedRuntimeUsed = new Set<string>();
@@ -921,6 +1016,8 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       // created exclusively from the harness user-prompt channel; no tool
       // result, file, or model text can enter here.
       const requirements = createRequirementSessionStore();
+      // Versioned, restart-recovered requirement state for the managed gate.
+      const requirementRegistries = new Map<string, RequirementRegistry>();
 
       const managedCallId = (value: unknown): string | null => {
         if (typeof value !== "string" || value.length === 0 || value.length > 256) {
@@ -932,10 +1029,10 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
 
       const ensureManagedGate = (
         sessionID: string,
-      ): ManagedSessionState | { readonly status: "error" } | { readonly status: "absent" } => {
+      ): ManagedSessionState | { readonly status: "error"; readonly code?: string } | { readonly status: "absent" } => {
         if (!managedRequested) return { status: "absent" };
         if (managedError || managedConfig === null || managedActivation === null) {
-          return { status: "error" };
+          return { status: "error", code: managedErrorCode };
         }
         const existing = managedGates.get(sessionID);
         if (existing !== undefined) return existing;
@@ -944,7 +1041,8 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             activation: managedActivation,
             auditPath: managedConfig.auditPath,
             sessionId: safeManagedSessionId(sessionID),
-            requirement: () => requirements.current(sessionID),
+            requirement: () =>
+              managedRequirementState(config.directory, sessionID),
             review: managedReview,
             now: () => Date.now(),
           });
@@ -1108,6 +1206,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             if (sessionID !== null) {
               if (text === null) {
                 requirements.clear(sessionID);
+                revokeManagedRequirement(config.directory, sessionID);
               } else {
                 try {
                   requirements.captureUserMessage(
@@ -1115,8 +1214,15 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
                     text,
                     managedConfig?.requirementEgress ?? "denied",
                   );
+                  captureManagedRequirement(
+                    config.directory,
+                    sessionID,
+                    text,
+                    managedConfig?.requirementEgress ?? "denied",
+                  );
                 } catch {
                   requirements.clear(sessionID);
+                  revokeManagedRequirement(config.directory, sessionID);
                 }
               }
             }
@@ -1124,6 +1230,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             if (sessionID !== null) {
               if (text === null) {
                 requirements.clear(sessionID);
+                revokeManagedRequirement(config.directory, sessionID);
               } else {
                 try {
                   requirements.captureUserMessage(
@@ -1131,13 +1238,21 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
                     text,
                     parsedConfig.requirementEgress,
                   );
+                  captureManagedRequirement(
+                    config.directory,
+                    sessionID,
+                    text,
+                    parsedConfig.requirementEgress,
+                  );
                 } catch {
                   requirements.clear(sessionID);
+                  revokeManagedRequirement(config.directory, sessionID);
                 }
               }
             }
           } else if (sessionID !== null) {
             requirements.clear(sessionID);
+            revokeManagedRequirement(config.directory, sessionID);
           }
 
           const guidanceEnabled =
@@ -1558,8 +1673,11 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             throw new Error("amos_managed_missing_session");
           }
           const state = ensureManagedGate(sessionID);
-          if (state.status === "absent" || state.status === "error") {
+          if (state.status === "absent") {
             throw new Error("amos_managed_config_error");
+          }
+          if (state.status === "error") {
+            throw new Error(state.code ?? managedErrorCode);
           }
           if (normalized === null || normalized.kind !== "action") {
             throw new Error("amos_managed_coverage_gap");

@@ -44,6 +44,7 @@ export const MANAGED_HOST_PROJECTION_VERSION = 1;
 const DEFAULT_GRANT_TTL_MS = 20_000;
 const MAX_GRANT_TTL_MS = 60_000;
 const MAX_TIGHTENING_TEMPLATES = 64;
+const MAX_JEV_CONFIG_PATH = 4_096;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
@@ -51,6 +52,8 @@ const MANAGED_FIELDS = [
   'enabled',
   'requirementEgress',
   'grantTtlMs',
+  'reviewer',
+  'jevConfigPath',
   'reviewEndpoint',
   'reviewModel',
   'apiKeyEnv',
@@ -88,6 +91,8 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
     enabled: false,
     requirementEgress: 'denied',
     grantTtlMs: DEFAULT_GRANT_TTL_MS,
+    reviewer: null,
+    jevConfigPath: null,
     reviewEndpoint: null,
     reviewModel: null,
     apiKeyEnv: null,
@@ -110,6 +115,12 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
 export interface NormalizeProjectConfigOptions {
   readonly workspace: string;
   readonly existing?: ProjectConfig;
+  /**
+   * Set when the value came from the config table. A stored pre-Jev reviewer is
+   * returned unchanged so reads and publishes keep working; the migration gate
+   * applies to incoming edits only.
+   */
+  readonly stored?: boolean;
 }
 
 /** Merge a partial human edit into the existing full configuration. */
@@ -132,7 +143,7 @@ export function normalizeProjectConfig(
   }
   return deepFreeze({
     workflowGate: normalizeWorkflowGate(raw.workflowGate, workspace, existing.workflowGate),
-    managed: normalizeManaged(raw.managed, existing.managed),
+    managed: normalizeManaged(raw.managed, existing.managed, options.stored === true),
     tightening: normalizeTightening(raw.tightening, existing.tightening),
     rollout: normalizeRollout(raw.rollout, existing.rollout),
   });
@@ -140,7 +151,7 @@ export function normalizeProjectConfig(
 
 /** Re-read a complete stored configuration; unknown or malformed values fail. */
 export function readProjectConfig(value: unknown, workspace: string): ProjectConfig {
-  const config = normalizeProjectConfig(value, { workspace });
+  const config = normalizeProjectConfig(value, { workspace, stored: true });
   return config;
 }
 
@@ -180,6 +191,7 @@ function normalizeWorkflowGate(
 function normalizeManaged(
   value: unknown,
   existing: ProjectManagedConfig,
+  stored: boolean,
 ): ProjectManagedConfig {
   if (value === undefined) return existing;
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -205,6 +217,11 @@ function normalizeManaged(
     throw new DomainError('invalid_request');
   }
 
+  const reviewer = normalizeReviewer(merged.reviewer);
+  const jevConfigPath = optionalText(merged.jevConfigPath, MAX_JEV_CONFIG_PATH);
+  if (jevConfigPath !== null && !isAbsolute(jevConfigPath)) {
+    throw new DomainError('invalid_request');
+  }
   const reviewEndpoint = optionalText(merged.reviewEndpoint, 2_048);
   const reviewModel = optionalText(merged.reviewModel, 256);
   const apiKeyEnv = optionalText(merged.apiKeyEnv, 128);
@@ -220,23 +237,48 @@ function normalizeManaged(
 
   const reviewPolicy = normalizeReviewPolicy(merged.reviewPolicy);
   const reviewCalibration = normalizeCalibration(merged.reviewCalibration);
-  const reviewFields = [reviewEndpoint, reviewModel, apiKeyEnv, ceilingDigest];
-  const present = reviewFields.filter((item) => item !== null).length;
-  if (present !== 0 && present !== reviewFields.length) {
-    throw new DomainError('invalid_request');
-  }
-  if (reviewPolicy !== null) {
-    if (present !== reviewFields.length) throw new DomainError('invalid_request');
-    if (reviewPolicy.model !== reviewModel) throw new DomainError('invalid_request');
-  }
-  if (reviewCalibration !== null) {
-    if (reviewPolicy === null) throw new DomainError('invalid_request');
+  const legacyReviewer =
+    reviewEndpoint !== null || reviewModel !== null || apiKeyEnv !== null;
+  if (reviewer === 'jev') {
+    // A Jev reviewer carries its own config path; the retired HTTP reviewer
+    // fields cannot be mixed in.
+    if (legacyReviewer) throw new DomainError('invalid_request');
+    if (
+      jevConfigPath === null ||
+      reviewPolicy === null ||
+      reviewCalibration === null ||
+      ceilingDigest === null
+    ) {
+      throw new DomainError('invalid_request');
+    }
+    if (
+      reviewPolicy.model !== reviewCalibration.model ||
+      reviewPolicy.questionVersion !== reviewCalibration.questionVersion ||
+      reviewPolicy.policyDigest !== reviewCalibration.policyDigest
+    ) {
+      throw new DomainError('invalid_request');
+    }
+  } else if (!stored) {
+    // An incoming independent-HTTP reviewer is a migration signal: stop, never
+    // degrade to an implicit allow. A stored value stays readable so it can be
+    // rewritten, and projects `review: null` so the host stops instead.
+    if (legacyReviewer) throw new DomainError('reviewer_migration_required');
+    if (
+      jevConfigPath !== null ||
+      ceilingDigest !== null ||
+      reviewPolicy !== null ||
+      reviewCalibration !== null
+    ) {
+      throw new DomainError('invalid_request');
+    }
   }
 
   return deepFreeze({
     enabled: merged.enabled,
     requirementEgress: merged.requirementEgress,
     grantTtlMs: merged.grantTtlMs,
+    reviewer,
+    jevConfigPath,
     reviewEndpoint,
     reviewModel,
     apiKeyEnv,
@@ -382,6 +424,12 @@ function validateReviewEndpoint(value: string): void {
   }
 }
 
+function normalizeReviewer(value: unknown): 'jev' | null {
+  if (value === undefined || value === null) return null;
+  if (value !== 'jev') throw new DomainError('invalid_request');
+  return 'jev';
+}
+
 function normalizeReviewPolicy(value: unknown): ReviewerPolicy | null {
   if (value === undefined || value === null) return null;
   if (!isValidPolicy(value)) throw new DomainError('invalid_request');
@@ -463,16 +511,14 @@ export function buildManagedProjection(input: ManagedProjectionInput): unknown {
   const config = input.config;
   const managed = config.managed;
   const review =
-    managed.reviewEndpoint !== null &&
-    managed.reviewModel !== null &&
-    managed.apiKeyEnv !== null &&
+    managed.reviewer === 'jev' &&
+    managed.jevConfigPath !== null &&
     managed.ceilingDigest !== null &&
     managed.reviewPolicy !== null &&
     managed.reviewCalibration !== null
       ? {
-          endpoint: managed.reviewEndpoint,
-          model: managed.reviewModel,
-          apiKeyEnv: managed.apiKeyEnv,
+          reviewer: 'jev' as const,
+          jevConfigPath: managed.jevConfigPath,
           policy: managed.reviewPolicy,
           calibration: managed.reviewCalibration,
           ceilingDigest: managed.ceilingDigest,
@@ -498,10 +544,8 @@ export function buildManagedProjection(input: ManagedProjectionInput): unknown {
       auditPath: input.auditPath,
       requirementEgress: managed.requirementEgress,
       grantTtlMs: managed.grantTtlMs,
-      reviewEndpoint: managed.reviewEndpoint,
-      reviewModel: managed.reviewModel,
-      apiKeyEnv: managed.apiKeyEnv,
-      ceilingDigest: managed.ceilingDigest,
+      reviewer: managed.reviewer,
+      jevConfigPath: managed.jevConfigPath,
       review,
     },
     workflowGate: config.workflowGate,

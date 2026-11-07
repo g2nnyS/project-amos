@@ -26,6 +26,7 @@ export type DomainErrorCode =
   | 'clock_regression'
   | 'rollout_denied'
   | 'evidence_unbound'
+  | 'reviewer_migration_required'
   | 'database_busy'
   | 'database_corrupt'
   | 'database_incompatible'
@@ -52,6 +53,7 @@ export const DOMAIN_ERROR_STATUS: Readonly<Record<DomainErrorCode, number>> = {
   clock_regression: 409,
   rollout_denied: 403,
   evidence_unbound: 409,
+  reviewer_migration_required: 409,
   database_busy: 503,
   database_corrupt: 500,
   database_incompatible: 409,
