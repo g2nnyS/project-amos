@@ -45,6 +45,10 @@ import {
   serializePolicyDocument,
 } from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
+import {
+  JevSettingsError,
+  type JevSettingsStore,
+} from './jev-settings.ts';
 import type { ObservationLogs, ObservationReport } from './observations.ts';
 import { loadStaticAssets, type StaticAsset } from './static-assets.ts';
 
@@ -124,6 +128,7 @@ export interface GovernanceServerOptions {
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly observations?: ObservationLogs | null;
+  readonly jevSettings?: JevSettingsStore | null;
 }
 
 export interface GovernanceServer {
@@ -163,6 +168,7 @@ export function createGovernanceServer(
   const schemaDocument = normalizeSchemaDocument(options.rawSchema);
   const seed = normalizeSeed(options.seed);
   const observations = options.observations ?? null;
+  const jevSettings = options.jevSettings ?? null;
   let staticAssets: ReadonlyMap<string, StaticAsset> = new Map();
 
   const server = createServer((req, res) => {
@@ -504,6 +510,65 @@ export function createGovernanceServer(
         return;
       }
 
+      if (child === 'jev') {
+        if (numeric === 'test') {
+          requirePath(segments, 5);
+          requireMethod(method, 'POST');
+          requireHumanActor(req);
+          requireBrowserMutation(req, port);
+          await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+          const store = requireJevSettings();
+          const config = service.getProjectConfig(id);
+          const result = await runJevOperation(() =>
+            store.test(
+              config.managed.jevConfigPath ??
+              config.workflowGate.jevConfigPath ??
+              store.pathFor(id),
+            ),
+          );
+          sendJson(res, 200, result);
+          return;
+        }
+        requirePath(segments, 4);
+        const store = requireJevSettings();
+        const config = service.getProjectConfig(id);
+        const currentPath =
+          config.managed.jevConfigPath ?? config.workflowGate.jevConfigPath;
+        if (method === 'GET') {
+          requireAnyActor(req);
+          sendJson(
+            res,
+            200,
+            await runJevOperation(() => store.read(currentPath ?? store.pathFor(id))),
+          );
+          return;
+        }
+        requireMethod(method, 'POST');
+        const actor = requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        const input = await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+        const project = service.getProject(id);
+        const saved = await runJevOperation(() =>
+          store.save({ projectId: id, workspace: project.workspace, currentPath, input }),
+        );
+        if (config.workflowGate.enabled || config.managed.reviewer === 'jev') {
+          service.updateProjectConfig(
+            id,
+            {
+              ...(config.workflowGate.enabled
+                ? { workflowGate: { jevConfigPath: saved.path } }
+                : {}),
+              ...(config.managed.reviewer === 'jev'
+                ? { managed: { jevConfigPath: saved.path } }
+                : {}),
+            },
+            actor,
+          );
+        }
+        sendJson(res, 200, saved.view);
+        return;
+      }
+
       if (child === 'runtime') {
         requirePath(segments, 4);
         requireMethod(method, 'GET');
@@ -739,6 +804,30 @@ export function createGovernanceServer(
     auth.revokeSession(session.id);
     res.setHeader('Set-Cookie', serializeClearedSessionCookie());
     sendJson(res, 200, { authenticated: false });
+  }
+
+  function requireJevSettings(): JevSettingsStore {
+    if (jevSettings === null) {
+      throw new HttpError(503, 'jev_config_unavailable');
+    }
+    return jevSettings;
+  }
+
+  async function runJevOperation<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof JevSettingsError)) throw error;
+      const status =
+        error.code === 'jev_config_invalid'
+          ? 400
+          : error.code === 'jev_not_configured'
+            ? 409
+            : error.code === 'jev_test_failed'
+              ? 502
+              : 503;
+      throw new HttpError(status, error.code);
+    }
   }
 
   function requireAnyActor(req: IncomingMessage): Actor {

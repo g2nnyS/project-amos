@@ -7,6 +7,7 @@ import type {
 } from '../activation/tighten.ts';
 import type { PromotionThresholds, ProbeRun, RolloutStage } from '../rollout/contracts.ts';
 import type { CalibrationEvidence, ReviewerPolicy } from '../review/calibration.ts';
+import type { JevPublicConfig } from '../decision/config.ts';
 
 /**
  * Public domain contract for the local governance product.
@@ -342,6 +343,21 @@ export interface ProjectRolloutConfig {
   readonly thresholds: PromotionThresholds | null;
   readonly thresholdsByRule: Readonly<Record<string, PromotionThresholds>>;
   readonly ruleStates: Readonly<Record<string, RolloutStage>>;
+}
+
+export interface JevSettingsView {
+  readonly config: JevPublicConfig | null;
+  readonly hasApiKey: boolean;
+}
+
+export interface SaveJevSettingsInput extends JevPublicConfig {
+  /** Empty or omitted retains the existing credential. */
+  readonly apiKey?: string;
+}
+
+export interface JevSettingsTestResult {
+  readonly ok: true;
+  readonly model: string;
 }
 
 /** Full non-secret project configuration owned by the governance service. */
