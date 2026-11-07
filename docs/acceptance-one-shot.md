@@ -45,7 +45,7 @@ PASS；live probe 通过。历史表如下。
 | AC-06 覆盖/保护面 | **partial（Harness 层）** | 归一化工具闭集；未知/覆盖缺口在 managed 模式阻断；策略 deny/confirm 由规则引擎决定；审计/策略/配置路径仍同写域。**OS symlink/bind mount/TOCTOU/子进程中介本轮不做，不宣称全副作用覆盖。** |
 | AC-07 一次授权/重放 | **passed（离线）** | `review/authority` 42 项 + `managed` 10 项：只消费一次；错 target/session/epoch/snapshot/capability/ceiling/过期/重放均不执行；拒绝/低置信/超时/无通道停止；二次执行无副作用。 |
 | AC-08 reviewer/egress | **passed（本地确定性 reviewer）** | 最小投影经真实 loopback HTTP 发送；本地确定性 reviewer 只看 tool/operation/相对 target/规则 ID/digest；无内容/命令/绝对外部路径/requirement 文本；sensor 仍 tighten-only；reviewer 不能覆盖 deny；无校准/超时/失败停止。**真实模型校准本轮不作为 MVP 必需项，未运行。** |
-| AC-09 全配置导入/秘密 | **passed（本地）** | `governance/import` 全量预览（真实 15 条 YAML + guidance seeds），重复 ID/未知字段/非法谓词/秘密字面量拒绝；秘密只存 `{env:NAME}`；旧文件切换后无回退路径（无双向同步实现）。 |
+| AC-09 全配置导入/秘密 | **passed（本地）** | `governance/import` 全量预览（真实 9 条 YAML + guidance seeds），重复 ID/未知字段/非法谓词/秘密字面量拒绝；秘密只存 `{env:NAME}`；旧文件切换后无回退路径（无双向同步实现）。 |
 | AC-10 提案/CAS/发布 | **passed（本地）** | `governance/store/http`：Agent 不能审/发；陈旧/过期/终结提案失败；并发 CAS/注入编译器失败不半发布；回滚新版本；receipt 不显示已生效。 |
 | AC-11 DB/备份/HTTP 安全 | **passed（本地）** | 损坏/未知 schema/错误权限/符号链接拒绝且不重置；WAL 备份恢复；loopback Host/Origin/CSRF/CSP/角色/请求体上限/跨项目隔离测试。**真实浏览器/CSP 浏览器证据 blocked。** |
 | AC-12 浏览器治理流程 | **blocked** | 未移植 B 的 Vue 治理台；无登录→项目→规则→发布→回滚真实浏览器流程。API 测试不能替代。 |
