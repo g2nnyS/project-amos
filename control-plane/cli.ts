@@ -34,6 +34,7 @@ import { parse as parseYaml } from 'yaml';
 
 import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts.ts';
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
+import { JevSettingsStore } from './jev-settings.ts';
 import { ObservationLogs } from './observations.ts';
 import { createControlPlane } from './store.ts';
 
@@ -552,6 +553,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       staticDir: options.staticDir ?? paths.staticDir,
       ...(options.now === undefined ? {} : { now: options.now }),
       observations,
+      jevSettings: new JevSettingsStore(paths.dataDir),
     });
   } catch {
     service.close();

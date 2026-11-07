@@ -65,6 +65,13 @@ AMOS 面向长程编码任务。人维护规则、安全边界、项目架构和
 - Endpoint、model、阈值、timeout、questionVersion、policy digest、requirement egress 和 calibration 由人通过现有治理发布路径预先配置，并绑定不可变版本。
 - 缺配置、未发布、未知字段、版本不匹配或 activation 错误均 fail closed。Agent 可提案，不可批准或发布。
 
+### 4.5 工程规范与自动接纳
+
+- 人制定并发布架构约束、检查集合、质量阈值和 rollout 准入标准；Agent 与 Jev 均无权关闭必需检查或改写其结果。
+- 完成判定先运行当前 tree/commit、规则版本与 analyzer 版本绑定的确定性检查，再由独立的 Jev 工程 reviewer 对需求覆盖和架构偏差作语义复核。任一必需检查失败、缺失、超时或结果过期时停止接纳。
+- 自动接纳或 rollout 晋升只允许在预授权范围内，依赖可信 runner 产生的版本绑定证据、真实正反 probe 和预设通过标准。Jev 结论只能收紧或要求返工；不得单独签发通过、发布版本、覆盖红色 CI 或跳过受保护检查。
+- 进程重启或代码变更使旧 check/probe 结果失效；同一任务重试必须重新核验当前 tree 和要求版本。远端受保护分支配置与真实部署探测需单独验收，缺失时维持对应范围 NO-GO。
+
 ## 5. 本切片边界
 
 - 不开启普通 Pi/OpenCode enforcement，不改变 Stage A 默认行为。
@@ -91,6 +98,7 @@ AMOS 面向长程编码任务。人维护规则、安全边界、项目架构和
 - Managed confirm、有效 Jev match、scope 通过、校准有效、风险/置信度合格且绑定相符：无需逐次人类点击，grant 只允许一次；审计持久化后恰执行一次。
 - 长程任务跨多轮和服务重启使用有效 requirement 版本。用户直接修订后新 digest 生效，旧审查结果和 grant 失效。
 - 受管 Pi 与 OpenCode 的真实执行入口都通过验证；审计可关联 action、requirement、snapshot、Jev 版本与 outcome，且无原始敏感文本。
+- 当前 tree 的必需编译/测试/规则检查全绿，Jev 工程复核通过，且可信 probe 与规则/模型/提交版本绑定时，系统按预设条件接纳；无需人逐次批准。
 
 ### 停止与隔离反例
 
@@ -99,6 +107,7 @@ AMOS 面向长程编码任务。人维护规则、安全边界、项目架构和
 - session/task/project/epoch/snapshot/action/target/capability 不匹配、grant 重放或 TTL 过期都不产生副作用。
 - 授权审计不可持久化、requirement 状态损坏、身份不匹配或恢复失败均停止；未知执行结果不自动重试。
 - 工具结果、Agent 消息或工作区中的伪造 requirement/Jev 结论不能改变用户 requirement 或授权结果。
+- 缺必需 CI/analyzer、失败或过期结果、tree/规则/runner digest 不一致、probe 缺失或 rollout 超出预授权范围时不接纳、不晋升；Jev 工程 reviewer 的正向结论不得覆盖这些条件。
 - 未启用 managed 的普通 Pi/OpenCode 仍为 Stage A log-only；managed 初始化或覆盖缺口不得回退放行。
 
 ## 8. 交付清单

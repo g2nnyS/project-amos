@@ -120,6 +120,8 @@ export function makeRequest(
     capabilityId: 'cap_1',
     expiresAt: NOW + 2_000,
     ceilingDigest: CEILING_DIGEST,
+    requirementVersion: 1,
+    requirementDigest: `sha256:${'3'.repeat(64)}`,
     ...overrides,
   };
 }

@@ -4,6 +4,10 @@
   阶段 A 的 log-only 默认与 G0/NO-GO 结论不变。**
 - 范围：G06/G07 语言检查门、G08 持久临时收紧、G10 SQLite 配置单主与宿主
   投影、G11 证据绑定 rollout；OpenCode 增加显式 managed 对等路径。
+- 2026-11-07 更新：managed `confirm` 的语义 reviewer 是 Jev
+  （`review/jev-reviewer.ts`）；requirement 生命周期由
+  `decision/requirement-registry.ts` 承载；reviewer 配置迁移为停止式。G0/NO-GO
+  不变。
 - 这不是 OS 沙箱、远程 CI 保护或跨身份信任边界。
 
 ## 1. G10：SQLite 配置单主与宿主投影
@@ -11,15 +15,19 @@
 `control-plane/` 现在按项目保存完整非秘密配置：
 
 - `workflowGate`：工程 Shell/完成审查开关与绝对 `jevConfigPath`；
-- `managed`：`enabled`、`requirementEgress`、`grantTtlMs`、review provider
-  的非秘密字段、`apiKeyEnv` 引用、`ceilingDigest`，可选 review policy 与
-  calibration；
+- `managed`：`enabled`、`requirementEgress`、`grantTtlMs`、`reviewer`（当前只有
+  `jev`）、绝对 `jevConfigPath`、review policy、calibration 与 `ceilingDigest`；
 - `tightening`：预授权模板与配额；
 - `rollout`：预注册阈值、逐规则阈值和当前 `RolloutState`。
 
-凭据只保存环境变量名，字面 key、未知字段和带 userinfo/query 的 review URL
-在写入时拒绝。项目配置由 human 通过 `POST /api/projects/:id/config` 更新；
-Agent 仅可读取和触发已预授权动作。
+SQLite 只保存 Jev 配置文件的绝对路径，不保存凭据。控制台可按项目编辑并测试
+Jev 配置；字面密钥由控制面原子写入私有状态目录的
+`jev/<projectId>/jev.local.json`（当前用户、`0600`），也继续支持该文件的
+`{ "env": ... }` 引用或本地忽略的 `decision/jev.local.json`。
+未知字段在写入时拒绝。旧形状（`endpoint`/`model`/`apiKeyEnv`）发布返回
+`reviewer_migration_required`（409）；已存旧配置可以读取和发布，但投影
+`review: null`，宿主停止，由人单次 PATCH 原地迁移。项目配置由 human 通过
+`POST /api/projects/:id/config` 更新；Agent 仅可读取和触发已预授权动作。
 
 发布（以及临时收紧、过期或配置更新）会用同一份配置生成并原子写入：
 
@@ -87,8 +95,10 @@ Pi 与 OpenCode 都优先读取 `.pi/amos.managed.json`；缺少投影时保留�
 
 - `execute.before` 先归一化，再调用 `createHarnessGate`；确定性 deny 在
   副作用前阻断；
-- confirm 走独立 reviewer 与一次性授权；review 不可用、拒绝、超时、重放
-  均不执行；
+- confirm 走 Jev 安全 reviewer（`review/jev-reviewer.ts`）与一次性授权；
+  review 不可用、拒绝、超时、重放均不执行；读到旧投影或旧手写配置时以
+  `amos_managed_reviewer_migration_required` 阻断，Jev 配置不可读时以
+  `amos_managed_reviewer_unavailable` 阻断；
 - `execute.after` 写 executed/failed 结果，不记录内容；
 - 首次加载写 `.pi/runtime.json`，harness 标记为 `opencode`；
 - 未显式启用 managed 时仍保持原 Stage A log-only + 可选 workflow gate。
@@ -99,7 +109,11 @@ OpenCode 没有 Pi 的同名配置层，因此支持 `options.managed`；生成�
 ## 6. 明确限制
 
 - 同 UID 进程仍可写数据库、投影、审计和 journal；owner-only/append-only
-  不是防篡改保证。
+  不是防篡改保证。requirement 原文只落在受保护的
+  `$XDG_STATE_HOME/amos-governance/requirement-registry/<projectId>.json`，该文件与审计同属
+  同 UID 可写域。
+- Jev reviewer 不能覆盖确定性 deny、不能扩大 scope、没有文件系统/网络副作用
+  权限，也不保存 requirement 原文与模型正文；它只换一个一次性 grant。
 - `.pi/amos.managed.json` 不是签名，投影校验只证明内部一致性和与当前
   快照匹配。
 - 临时收紧的“只附加”证明来自同一 catalog 编译和快照链校验，不是通用

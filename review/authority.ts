@@ -26,6 +26,9 @@ export interface OneShotRequest {
   readonly capabilityId: string;
   readonly expiresAt: number;
   readonly ceilingDigest: string;
+  /** Requirement version the review was bound to. */
+  readonly requirementVersion: number;
+  readonly requirementDigest: string;
 }
 
 export interface OneShotGrant extends OneShotRequest {
@@ -66,6 +69,8 @@ const GRANT_FIELDS = [
   'capabilityId',
   'expiresAt',
   'ceilingDigest',
+  'requirementVersion',
+  'requirementDigest',
   'issuedAt',
   'signature',
 ] as const;
@@ -80,6 +85,8 @@ const REQUEST_FIELDS = [
   'capabilityId',
   'expiresAt',
   'ceilingDigest',
+  'requirementVersion',
+  'requirementDigest',
 ] as const;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -211,6 +218,8 @@ function readRequest(value: unknown): OneShotRequest {
     capabilityId: readId(value.capabilityId),
     expiresAt: readTimestamp(value.expiresAt),
     ceilingDigest: readDigest(value.ceilingDigest),
+    requirementVersion: readEpoch(value.requirementVersion),
+    requirementDigest: readDigest(value.requirementDigest),
   };
   return request;
 }
@@ -249,6 +258,11 @@ function readGrant(value: unknown): OneShotGrant | null {
     value.expiresAt < 0 ||
     typeof value.ceilingDigest !== 'string' ||
     !DIGEST_PATTERN.test(value.ceilingDigest) ||
+    typeof value.requirementVersion !== 'number' ||
+    !Number.isSafeInteger(value.requirementVersion) ||
+    value.requirementVersion < 0 ||
+    typeof value.requirementDigest !== 'string' ||
+    !DIGEST_PATTERN.test(value.requirementDigest) ||
     typeof value.issuedAt !== 'number' ||
     !Number.isSafeInteger(value.issuedAt) ||
     value.issuedAt < 0 ||
@@ -282,6 +296,8 @@ function canonicalContent(
     request.capabilityId,
     request.expiresAt,
     request.ceilingDigest,
+    request.requirementVersion,
+    request.requirementDigest,
     issuedAt,
   ]);
 }
@@ -300,7 +316,9 @@ function sameBinding(
     grant.snapshotDigest === current.snapshotDigest &&
     grant.capabilityId === current.capabilityId &&
     grant.expiresAt === current.expiresAt &&
-    grant.ceilingDigest === current.ceilingDigest
+    grant.ceilingDigest === current.ceilingDigest &&
+    grant.requirementVersion === current.requirementVersion &&
+    grant.requirementDigest === current.requirementDigest
   );
 }
 

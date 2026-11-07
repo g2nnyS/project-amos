@@ -340,7 +340,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
               >
             </label>
             <p class="mt-2 break-all font-mono text-[10px] text-muted-foreground">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
-            <p class="mt-1 break-all font-mono text-[10px] text-muted-foreground">credential: {{ governance.config.managed.apiKeyEnv ?? '未配置环境变量引用' }}</p>
+            <p class="mt-1 break-all font-mono text-[10px] text-muted-foreground">reviewer: {{ governance.config.managed.reviewer ?? '未配置' }} · jevConfigPath: {{ governance.config.managed.jevConfigPath ?? '未配置' }}</p>
           </div>
           <div class="rounded-md border border-border p-3">
             <p class="font-semibold">临时收紧</p>

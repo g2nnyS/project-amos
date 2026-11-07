@@ -1,5 +1,9 @@
+import type { SaveJevSettingsInput } from '../../../control-plane/contracts.ts'
+
 export type * from '../../../control-plane/contracts.ts'
+export type { JevProviderId, JevPublicConfig } from '../../../decision/config.ts'
 export type { ObservationReport, ObservationSourceReport } from '../../../control-plane/observations.ts'
+export type JevSettingsInput = SaveJevSettingsInput
 export type { ReviewRecord, ReviewQueue } from '../../../storage/audit-review.ts'
 
 export type ThemePreference = 'dark' | 'light' | 'system'

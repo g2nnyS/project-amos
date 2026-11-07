@@ -20,12 +20,10 @@ export const HOST_PROJECTION_VERSION = 1;
 const MAX_PROJECTION_BYTES = 1024 * 1024;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 export interface HostProjectionReview {
-  readonly endpoint: string;
-  readonly model: string;
-  readonly apiKeyEnv: string;
+  readonly reviewer: 'jev';
+  readonly jevConfigPath: string;
   readonly policy: ReviewerPolicy;
   readonly calibration: CalibrationEvidence;
   readonly ceilingDigest: string;
@@ -60,7 +58,7 @@ export interface HostProjection {
 
 export type HostProjectionLoad =
   | { readonly status: 'absent' }
-  | { readonly status: 'error' }
+  | { readonly status: 'error'; readonly code?: string }
   | { readonly status: 'ready'; readonly projection: HostProjection };
 
 export function readHostProjection(directory: string): HostProjectionLoad {
@@ -92,7 +90,15 @@ export function readHostProjection(directory: string): HostProjectionLoad {
   } catch {
     return { status: 'error' };
   }
-  const projection = validateProjection(value, workspace);
+  let projection: HostProjection | null;
+  try {
+    projection = validateProjection(value, workspace);
+  } catch (error) {
+    if (error instanceof LegacyReviewerError) {
+      return { status: 'error', code: 'reviewer_migration_required' };
+    }
+    return { status: 'error' };
+  }
   return projection === null
     ? { status: 'error' }
     : { status: 'ready', projection };
@@ -131,6 +137,10 @@ function validateProjection(value: unknown, workspace: string): HostProjection |
   const snapshotPath = resolve(workspace, activation.snapshotPath);
   if (!inside(workspace, snapshotPath)) return null;
 
+  if (hasLegacyReviewer(value.managed)) {
+    // A pre-Jev managed reviewer projection is an explicit migration stop.
+    throw new LegacyReviewerError();
+  }
   const managed = validateManaged(value.managed, workspace);
   if (managed === null) return null;
 
@@ -177,15 +187,14 @@ function validateManaged(value: unknown, workspace: string): HostProjectionManag
     if (!isRecord(value.review)) return null;
     const candidate = value.review;
     if (
-      typeof candidate.endpoint !== 'string' ||
-      typeof candidate.model !== 'string' ||
-      candidate.model.length === 0 ||
-      typeof candidate.apiKeyEnv !== 'string' ||
-      !ENV_NAME.test(candidate.apiKeyEnv) ||
+      candidate.reviewer !== 'jev' ||
+      typeof candidate.jevConfigPath !== 'string' ||
+      candidate.jevConfigPath.length === 0 ||
+      candidate.jevConfigPath.includes('\0') ||
+      !isAbsolute(candidate.jevConfigPath) ||
       typeof candidate.ceilingDigest !== 'string' ||
       !DIGEST.test(candidate.ceilingDigest) ||
       !isValidPolicy(candidate.policy) ||
-      candidate.policy.model !== candidate.model ||
       !isSafeInt(candidate.grantTtlMs) ||
       (candidate.grantTtlMs as number) <= 0 ||
       (candidate.grantTtlMs as number) > 60_000 ||
@@ -193,24 +202,9 @@ function validateManaged(value: unknown, workspace: string): HostProjectionManag
     ) {
       return null;
     }
-    try {
-      const url = new URL(candidate.endpoint);
-      if (
-        (url.protocol !== 'http:' && url.protocol !== 'https:') ||
-        url.username.length > 0 ||
-        url.password.length > 0 ||
-        url.search.length > 0 ||
-        url.hash.length > 0
-      ) {
-        return null;
-      }
-    } catch {
-      return null;
-    }
     review = Object.freeze({
-      endpoint: candidate.endpoint,
-      model: candidate.model,
-      apiKeyEnv: candidate.apiKeyEnv,
+      reviewer: 'jev',
+      jevConfigPath: candidate.jevConfigPath,
       policy: candidate.policy,
       calibration: candidate.calibration,
       ceilingDigest: candidate.ceilingDigest,
@@ -271,4 +265,25 @@ function inside(root: string, candidate: string): boolean {
   if (candidate === root) return true;
   const rel = relative(root, candidate);
   return rel.length > 0 && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+class LegacyReviewerError extends Error {
+  constructor() {
+    super('reviewer_migration_required');
+    this.name = 'LegacyReviewerError';
+  }
+}
+
+/**
+ * A managed reviewer projection written before the Jev migration carries the
+ * retired HTTP-reviewer fields. Detecting them by name keeps the stop explicit
+ * instead of relying on an "unknown field" rejection.
+ */
+function hasLegacyReviewer(managed: unknown): boolean {
+  if (!isRecord(managed)) return false;
+  const review = managed.review;
+  if (!isRecord(review)) return false;
+  return (
+    'endpoint' in review || 'model' in review || 'apiKeyEnv' in review
+  );
 }

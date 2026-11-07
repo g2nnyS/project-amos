@@ -2,15 +2,17 @@
 
 Status: **limited Harness-layer MVP implemented; general runtime enforcement and OS
 isolation remain unavailable.** The default adapters remain log-only; the Pi
-`managed.enabled` path is an explicit opt-in Harness-layer gate. This document
-separates guarantees implemented in the repository from the deployment architecture
+`managed.enabled` path is an explicit opt-in Harness-layer gate. The managed
+`confirm` reviewer is Jev (`review/jev-reviewer.ts`). This document separates
+guarantees implemented in the repository from the deployment architecture
 required before `deny` or `confirm` can be described as a general security boundary.
 
 ## 2026-11-05 limited Harness MVP
 
 - Pi `tool_call` is intercepted before the real tool runs; deterministic `deny`
   blocks, `confirm` stops for an independent HTTP reviewer and a single-use HMAC
-  grant, and `tool_result` records execution.
+  grant, and `tool_result` records execution. *(Superseded 2026-11-07: the managed
+  `confirm` reviewer is Jev; see the next section.)*
 - Execution and advisory injection consume the same verified activation snapshot.
   The console publishes a catalog-v2 artifact; the harness writes a same-UID
   `.pi/runtime.json` load report.
@@ -21,7 +23,65 @@ required before `deny` or `confirm` can be described as a general security bound
   tamper-proof audit. The runtime report is a same-UID observation, not remote
   attestation. OS isolation is explicitly out of scope for this MVP.
 - The reviewer is a local model plus a fixed deny surface; the synthetic
-  calibration set is not a security certification.
+  calibration set is not a security certification. *(Historical, 2026-11-05: the
+  independent local-model reviewer service was replaced by the Jev reviewer on
+  2026-11-07; the calibration set is still not a security certification.)*
+
+## 2026-11-07 Jev reviewer and requirement lifecycle
+
+- The managed `confirm` branch calls `review/jev-reviewer.ts`
+  (`createJevManagedReviewer`). That adapter reuses the `decision/` Jev provider
+  and `loadJevConfig` rules and adds digest, scope, policy, calibration and
+  deadline bindings before a grant is issued.
+- A pass requires: a user-captured requirement (`source: "user_message"`,
+  `actor: "user"`); matching frame and projection digests; egress allowed on both
+  the frame and the policy; a target inside the workspace and under
+  `declared_scope`; `requirementMatch: "match"`; `riskScore <= policy.maxRisk`;
+  `confidence >= policy.minConfidence`; model, `jev-questions/v2` question
+  version and `policyDigest` bound to the same policy; valid calibration bound to
+  that model, question version and policy digest; and an unexpired deadline.
+- One approval yields one one-use grant, bound to the action digest, snapshot,
+  session, epoch, capability, `requirementVersion` and `requirementDigest`. It
+  creates no allow rule. The harness re-reads the requirement before the effect
+  and stops with `requirement_changed` on any version or digest change. The audit
+  authorization record is written before the effect; a failed audit write stops
+  the action.
+- `mismatch` rejects. `partial`, `unclear`, `requiresReview`, over-threshold
+  risk, low confidence, timeout, abort, rate limit, refusal, invalid response,
+  network error, missing or mismatched calibration, and a projection binding
+  error all stop. None of them converts into per-request human approval.
+- `decision/requirement-registry.ts` persists the captured requirement per
+  project under `$XDG_STATE_HOME/amos-governance/requirement-registry/<projectId>.json` with
+  directory `0700`, file `0600`, atomic replace, and an `lstat` owner and mode
+  check. Only a direct user-channel capture (`actor: "user"`,
+  `capturedBy: "harness"`) creates or revises it; each capture increments the
+  version and invalidates earlier review results and unconsumed grants.
+  `conflict`, `revoked`, `expired`, `corrupt`, `owner_mismatch` and
+  `unavailable` all stop managed execution.
+
+### Boundary of the Jev reviewer
+
+- Jev cannot override a deterministic `deny`, including non-level-0 denies. A
+  stopped `confirm` is the only class it can approve, and only inside the
+  preapproved policy ceiling.
+- Jev cannot widen scope: not the writable roots, not `declared_scope`, not the
+  network policy, not the target, not the grant TTL, and not the rule set. A
+  target outside the workspace or outside `declared_scope` stops regardless of
+  model output.
+- Jev has no filesystem or network side-effect authority. It returns bounded
+  facts; trusted code issues and consumes the grant and the host performs the
+  single effect. Jev never executes, never writes a file, and never publishes
+  configuration.
+- Jev does not retain the requirement text or the model reply. The audit `review`
+  block carries only `model`, `questionVersion`, `policyDigest`,
+  `requirementDigest`, `actionDigest`, `snapshotDigest`, `risk`, `confidence`,
+  `resultCode`, `calibrationVersion`, `calibrationDigest`, `grantId` and
+  `grantNonce`; the authorization record also carries `requirementVersion` and
+  `requirementDigest`. Requirement text stays in the protected requirement
+  registry file; the model reply is not stored.
+- The audit record is an entry in a same-UID writable domain. It records what the
+  code wrote at that moment; it is not tamper-resistant, because a same-UID
+  process can still rewrite the journal, the registry file, or both.
 
 ## Threat model
 
@@ -113,8 +173,10 @@ text or declared scope.
 Implementation status: the frame type, Jev question set v2, digest binding, and
 combination table exist in `decision/`. The opt-in engineering workflow gate captures
 frames and uses them for its shell-assessment path; the separate security observer
-does not become an enforcement boundary through that integration. Runtime security
-enforcement remains Stage A `log-only`.
+does not become an enforcement boundary through that integration. The managed
+`confirm` branch calls the Jev reviewer (`review/jev-reviewer.ts`), which may issue
+one one-use grant for one stopped request inside the preapproved policy ceiling.
+Runtime security enforcement for ordinary adapters remains Stage A `log-only`.
 
 ## Snapshot provenance archives
 
@@ -155,9 +217,11 @@ The following remain open until a separate enforcement milestone:
   bind mounts, hard links, or check/use races.
 - Tamper-resistant audit. Appending JSONL is not an immutability or remote-retention
   guarantee.
-- Authenticated, one-time system authorization bound to the exact action, session,
-  snapshot/epoch and expiry, following independent Jev review of an eligible stopped
-  escalation. Human per-request approval is not the latest target; see decision 32.
+- One-time HMAC authorization bound to the exact action, session, snapshot/epoch,
+  requirement version and expiry. The managed path implements this for the
+  normalized tools it mediates; it is a same-UID Harness-layer gate without OS
+  isolation or complete mediation. Human per-request approval is not the latest
+  target; see decision 32.
 - A real OS sandbox or trusted mediator that performs side effects on the agent's
   behalf.
 
@@ -175,10 +239,10 @@ trust domain. Same-UID processes can still access its credentials and database.
 The target security shape is the Codex Approve for me trio, not a plugin mode
 and not a stronger claim than that product makes. A host sandbox stops a
 boundary crossing first. `on-request` means in-sandbox work proceeds and a
-crossing waits. A separate reviewer may approve or deny only that stopped
-confirm-class escalation. The reviewer cannot expand the writable root, enable
-network, weaken a protected path, or lift a `deny`. Level 0 denies are not
-eligible. Humans edit rules through the existing multi-dimensional table; the
+crossing waits. A separate reviewer (Jev on the current managed path) may approve
+or deny only that stopped confirm-class escalation. The reviewer cannot expand the
+writable root, enable network, weaken a protected path, or lift a `deny`. Level 0
+denies are not eligible. Humans edit rules through the existing multi-dimensional table; the
 agent cannot publish them. Engineering guardrails and advisory injection stay
 outside this trio.
 
@@ -190,9 +254,11 @@ Neither the GUI nor SQLite alone supplies isolation. The current YAML/JSON loade
 shared advisory seed and same-domain JSONL remain unchanged. The eleven implementation
 gaps and falsifiable acceptance gates are in [Gap Closure](product-gap-plan.md).
 
-This shape is not implemented. Current adapters remain log-only, and today's
-Jev path may only tighten. See `docs/security-shape.md` and decisions 21–23 in
-`docs/decisions.md`. Aligning the target does not pass the enforcement gate.
+This shape is not implemented. Ordinary adapters remain log-only; the managed
+path adds a Jev reviewer and a one-use grant without OS isolation, and the
+`decision/` sensor path may only tighten. See `docs/security-shape.md` and
+decisions 21–23 in `docs/decisions.md`. Aligning the target does not pass the
+enforcement gate.
 
 ## Required enforcement architecture
 
@@ -286,6 +352,8 @@ A probabilistic decision model such as Jev may supply typed semantic facts (inte
 sensitivity, reversibility, risk). It must not own policy or execute actions. The
 deterministic engine remains authoritative, the model may only tighten a verdict, and
 model failure or low confidence must fail closed when the policy requires an
-assessment. This implemented path is not the security auto-reviewer in
-`docs/security-shape.md`; do not extend it to approve a `confirm`. See
-`docs/jev-integration.md`.
+assessment. The `decision/` sensor path cannot approve a `confirm`; the managed
+`confirm` reviewer is `review/jev-reviewer.ts`, which approves at most one stopped
+request inside the preapproved policy ceiling. *(Historical, 2026-11-05: the
+`decision/` path was the only Jev integration, and extending it to approve a
+`confirm` was excluded.)* See `docs/jev-integration.md`.

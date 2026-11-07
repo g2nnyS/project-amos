@@ -7,6 +7,11 @@
   `feat/local-governance-console` 的 `control-plane/` 与 `web/`
 - 状态：**限定范围 MVP 完成**；默认 managed 仍关闭，安全敏感实现
   `pending-human-review`，不改变 G0/NO-GO。
+- 2026-11-07 更新：managed `confirm` 的语义 reviewer 迁移到 Jev
+  （`review/jev-reviewer.ts`），requirement 生命周期落
+  `decision/requirement-registry.ts`，旧 reviewer 配置改为停止式迁移。本轮只
+  完成受管路径的 reviewer 迁移与 requirement 生命周期，没有 OS 隔离、完整中介、
+  远端分支保护或同 UID 防篡改。
 
 ## 1. 本轮闭环
 
@@ -14,7 +19,7 @@
 浏览器登录 → 创建/选择项目 → 编辑/导入规则 → 校验 → 提案 → 人类批准并发布
 → 写入 .pi/activation.json（P1 快照）→ 真实 Pi 会话加载并报告版本
 → 同一快照动态注入 → tool_call 前确定性裁决
-→ deny 阻断 / confirm 独立模型 reviewer + 一次性授权后执行一次
+→ deny 阻断 / confirm Jev 语义 reviewer + 一次性授权后执行一次
 → tool_result 记录结果 → 控制台读取运行时加载报告与审计
 → 回滚创建新版本，后续会话加载新快照
 ```
@@ -48,9 +53,18 @@
   3. `deny` / 引擎错误：写授权+stopped 结果，原件不执行。
   4. `confirm`：构造最小有界投影（tool/operation/工作区相对 target/规则
      ID/digest；requirement 原文仅在显式 `requirementEgress: "allowed"`
-     和 review policy 允许时），调用独立 HTTP reviewer；approved 后签发并
-     立即消费一次性 HMAC grant，写 allow 并 fsync，再放行 Harness 执行
-     一次；denied/超时/失败/无校准/过期/重放均不执行。
+     和 review policy 允许时），调用 Jev 语义 reviewer
+     （`review/jev-reviewer.ts`）；通过条件全部由可信代码校验（requirement
+     来源与 digest、frame/投影 digest、两侧 egress、target 在工作区内且在
+     `declared_scope` 前缀内、`requirementMatch: "match"`、
+     `riskScore <= policy.maxRisk`、`confidence >= policy.minConfidence`、
+     model/questionVersion/policyDigest 与策略绑定、校准有效、deadline 未过）。
+     通过后签发并立即消费一次性 HMAC grant（绑定 action digest、snapshot、
+     session、epoch、capability、`requirementVersion`、`requirementDigest`），
+     执行前再读一次 requirement，版本或 digest 变化以 `requirement_changed` 停止，
+     写 allow 并 fsync，再放行 Harness 执行一次；mismatch、partial/unclear、
+     超阈值、超时、中止、限流、拒答、无效响应、网络错误、未校准、投影绑定
+     错误、grant 重放均不执行。
   5. `tool_result` 另写 result（executed/failed），不记录内容/命令。
 - 同一会话固定快照：执行 gate 与 advisory 注入使用同一个
   `ActivationRuntime`；新发布只由后续会话加载，不做运行中热切换。
@@ -84,7 +98,7 @@
 | `npm run typecheck` | exit 0（根 TS + `web` vue-tsc） |
 | `npm test` | exit 0；Node 与 Web 均无失败；1 项依赖外部 UID 的环境测试保持 skip |
 | `node web/e2e/smoke.mjs` | 全部浏览器检查 PASS；真实 headless Chromium、真实 CLI 服务、真实 YAML 下载/导入、回滚、CSP/控制台错误检查；证据 `/tmp/opencode/amos-governance-e2e-*/evidence.txt` |
-| `npm run probe:live` | 通过；真实本地 llama.cpp 模型 `gemma-4-e4b` + 真实 Pi AgentSession + 真实扩展 + 真实文件副作用 + 真实模型 reviewer；证据 `/tmp/opencode/amos-live-probe-*/evidence.json` |
+| `npm run probe:live` | 通过；真实本地 llama.cpp 模型 `gemma-4-e4b` + 真实 Pi AgentSession + 真实扩展 + 真实文件副作用 + 真实模型 reviewer；证据 `/tmp/opencode/amos-live-probe-*/evidence.json`（历史，2026-11-05：该探针的 reviewer 是旧本地模型 reviewer 服务，2026-11-07 起由 Jev 取代，见 §2.2） |
 | `git diff --check` / `git diff --cached --check` | exit 0 |
 
 ### 2.1 浏览器闭环（AC-12）
@@ -104,9 +118,15 @@
 
 浏览器运行时的 runtime report 由测试按真实文件协议写入，用于验证控制台
 读取/展示；**报告的生产者**由 `dist/managed/pi-harness.test.js` 与
-`npm run probe:live` 的真实 Harness 证据覆盖。
+`dist/managed/harness-requirement.test.js` 的真实 Harness 证据覆盖；
+`npm run probe:live` 是 2026-11-05 的历史证据（见 §2.2）。
 
-### 2.2 真实模型与自动审查
+### 2.2 真实模型与自动审查（历史，2026-11-05）
+
+> 历史：以下结果由旧的独立 reviewer 服务产生，2026-11-07 起 managed `confirm`
+> 的语义 reviewer 是 Jev（`review/jev-reviewer.ts`），该服务的
+> `endpoint`/`model`/`apiKeyEnv` 配置已退役。本节保留为当时证据；当前证据见
+> §2.3。
 
 `npm run probe:live` 使用本机已授权的 OpenAI-compatible llama.cpp 端点
 （默认 `http://127.0.0.1:8080/v1`，模型 `gemma-4-e4b`），不向外部 provider
@@ -127,6 +147,28 @@
   `GET /api/projects/:id/runtime` 也读到 `loaded` 且 digest 匹配；
   system prompt 注入包含同一 activationDigest；
   managed journal 中 confirm 只有 1 条 allow、deny 记录存在。
+
+### 2.3 当前证据：Jev reviewer 与 requirement 生命周期（2026-11-07）
+
+- `managed/pi-harness.test.ts`：真实 Pi 会话 + 真实扩展 + 真实 write 工具 +
+  loopback Jev 协议应答 + 真实文件副作用；confirm 经 Jev reviewer 批准后只写
+  一次，deny 目标不存在，审计先于副作用。
+- `managed/harness-requirement.test.ts`：requirement 缺失/非用户来源/版本或
+  digest 变化/撤销/过期/损坏/owner 不匹配/epoch 变化各自以对应
+  `requirement_*` 码停止；grant 绑定 `requirementVersion` 与
+  `requirementDigest`；审计写入失败停止。
+- `review/jev-reviewer.test.ts`：逐条通过条件与全部停止码（mismatch、
+  partial/unclear/requiresReview、超阈值、超时、中止、限流、拒答、无效响应、
+  网络错误、未校准、投影绑定错误），以及审计 `review` 块字段。
+- `adapters/opencode-v2/managed.test.ts`：OpenCode managed 路径消费同一投影，
+  含旧配置迁移停止（`amos_managed_reviewer_migration_required`）与 Jev 配置
+  不可用阻断（`amos_managed_reviewer_unavailable`）。
+- `decision/requirement-registry.test.ts`：版本递增与 digest 重算、冲突、
+  撤销、TTL 过期、损坏、owner/uid 校验、目录 `0700`/文件 `0600`、原子写。
+
+未运行：hosted Jev 与本地 llama live probe。它们需要人工提供 Jev 凭据（或
+`decision/jev.local.json` 本地字面密钥）与本机端点，本轮没有这些输入，因此不
+声称 live 模型证据。
 
 ## 3. 配置与启动
 
@@ -165,9 +207,8 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
     "auditPath": "/abs/audit/managed.jsonl",
     "requirementEgress": "denied",
     "review": {
-      "endpoint": "http://127.0.0.1:<port>/review",
-      "model": "<reviewer-model-id>",
-      "apiKeyEnv": "AMOS_REVIEW_KEY",
+      "reviewer": "jev",
+      "jevConfigPath": "/abs/decision/jev.local.json",
       "policy": { /* ReviewerPolicy */ },
       "calibration": { /* CalibrationEvidence | null */ },
       "ceilingDigest": "sha256:<64 hex>",
@@ -179,7 +220,13 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
 
 - `requirementEgress` 缺省 `denied`；只有显式 `allowed` 才把用户要求原文
   放进 review projection。
-- `review` 缺省时 confirm 一律阻断，不会弹人工批准继续。
+- `review.reviewer` 只有 `jev`；`jevConfigPath` 必须是绝对路径，凭据由该文件
+  的 `{ "env": ... }` 或 `decision/jev.local.json`（当前用户、`0600`）提供。
+  旧形状 `endpoint`/`model`/`apiKeyEnv` 不再可用：读到旧投影或旧手写配置时
+  managed 状态为 error，工具调用以
+  `amos_managed_reviewer_migration_required` 阻断；Jev 配置文件不可读或无效时
+  以 `amos_managed_reviewer_unavailable` 阻断。
+- `review` 缺省或为 `null` 时 confirm 一律阻断，不会弹人工批准继续。
 - 只有 read/write/edit/ls/find/grep 被声明为 enforced；bash/powershell/
   自定义工具在 managed 模式阻断（覆盖率缺口），不会静默放行。
 - 宿主实际接收后才写 runtime report；报告是 same-UID 观察，不是远程回执。
@@ -188,14 +235,18 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
 
 ```bash
 npm run build
+AMOS_LIVE_JEV_CONFIG=/path/to/jev.local.json \
+AMOS_LIVE_REVIEW_POLICY='{"reviewer":"jev","policy":{...},"calibration":{...},"ceilingDigest":"sha256:..."}' \
 AMOS_LOCAL_LLAMA_URL=http://127.0.0.1:8080/v1 \
 AMOS_LOCAL_LLAMA_KEY_FILE=/path/to/llama-server-api-key \
 AMOS_LOCAL_LLAMA_MODEL=gemma-4-e4b \
 npm run probe:live
 ```
 
-缺少本地模型/密钥时脚本以固定错误退出，不会伪造模型响应。外部 provider
-凭据不是本探针的前提。
+本地 llama 端点只服务 Pi 会话模型；reviewer 是 Jev，读 `AMOS_LIVE_JEV_CONFIG`
+（默认 `~/.config/amos/jev.local.json`）。缺少 Jev 配置、review policy、本地
+端点或密钥时脚本打印固定 `SKIPPED` 码并 exit 0，不会伪造模型响应。外部 provider
+凭据不是本探针的前提；本轮没有这些输入，因此未运行。
 
 ## 4. 前端/后端/核心解耦
 
@@ -215,7 +266,8 @@ npm run probe:live
 - 独立 OS 身份、挂载域、bwrap/cgroup、内核沙箱、全副作用中介；
 - 同 UID 进程间的防篡改、外部审计锚定、远程签名/密钥轮换；
 - 完整自动 rollout、临时收紧持久化、远端 CI 接纳平台；
-- OpenCode 受管拦截（保持默认 log-only，接口兼容）；
+- OpenCode 的 OS 级隔离（其显式 managed 路径已接入同一投影与 Jev reviewer；
+  普通 OpenCode 仍默认 log-only，接口兼容）；
 - 运行中热切换快照（本轮会话固定快照；新发布供后续会话加载）；
 - 多租户、跨机器密钥管理、通用插件市场。
 
@@ -227,9 +279,15 @@ npm run probe:live
 - managed 默认关闭；启用后只覆盖已接管的 Harness 工具入口。获准 Shell
   内部副作用、绕过 Harness 的执行、同 UID 修改配置/审计不在保证内。
 - Bash/PowerShell/自定义工具在 managed 模式被阻断，不提供 shell 中介。
-- 审计与 Agent 同 UID 写域；append-only/0600 不是防篡改保证。
-- reviewer 是本地模型 + 固定 deny 面；8 个合成校准场景不是安全认证，
-  也不代表对所有任务/模型的泛化。真实外部 provider 校准未运行。
+- 审计与 Agent 同 UID 写域；append-only/0600 不是防篡改保证。requirement 原文
+  只落在受保护的 `$XDG_STATE_HOME/amos-governance/requirement-registry/<projectId>.json`，同属
+  同 UID 可写域。
+- Jev reviewer 不能覆盖确定性 deny、不能扩大 scope、没有文件系统/网络副作用
+  权限，也不保存 requirement 原文与模型正文；单次通过只换一个一次性 grant。
+  *（历史，2026-11-05：reviewer 是本地模型 + 固定 deny 面，8 个合成校准场景
+  不是安全认证；该 reviewer 服务已于 2026-11-07 被 Jev 取代。）*
+- hosted Jev 与本地 llama live probe 本轮未运行：需要人工提供 Jev 凭据（或
+  `decision/jev.local.json` 本地字面密钥）与本机端点。
 - 来源认证仍未实现：快照 verify 是结构/身份一致性检查，不是发布者签名；
   控制台 API 依赖本机凭据与 loopback 边界。
 - 发布写 artifact 失败不会回滚数据库版本；控制台显示 `never`/`stale`，

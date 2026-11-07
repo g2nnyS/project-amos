@@ -7,6 +7,7 @@ import type {
 } from '../activation/tighten.ts';
 import type { PromotionThresholds, ProbeRun, RolloutStage } from '../rollout/contracts.ts';
 import type { CalibrationEvidence, ReviewerPolicy } from '../review/calibration.ts';
+import type { JevPublicConfig } from '../decision/config.ts';
 
 /**
  * Public domain contract for the local governance product.
@@ -306,11 +307,19 @@ export interface ProjectWorkflowGateConfig {
 /**
  * Non-secret managed-host settings. Credentials are represented only by an
  * environment-variable name; a literal key is rejected on write.
+ *
+ * `reviewer` is the discriminator for the managed review semantics. `'jev'`
+ * selects the Jev provider that reads `jevConfigPath`; `null` with any legacy
+ * reviewer field present is the stopped migration state. The legacy
+ * `reviewEndpoint`/`reviewModel`/`apiKeyEnv` fields stay stored so the
+ * migration gate can recognize an old configuration, and are never projected.
  */
 export interface ProjectManagedConfig {
   readonly enabled: boolean;
   readonly requirementEgress: 'allowed' | 'denied';
   readonly grantTtlMs: number;
+  readonly reviewer: 'jev' | null;
+  readonly jevConfigPath: string | null;
   readonly reviewEndpoint: string | null;
   readonly reviewModel: string | null;
   readonly apiKeyEnv: string | null;
@@ -334,6 +343,21 @@ export interface ProjectRolloutConfig {
   readonly thresholds: PromotionThresholds | null;
   readonly thresholdsByRule: Readonly<Record<string, PromotionThresholds>>;
   readonly ruleStates: Readonly<Record<string, RolloutStage>>;
+}
+
+export interface JevSettingsView {
+  readonly config: JevPublicConfig | null;
+  readonly hasApiKey: boolean;
+}
+
+export interface SaveJevSettingsInput extends JevPublicConfig {
+  /** Empty or omitted retains the existing credential. */
+  readonly apiKey?: string;
+}
+
+export interface JevSettingsTestResult {
+  readonly ok: true;
+  readonly model: string;
 }
 
 /** Full non-secret project configuration owned by the governance service. */
