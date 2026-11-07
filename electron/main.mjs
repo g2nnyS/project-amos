@@ -4,24 +4,26 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
-const consoleUrl = process.env.AMOS_CONSOLE_URL ?? 'http://127.0.0.1:4310'
 const nodeBinary = process.env.AMOS_NODE_PATH ?? process.env.npm_node_execpath ?? 'node'
 let service
+let consoleUrl
 
 function startService() {
-  service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve'], {
+  service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve', '--port', '0'], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
 
   return new Promise((resolve, reject) => {
+    let output = ''
     const timer = setTimeout(() => reject(new Error('control plane startup timeout')), 15000)
     service.stdout.on('data', (chunk) => {
-      const output = String(chunk)
-      if (output.includes('本地控制台:')) {
+      output += String(chunk)
+      const match = output.match(/本地控制台: (http:\/\/127\.0\.0\.1:\d+)/)
+      if (match) {
         clearTimeout(timer)
-        resolve()
+        resolve(match[1])
       }
     })
     service.stderr.on('data', (chunk) => process.stderr.write(`[amos] ${chunk}`))
@@ -30,16 +32,10 @@ function startService() {
       reject(error)
     })
     service.on('exit', (code) => {
-      if (code !== 0) {
-        clearTimeout(timer)
-        reject(new Error(`control plane exited with code ${code ?? 'unknown'}`))
-      }
+      clearTimeout(timer)
+      reject(new Error(`control plane exited with code ${code ?? 'unknown'}`))
     })
   })
-}
-
-function stopService() {
-  if (service && !service.killed) service.kill()
 }
 
 function createWindow() {
@@ -58,13 +54,15 @@ function createWindow() {
     },
   })
 
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`${consoleUrl}/`)) event.preventDefault()
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
   void window.loadURL(consoleUrl)
-
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     void dialog.showMessageBox(window, {
       type: 'error',
@@ -76,9 +74,10 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   try {
-    await startService()
+    consoleUrl = await startService()
     createWindow()
   } catch (error) {
+    if (service && !service.killed) service.kill()
     await dialog.showMessageBox({
       type: 'error',
       title: 'Amos 控制台启动失败',
@@ -92,7 +91,9 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', stopService)
+app.on('before-quit', () => {
+  if (service && !service.killed) service.kill()
+})
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

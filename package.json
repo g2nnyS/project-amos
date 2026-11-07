@@ -14,7 +14,6 @@
     "console:init": "npm run build && node dist/control-plane/cli.js init",
     "console:serve": "node dist/control-plane/cli.js serve",
     "electron": "npm run build && electron electron/main.mjs",
-    "electron:dev": "npm run build --workspace @amos/console && AMOS_ELECTRON_DEV=1 electron electron/main.mjs",
     "e2e:smoke": "npm run build && node web/e2e/smoke.mjs",
     "probe:live": "node dist/managed/live-probe.js",
     "check:gate": "npm run build && node dist/check/cli.js"
