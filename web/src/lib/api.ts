@@ -1,4 +1,4 @@
-import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, HarnessRuntimeStatus, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfig, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
+import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfig, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status?: number) { super(message); this.name = 'ApiError' }
@@ -81,6 +81,9 @@ export class ApiClient {
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
   config(id: string): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`) }
   updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
+  jevSettings(id: string): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`) }
+  saveJevSettings(id: string, input: JevSettingsInput): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`, 'POST', input) }
+  testJevSettings(id: string): Promise<{ ok: true; model: string }> { return this.json(`/api/projects/${pathId(id)}/jev/test`, 'POST', {}) }
   tightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`) }
   applyTightening(id: string, input: { templateId: string; ttlMs: number }): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`, 'POST', input) }
   expireTightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten/expire`, 'POST', {}) }

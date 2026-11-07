@@ -28,8 +28,9 @@ What it does:
 - Launches headless Chromium with a fresh profile and drives the UI through the
   DevTools pipe protocol. It does not inject stores, mock `/api/*`, reuse an
   existing database, or print tokens.
-- Covers: human login, project creation, repository-seed candidate, a candidate
-  field edit, server validation, immutable proposal submission, approval and
+- Covers: human login, project creation, Jev settings save/reload/connection test
+  against a local synthetic System One provider (including `0600` credential-file
+  verification), repository-seed candidate, a candidate field edit, server validation, immutable proposal submission, approval and
   publication, version YAML/JSON download verification, rollback proposal to a
   second published version, per-project version/proposal fencing, logout with
   server-session invalidation, relogin, dark/light preference, 390px mobile

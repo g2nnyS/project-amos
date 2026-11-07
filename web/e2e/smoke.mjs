@@ -17,7 +17,8 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -56,6 +57,7 @@ const evidence = {
 }
 
 let server
+let provider
 let chrome
 let session
 let token
@@ -69,6 +71,28 @@ const visible = (selector) =>
   `Array.from(document.querySelectorAll(${q(selector)})).some(e=>e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none')`
 
 try {
+  const providerRequests = []
+  provider = createServer((req, res) => {
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      providerRequests.push({
+        authorized: req.headers.authorization === 'Bearer e2e-synthetic-jev-key',
+        connectionTest: body.includes('amos_connection_test'),
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ model: 'typesafe/jev-1.14', answers: { connection: 'ok' } }))
+    })
+  })
+  await new Promise((resolve, reject) => {
+    provider.once('error', reject)
+    provider.listen(0, '127.0.0.1', resolve)
+  })
+  const providerAddress = provider.address()
+  assert.ok(providerAddress && typeof providerAddress === 'object')
+  const providerUrl = `http://127.0.0.1:${providerAddress.port}`
+
   const { startServe } = await import(cliModule)
   const synthetic = {
     human: 'e2e-human-synthetic-token-0123456789abcdef',
@@ -278,6 +302,33 @@ try {
   await check('create project through the shell dialog', async () => {
     await createProject(projectOne, workspace)
     await waitFor(`document.body.innerText.includes(${q(projectOne)})`)
+  })
+
+  await check('Jev settings save, reload and test through the browser', async () => {
+    await nav('设置')
+    await waitFor(`${visible('form')} && document.body.innerText.includes('Jev 应用内设置')`)
+    await setByLabel('Base URL', providerUrl)
+    await setByLabel('默认模型', 'typesafe/jev-1.14')
+    await setByLabel('API key', 'e2e-synthetic-jev-key')
+    await click('button', '保存配置')
+    await waitFor(`document.body.innerText.includes('Jev 配置已保存。')`)
+    assert.equal(await evaluate(`document.querySelector('input[type=password]')?.value`), '')
+
+    const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(projectId, 'active project missing')
+    const configPath = path.join(dataDir, 'jev', projectId, 'jev.local.json')
+    const saved = JSON.parse(await readFile(configPath, 'utf8'))
+    assert.equal(saved.apiKey, 'e2e-synthetic-jev-key')
+    if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600)
+
+    await nav('项目边界')
+    await nav('设置')
+    await waitFor(`document.body.innerText.includes('已保存 API key；留空将保留现有密钥。')`)
+    await click('button', '测试已保存配置')
+    await waitFor(`document.body.innerText.includes('Jev 连接成功，模型：typesafe/jev-1.14。')`)
+    assert.deepEqual(providerRequests, [{ authorized: true, connectionTest: true }])
+    assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
+    await screenshot('desktop-jev-settings')
   })
 
   await check('seed candidate, add a project rule and validate on the server', async () => {
@@ -603,6 +654,7 @@ try {
     if (chrome.exitCode === null && chrome.signalCode === null) { try { chrome.kill('SIGKILL'); await exited } catch {} }
   }
   try { await server?.close() } catch {}
+  if (provider) await new Promise((resolve) => provider.close(() => resolve())).catch(() => {})
   // Remove synthetic credentials and verified download contents from the temp run.
   await rm(dataDir, { recursive: true, force: true }).catch(() => {})
   await rm(downloadDir, { recursive: true, force: true }).catch(() => {})

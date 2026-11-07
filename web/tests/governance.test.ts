@@ -21,6 +21,31 @@ test('login bootstraps CSRF then uses rotated token on same-origin mutations', a
   assert.equal((calls[2].init?.headers as Record<string, string>)['Content-Type'], 'application/json')
 })
 
+test('Jev settings use project routes, CSRF mutations and public response contracts', async () => {
+  const calls: Array<{ path: string; init?: RequestInit }> = []
+  const config = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api', defaultModel: 'model-a', models: ['model-a'], timeoutMs: 8000, assessmentRequired: true, policy: { reviewRisk: 0.6, denyRisk: 0.9, minConfidence: 0.6 }, allowCredentialEgress: false }
+  const view = { config, hasApiKey: true }, tested = { ok: true as const, model: 'model-a' }
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path: String(path), init })
+    if (String(path) === '/api/session') return json(human)
+    if (String(path) === '/api/projects/p%2Fj/jev/test') return json(tested)
+    if (String(path) === '/api/projects/p%2Fj/jev') return json(view)
+    throw new Error('unexpected')
+  })
+  await client.session()
+  assert.deepEqual(await client.jevSettings('p/j'), view)
+  const input = { ...config, defaultModel: 'model-b', models: ['model-a', 'model-b'], apiKey: 'new-secret' }
+  assert.deepEqual(await client.saveJevSettings('p/j', input), view)
+  assert.deepEqual(await client.testJevSettings('p/j'), tested)
+  assert.deepEqual(calls.map(c => [c.path, c.init?.method]), [
+    ['/api/session', 'GET'], ['/api/projects/p%2Fj/jev', 'GET'],
+    ['/api/projects/p%2Fj/jev', 'POST'], ['/api/projects/p%2Fj/jev/test', 'POST']
+  ])
+  assert.equal(calls[2].init?.body, JSON.stringify(input))
+  assert.equal(calls[3].init?.body, '{}')
+  for (const call of calls.slice(2)) assert.equal((call.init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
+})
+
 test('HTTP, protocol and network errors reject without disclosing response contents', async () => {
   const client = new ApiClient(async () => new Response('secret hostile text', { status: 403 }))
   await assert.rejects(client.projects(), (e: unknown) => e instanceof ApiError && e.code === 'forbidden' && !e.message.includes('secret'))
