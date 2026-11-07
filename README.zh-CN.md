@@ -10,11 +10,6 @@
 </p>
 
 <p align="center">
-  <code>Harness 层 MVP</code> · Vue 治理控制台 · Pi 受管硬门（显式启用） · Stage A 默认适配器<br>
-  <strong>端到端闭环已交付：真实 Vue 控制台发布 P1 catalog-v2 快照，Pi <code>managed.enabled</code> 执行工具前 <code>deny</code>/<code>confirm</code>/<code>allow</code> 裁决、独立 reviewer + 一次性 HMAC 授权与动态 advisory 注入；默认适配器保持 log-only，OS 隔离不在本 MVP 范围。</strong>
-</p>
-
-<p align="center">
   <a href="README.md">English</a> · <strong>中文</strong>
 </p>
 
@@ -28,9 +23,17 @@
 
 ---
 
+## 目前到什么阶段了？
+
+`Harness 层 MVP` · Vue 治理控制台 · Pi 受管硬门（显式启用） · Stage A 默认适配器
+
+**端到端闭环已交付：真实 Vue 控制台发布 P1 catalog-v2 快照，Pi `managed.enabled` 执行工具前 `deny`/`confirm`/`allow` 裁决、Jev 语义 reviewer + 一次性 HMAC 授权与动态 advisory 注入；默认适配器保持 log-only，OS 隔离不在本 MVP 范围。**
+
+---
+
 ## 当前产品范围
 
-Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1 项目快照，真实 Pi 会话用同一快照执行拦截与 advisory 注入，工具执行前完成 `deny`/`confirm`/`allow` 裁决；`confirm` 由独立 reviewer 审查并通过一次性授权后执行一次。默认适配器仍为 log-only，managed 需显式启用，且不是 OS 沙箱。详见[MVP 交付](docs/mvp-delivery.md)、[产品范围](docs/product-design.md)和[实现状态](docs/product-gap-plan.md)。
+Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1 项目快照，真实 Pi 会话用同一快照执行拦截与 advisory 注入，工具执行前完成 `deny`/`confirm`/`allow` 裁决；`confirm` 由 Jev 语义 reviewer 审查并通过一次性授权后执行一次。默认适配器仍为 log-only，managed 需显式启用，且不是 OS 沙箱。详见[MVP 交付](docs/mvp-delivery.md)、[产品范围](docs/product-design.md)和[实现状态](docs/product-gap-plan.md)。
 
 ---
 
@@ -46,7 +49,7 @@ Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动�
    ▼
 工具调用事件 (read/write/edit/ls/find/grep)
    ├─ deny     → 执行前直接阻断 + 写入审计记录
-   ├─ confirm  → 独立本地模型 reviewer 审查 ──► 一次性 HMAC grant ──► 放行执行一次
+   ├─ confirm  → Jev 语义 reviewer 审查 ──► 一次性 HMAC grant ──► 放行执行一次
    └─ allow    → 放行执行 + tool_result 审计记录 & 路径/任务级 advisory 附加
 
 [2] 默认 log-only 适配器路径（OpenCode V2 & 默认 Pi）
@@ -73,8 +76,8 @@ Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动�
 - **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode V2 没有真正的 settle 阻断点，因此其完成审查明确保持 advisory。
 - **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
 - **P1 项目规则目录与发布**：把仓库 YAML 规则和 guidance seed 导入版本化目录，按项目编译执行与 advisory 投影，并由控制台发布 catalog-v2 产物；Pi managed 路径直接消费同一产物完成执行前拦截与动态注入。
-- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；`deny` 在执行前阻断，`confirm` 先停住并交有界独立模型审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt 并在工具结果附加路径/任务级指导。已通过真实本地模型、真实 Pi 会话、真实 reviewer 与真实文件副作用的 live probe 验证。不是 OS 沙箱，默认仍 log-only。
-- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；独立 reviewer 只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成端到端闭环。Pi managed 已接入该 review/grant 路径，OpenCode 仍 log-only；OS 隔离不在本轮范围。
+- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；`deny` 在执行前阻断，`confirm` 先停住并交有界投影的 Jev 语义 reviewer 审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt 并在工具结果附加路径/任务级指导。已由 `managed/pi-harness.test.ts`（真实 Pi 会话 + 真实扩展 + 真实 write 工具 + loopback Jev 协议应答 + 真实文件副作用）与 `managed/harness-requirement.test.ts` 验证；2026-11-05 的 live probe 用的是已退役的本地 reviewer 服务。不是 OS 沙箱，默认仍 log-only。
+- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；Jev reviewer（`review/jev-reviewer.ts`）只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成端到端闭环。Pi 与 OpenCode 的 managed 路径都接入该 review/grant 链路，普通适配器仍 log-only；OS 隔离不在本轮范围。
 - **Vue 治理控制台与 SQLite API**：提供登录、项目创建/切换、规则编辑与 YAML 导入导出、校验、不可变提案、人工审批/发布、版本列表、回滚新版本、审计与运行期状态观察。SQLite 单主存储，发布事务原子编译 catalog-v2 并写出 `.pi/activation.json`；真实 Chromium 端到端测试已覆盖登录→发布→YAML 导出/导入→runtime 状态→回滚全链路。宿主回执为同 UID 本地 `.pi/runtime.json` 报告，非跨机器远程证明。
 - **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
@@ -83,11 +86,11 @@ Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动�
 
 ### 当前限制
 
-- Pi/OpenCode 默认适配器仍是 Stage A log-only；Pi `managed.enabled` 是显式 opt-in 的 Harness 门，OpenCode 受管拦截未实现。
+- Pi/OpenCode 默认适配器仍是 Stage A log-only；Pi `managed.enabled` 是显式 opt-in 的 Harness 门，OpenCode 的显式 managed 路径读取同一投影，普通适配器仍 log-only。
 - `managed` 只覆盖归一化 `read/write/edit/ls/find/grep`；Shell、PowerShell、自定义工具、MCP、子进程、绕过路径以及获准 Shell 内部副作用不在保证内。
 - **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介、防篡改审计）本轮不做，不是阻塞项**，不得宣称已具备。
 - 来源认证未实现；快照 verify 是结构/身份一致性检查，不是签名；控制台令牌与 runtime 报告都是同 UID 本地观察。
-- live reviewer 是本地模型 + 合成校准集，不是安全认证；未使用外部 provider 凭据/出境。
+- reviewer 是 Jev，通过本地 Jev 配置文件提供；校准集不是安全认证。本轮未运行 hosted Jev 或本地 llama live probe，需要人工提供凭据与本机端点。*（历史，2026-11-05：reviewer 是独立服务后的本地模型，已于 2026-11-07 被 Jev 取代。）*
 - 完整 rollout、临时收紧持久化、远端 CI 接纳门、跨机器生效回执未实现。
 - SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
 - `strict/`、`autonomy/` 是 dev 线保留的本地实验库，不是本 MVP 受管路径。

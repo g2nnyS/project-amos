@@ -2,7 +2,9 @@
 
 状态：**目标设计，2026-11-02 修订；不是已实现能力清单。** 本轮只更新设计和文档，不迁移配置、不启用安全强制执行。当前实现与十一项差距的证据、实施顺序和验收见 [差距闭环](product-gap-plan.md)。安全运行期仍为 **NO-GO**。
 
-> **2026-11-05 实现补充**：限定范围 Harness 层 MVP 已交付并验证：Vue 控制台发布 P1 项目快照，真实 Pi `managed` 会话消费同一快照执行 deny/confirm/allow，confirm 经独立 reviewer + 一次性授权，advisory 同源注入，并写 runtime 报告供控制台读取。它不是 OS 沙箱，默认仍 log-only；完整范围与证据见 [MVP 交付](mvp-delivery.md)。
+> **2026-11-05 实现补充**：限定范围 Harness 层 MVP 已交付并验证：Vue 控制台发布 P1 项目快照，真实 Pi `managed` 会话消费同一快照执行 deny/confirm/allow，confirm 经独立 reviewer + 一次性授权，advisory 同源注入，并写 runtime 报告供控制台读取。它不是 OS 沙箱，默认仍 log-only；完整范围与证据见 [MVP 交付](mvp-delivery.md)。（历史：该条描述 2026-11-05 状态，confirm 的 reviewer 已于 2026-11-07 迁移到 Jev，见下条。）
+
+> **2026-11-07 实现补充**：受管 `confirm` 的语义 reviewer 是 Jev（`review/jev-reviewer.ts`），不再有独立 HTTP reviewer 服务；requirement 生命周期落 `decision/requirement-registry.ts`（版本化、受保护状态文件、新版本使旧审查与未消费 grant 失效）；reviewer 配置改为停止式迁移（旧 `endpoint`/`model`/`apiKeyEnv` 形状返回 `reviewer_migration_required`，不隐式放行）。安全运行期仍为 **NO-GO**：普通插件保持 Stage A log-only，本轮没有 OS 隔离、完整中介、远端分支保护或同 UID 防篡改。
 
 ## 1. 产品承诺与边界
 
@@ -24,7 +26,7 @@
 2. 人确认初始配置；服务验证、保存不可变配置版本，并编译该项目的激活快照。检测结果不能冒充批准。
 3. 宿主启动受管会话，验证快照来源及宿主能力；显示 `managed`、快照版本、有效规则和覆盖限制。普通插件会话仍显示 `observer` / `guardrail-only`，不冒充受管会话。
 4. 模型在工作区内工作。所有受管执行入口先处理结构化动作；可执行规则全部评估，规范按任务动态注入。
-5. 无硬拒绝的 confirm 类请求先停止，再交独立 Jev 安全审查角色；失败保持停止。重试由系统按有界策略重新校验和审查，不要求人逐次授权，不可绕过拒绝或反复尝试。
+5. 无硬拒绝的 confirm 类请求先停止，再交 Jev 安全审查角色（独立于执行 Agent，当前实现 `review/jev-reviewer.ts`）；失败保持停止。重试由系统按有界策略重新校验和审查，不要求人逐次授权，不可绕过拒绝或反复尝试。
 6. Agent 可以提案。可信发布器只自动接受预授权范围内、可确定证明的临时收紧；放宽、删除、降级转人工。GUI 展示生效版本，不以“已保存草稿”冒充“已激活”。
 
 ## 3. 配置与信任架构
@@ -41,7 +43,7 @@ Agent → 受限提案 API ─────────────────�
             结构化动作 → 确定性评估                 同一快照的 narrative 投影
                deny / confirm / log                     路由、去重、预算
                          │                                     │
-                已停止的 confirm → 独立审查者                   模型上下文
+                已停止的 confirm → Jev 安全审查者               模型上下文
                          │
                单次授权核验 → 受限执行器
                          │
@@ -123,8 +125,8 @@ Aₑ = mandatory(B) ∪ approvedSelection(L, P) ∪ Tₑ
 1. 受信宿主构造完整动作信封；Agent 提交的 `approved: true`、项目身份或规则版本没有认证效力。现有引擎只接收 `{tool, operation, target}`；会话身份、执行能力和审批信息在外层绑定，不能偷偷塞进严格的旧 action。
 2. 宿主先拒绝未知执行器、结构错误、受保护路径及不可升级的操作。已识别动作才进入确定性规则评估；封闭 Shell 护栏继续运行，未知语法不变成 allow。
 3. 任一确定性 `deny` 都停止，**包括非 0 层 deny**；没有安全审查席位。`confirm` 或可升级的沙箱越界先停止，产生一个请求。
-4. 安全审查者仅判断这个已停止请求。人侧预先批准的宿主“可升级上限”决定哪些例外能被请求；没有相应受限执行器时，不给审查者虚构一个执行能力。
-5. 审查通过后，宿主消费绑定动作摘要、快照/epoch、session、有效期和 nonce 的一次授权，并在执行前重检。拒绝、超时、拒答、低置信度、校验错误、审计不可用均不执行。
+4. 安全审查者（当前实现是 Jev，`review/jev-reviewer.ts`）仅判断这个已停止请求。人侧预先批准的宿主“可升级上限”决定哪些例外能被请求；没有相应受限执行器时，不给审查者虚构一个执行能力。审查者不能覆盖确定性 deny、不能扩大 scope，也没有文件系统/网络副作用权限。
+5. 审查通过后，宿主消费绑定动作摘要、快照/epoch、session、requirement 版本与 digest、有效期和 nonce 的一次授权，并在执行前重检；版本或 digest 变化、拒绝、超时、拒答、低置信度、校验错误、审计不可用均不执行。单次通过只换一个一次性 grant，不产生 allow 规则。
 
 默认工作区可写、网络关闭。批准**一次**允许范围内的外部文件操作或网络请求，不等于修改永久 writable roots 或全局开启网络。硬拒绝的凭据/策略/审计路径没有例外。首个执行器不提供任意“脱离沙箱运行 Shell”；绑定一段命令文本并不能证明其子进程只做一个副作用，无法限制的升级保持不支持。
 
@@ -183,6 +185,8 @@ Python/Rust/TypeScript 语义不靠路径、正则或模型猜测。受保护 ru
 
 - 审计写入者在 Agent 可写域之外，Agent 仅查询授权的脱敏视图。可以使用独立的受保护审计 SQLite；配置数据库和审计数据的保留/备份职责分别记录，不给浏览器和 Agent 任意写入口。
 - 记录项目/session、可信通道身份、规则/激活/epoch、动作的不可替换绑定、shadow 与实际裁决、审批状态、执行回执、检测/发布/过期、注入接受和遗漏。审计不写文件内容、命令原文、URL 秘密值、用户要求原文或原始敌意 payload。
+- 受管 confirm 的 authorization 记录带结构化 `review` 块：model、questionVersion、policyDigest、requirementDigest、actionDigest、snapshotDigest、risk、confidence、resultCode、calibrationVersion、calibrationDigest、grantId、grantNonce，以及记录上的 requirementVersion/requirementDigest。requirement 原文只留在受保护的
+  `$XDG_STATE_HOME/amos-governance/requirement-registry/<projectId>.json`（目录 0700/文件 0600、原子写、owner+mode 校验），模型正文不落审计。
 - 执行前须有持久授权审计回执；写入失败停止，不像当前观察器那样吞错继续。执行后补结果；崩溃留下 `outcome_unknown`，不得重放为“已批准但未执行所以再执行一次”。分库不能假装自动拥有跨库事务。
 - 同域 hash 链/SQLite 不提供外部防篡改。要声称可检测被攻破服务后的历史重写，需外部锚定/独立留存。没有该部署证据就只声明“对受监督 Agent 不可写”。
 - 恢复时验证配置版本、发布来源、激活指针和剩余 TTL；坏迁移、未知 Schema、缺少标准包、撤销/过期状态不明时不能降级为项目文件模式。最后正常快照回退不等于可以永远运行陈旧授权。
@@ -194,6 +198,7 @@ Python/Rust/TypeScript 语义不靠路径、正则或模型猜测。受保护 ru
 3. 用事务导入为不可变版本，先编译候选并做兼容/故障测试，再认证发布、取得宿主接收回执。切换后 SQLite 单主；旧配置文件只读并标明迁移版本，不参与自动 fallback 或双向同步。
 4. 当前快照 archive v1 的 digest 算法和 JSONL v2 不重写。新激活/审计格式显式升版并关联 legacy digest；旧日志按旧解析器读取，不补写虚构激活或审批证据。当前严格 rule Schema 不新增 `tags`、`rollout`、`findings` 等未支持字段；迁移元数据用独立版本化记录承载。
 5. 发布失败留住最后有效版本；schema 升级先做带 WAL 一致性处理的备份/恢复演练。回退是服务认证的版本操作，不让 Agent 自选旧数据库或旧导出文件。
+6. managed reviewer 配置是停止式迁移：旧 `endpoint`/`model`/`apiKeyEnv` 形状不再被接受，控制面发布返回 `reviewer_migration_required`，adapter 以 `amos_managed_reviewer_migration_required` 阻断；已存旧配置可读取和发布，但投影 `review: null`，由人单次 PATCH 原地迁移。缺配置、不可读或无效时 confirm 保持停止，不隐式放行。
 
 GUI/SQLite 不先于可验证的宿主边界冒充安全能力；可独立演示配置管理，但必须显示“未接管执行”。下一份运行代码 PR 只做一个可运行切片，顺序与通过线见 [差距闭环](product-gap-plan.md)。
 

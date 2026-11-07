@@ -10,11 +10,6 @@
 </p>
 
 <p align="center">
-  <code>Harness-Layer MVP</code> · Vue Governance Console · Pi Managed Gate (opt-in) · Stage A Default Adapters<br>
-  <strong>End-to-end closed loop: Vue console publishes P1 catalog-v2 snapshots, Pi <code>managed.enabled</code> enforces pre-tool <code>deny</code>/<code>confirm</code>/<code>allow</code> with independent reviewer + one-shot HMAC grant and dynamic advisory injection; default adapters remain log-only and OS isolation is out of scope.</strong>
-</p>
-
-<p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
 </p>
 
@@ -28,12 +23,20 @@ Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. 
 
 ---
 
+## What Stage Is It At?
+
+`Harness-Layer MVP` · Vue Governance Console · Pi Managed Gate (opt-in) · Stage A Default Adapters
+
+**End-to-end closed loop: Vue console publishes P1 catalog-v2 snapshots, Pi `managed.enabled` enforces pre-tool `deny`/`confirm`/`allow` with a Jev semantic reviewer + one-shot HMAC grant and dynamic advisory injection; default adapters remain log-only and OS isolation is out of scope.**
+
+---
+
 ## Current Product Scope
 
 Amos now provides a limited Harness-layer MVP: a real Vue governance console publishes
 P1 project snapshots, a real Pi session loads the same snapshot for enforcement and
 advisory injection, and `deny`/`confirm`/`allow` are decided before the harness tool
-runs. `confirm` is held for an independent reviewer and a single-use grant. The default
+runs. `confirm` is held for the Jev semantic reviewer and a single-use grant. The default
 adapter remains log-only; managed mode is explicit opt-in and is not an OS sandbox.
 See [MVP delivery](docs/mvp-delivery.md), [Product Scope](docs/product-design.md), and
 [Implementation Status](docs/product-gap-plan.md).
@@ -52,7 +55,7 @@ Pi session loads snapshot (writes .pi/runtime.json) + injects <amos-guidance> in
    ▼
 Tool call (read/write/edit/ls/find/grep)
    ├─ deny     → blocked before tool runs + audit record
-   ├─ confirm  → bounded independent model reviewer ──► one-shot HMAC grant ──► execute once
+   ├─ confirm  → bounded Jev semantic reviewer ──► one-shot HMAC grant ──► execute once
    └─ allow    → execute + tool_result audit & path/task advisory
 
 [2] Default Log-Only Adapters (OpenCode V2 & default Pi)
@@ -79,8 +82,8 @@ In default `log-only` mode, the only side effects are writing the audit record a
 - **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode does not expose a true settle-block hook, so its completion review is explicitly advisory.
 - **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
 - **P1 Project Rule Catalog + Publication**: Imports the repository YAML rules and guidance seeds, compiles project execution/advisory projections, and publishes a catalog-v2 artifact from the console. The Pi managed path consumes the same artifact for enforcement and injection.
-- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for a bounded independent model review and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. Verified by a live probe using a real local model, real Pi session, real reviewer, and real file effects. Not an OS sandbox; default remains log-only.
-- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; an independent reviewer with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end. Pi managed mode wires this review/grant path; OpenCode remains log-only. OS isolation is out of scope.
+- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for the Jev semantic reviewer and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. Verified by `managed/pi-harness.test.ts` (real Pi session, real extension, real write tool, loopback Jev protocol responses, real file effects) and `managed/harness-requirement.test.ts`; the 2026-11-05 live probe used the retired local reviewer service. Not an OS sandbox; default remains log-only.
+- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; a Jev semantic reviewer (`review/jev-reviewer.ts`) with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end. Pi and OpenCode managed modes wire this review/grant path; ordinary adapters remain log-only. OS isolation is out of scope.
 - **Vue Governance Console & SQLite API**: Reuses the existing Vue console for login, projects, rule editing/import, validation, proposals, human approval/publish, versions, rollback, audit, and observations. SQLite remains the single primary; publication compiles catalog-v2 and writes the harness artifact. A real browser test covers login→publish→YAML export/import→runtime status→rollback. Host receipt is a same-UID runtime report, not remote attestation.
 - **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
 - **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
@@ -89,11 +92,11 @@ In default `log-only` mode, the only side effects are writing the audit record a
 
 ### Current Limitations
 
-- The default Pi/OpenCode adapters still use Stage A log-only behavior. Pi `managed.enabled` is the explicit opt-in Harness gate; OpenCode managed interception is not implemented.
+- The default Pi/OpenCode adapters still use Stage A log-only behavior. Pi `managed.enabled` is the explicit opt-in Harness gate; OpenCode's explicit managed path reads the same projection and ordinary adapters stay log-only.
 - `managed` covers normalized `read/write/edit/ls/find/grep`; shell, PowerShell, custom tools, MCP, subprocesses, bypass paths and side effects inside an allowed shell are outside the guarantee.
 - OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is **out of scope for this MVP**, not a blocker; do not claim it.
 - No publisher authentication. Snapshot verification is structural/identity consistency, not a signature; control-plane tokens and runtime reports are same-UID local observations.
-- The live reviewer is a local model with a synthetic calibration set; it is not a security certification. External provider credentials/egress were not used.
+- The reviewer is Jev, configured through a local Jev config file; the calibration set is not a security certification. A hosted Jev or local llama live probe was not run this round; it needs operator credentials and a local endpoint. *(Historical, 2026-11-05: the reviewer was a local model behind an independent service; it was replaced on 2026-11-07.)*
 - No complete rollout, temporary-tightening persistence, remote CI acceptance gate, or host effective-receipt across machines.
 - SQLite owner-only files, in-process HMAC, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
 - `strict/` and `autonomy/` remain local experimental libraries from the dev line; they are not the MVP managed path.
