@@ -313,3 +313,47 @@ test('runtime status distinguishes loaded, stale, and never-loaded reports', (t)
   assert.equal(readRuntimeStatus(workspace, published).status, 'invalid');
   assert.equal(readRuntimeStatus(workspace, null).status, 'invalid');
 });
+
+test('runtime status isolates harness reports and binds configuration-only changes', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'runtime-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+    configDigest,
+  };
+  for (const harness of ['pi', 'opencode'] as const) {
+    assert.equal(writeHarnessRuntimeReport({
+      directory: workspace,
+      projectId: expected.projectId,
+      activationDigest: expected.activationDigest,
+      epoch: 1,
+      policyVersion: expected.policyVersion,
+      loadedAt: new Date().toISOString(),
+      harness,
+      mode: harness === 'pi' ? 'log-only' : 'disabled',
+      configDigest,
+      capabilities: {},
+    }), true);
+  }
+  const loaded = readRuntimeStatus(workspace, expected);
+  assert.equal(loaded.harnesses.pi.status, 'loaded');
+  assert.equal(loaded.harnesses.opencode.status, 'loaded');
+  assert.equal(loaded.harnesses.pi.runtime?.mode, 'log-only');
+  assert.equal(loaded.harnesses.opencode.runtime?.mode, 'disabled');
+
+  const changed = readRuntimeStatus(workspace, expected, {
+    ...expected,
+    configDigest: `sha256:${'c'.repeat(64)}`,
+  });
+  assert.equal(changed.harnesses.pi.status, 'stale');
+  assert.equal(changed.harnesses.opencode.status, 'stale');
+
+  writeFileSync(join(workspace, '.pi', 'runtime.pi.json'), '{bad', { mode: 0o600 });
+  const invalid = readRuntimeStatus(workspace, expected);
+  assert.equal(invalid.harnesses.pi.status, 'invalid');
+  assert.equal(invalid.harnesses.opencode.status, 'loaded');
+});

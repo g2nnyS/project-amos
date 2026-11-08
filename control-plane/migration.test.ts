@@ -101,6 +101,12 @@ test('version 1 databases migrate to full project configuration without losing r
   assert.equal(cp.listProjects()[0]?.name, 'Legacy project');
   const config = cp.getProjectConfig('project-1');
   assert.equal(config.managed.enabled, false);
+  assert.deepEqual(config.harness, {
+    enabled: true,
+    mode: 'log-only',
+    advisoryInjection: true,
+  });
+  assert.equal(config.effectiveHarness.mode, 'log-only');
   assert.equal(config.tightening.enabled, false);
   assert.equal(cp.listAudit({ projectId: 'project-1' }).items.length, 1);
 
@@ -110,6 +116,7 @@ test('version 1 databases migrate to full project configuration without losing r
   const tables = verify
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
     .all() as unknown as Array<{ name: string }>;
+  assert.ok(tables.some((table) => table.name === 'global_config'));
   assert.ok(tables.some((table) => table.name === 'project_configs'));
   assert.ok(tables.some((table) => table.name === 'temporary_tightenings'));
   assert.ok(tables.some((table) => table.name === 'probe_runs'));
