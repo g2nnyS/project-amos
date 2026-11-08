@@ -9,13 +9,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { COMPILER_VERSION } from './compiler.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import { classifyOpenError } from './sqlite-errors.ts';
-import { DEFAULT_PROJECT_CONFIG } from './project-config.ts';
+import { DEFAULT_GLOBAL_CONFIG, DEFAULT_PROJECT_CONFIG } from './project-config.ts';
 
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
 const KNOWN_TABLES = [
   'governance_meta',
+  'global_config',
   'projects',
   'proposals',
   'versions',
@@ -193,9 +194,14 @@ function migrateOrVerify(
       }
       createSchema(db);
       insertMetadata(db, schemaDigest, nowMs);
+      insertGlobalConfig(db, nowMs);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
     } else if (version === 1) {
       migrateV1ToV2(db, schemaDigest);
+      migrateV2ToV3(db, schemaDigest, nowMs);
+      db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+    } else if (version === 2) {
+      migrateV2ToV3(db, schemaDigest, nowMs);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
     } else if (version === DATABASE_SCHEMA_VERSION) {
       verifySchema(db, schemaDigest);
@@ -219,6 +225,13 @@ function createSchema(db: DatabaseSync): void {
     CREATE TABLE governance_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE global_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      config_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL
     );
 
     CREATE TABLE projects (
@@ -268,7 +281,7 @@ function createSchema(db: DatabaseSync): void {
       project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
       proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
       version INTEGER,
-      kind TEXT NOT NULL CHECK (kind IN ('project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
+      kind TEXT NOT NULL CHECK (kind IN ('global_config_updated', 'project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
       actor_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       metadata_json TEXT NOT NULL
@@ -438,7 +451,7 @@ function migrateV1ToV2(db: DatabaseSync, schemaDigest: string): void {
       project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
       proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
       version INTEGER,
-      kind TEXT NOT NULL CHECK (kind IN ('project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
+      kind TEXT NOT NULL CHECK (kind IN ('global_config_updated', 'project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
       actor_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       metadata_json TEXT NOT NULL
@@ -463,13 +476,101 @@ function migrateV1ToV2(db: DatabaseSync, schemaDigest: string): void {
     insert.run(project.id, JSON.stringify(DEFAULT_PROJECT_CONFIG), updatedAt, actor);
   }
   db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run(
-    String(DATABASE_SCHEMA_VERSION),
+    '2',
     'schema_version',
   );
   db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run(
     schemaDigest,
     'rule_schema_digest',
   );
+}
+
+function insertGlobalConfig(db: DatabaseSync, nowMs: number): void {
+  db.prepare(
+    'INSERT INTO global_config (id, config_json, updated_at, updated_by_json) VALUES (1, ?, ?, ?)',
+  ).run(
+    JSON.stringify(DEFAULT_GLOBAL_CONFIG),
+    new Date(nowMs).toISOString(),
+    JSON.stringify({ id: 'system', role: 'human' }),
+  );
+}
+
+function migrateV2ToV3(db: DatabaseSync, schemaDigest: string, nowMs: number): void {
+  const tables = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )
+    .all() as unknown as Array<{ name: string }>;
+  const names = new Set(tables.map((table) => table.name));
+  for (const required of KNOWN_TABLES) {
+    if (required !== 'global_config' && !names.has(required)) {
+      throw new DomainError('database_incompatible');
+    }
+  }
+  if (names.has('global_config')) throw new DomainError('database_incompatible');
+  const metaRows = db.prepare('SELECT key, value FROM governance_meta').all() as unknown as Array<{ key: string; value: string }>;
+  const meta = new Map(metaRows.map((row) => [row.key, row.value]));
+  if (
+    meta.get('schema_version') !== '2' ||
+    meta.get('compiler_version') !== COMPILER_VERSION ||
+    meta.get('rule_schema_digest') !== schemaDigest
+  ) {
+    throw new DomainError('database_incompatible');
+  }
+
+  db.exec(`
+    CREATE TABLE global_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      config_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL
+    );
+    ALTER TABLE governance_events RENAME TO governance_events_v2;
+    DROP INDEX IF EXISTS governance_events_project_id;
+    DROP INDEX IF EXISTS governance_events_id;
+    CREATE TABLE governance_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+      proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
+      version INTEGER,
+      kind TEXT NOT NULL CHECK (kind IN ('global_config_updated', 'project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
+      actor_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+    INSERT INTO governance_events (id, project_id, proposal_id, version, kind, actor_json, created_at, metadata_json)
+      SELECT id, project_id, proposal_id, version, kind, actor_json, created_at, metadata_json FROM governance_events_v2;
+    DROP TABLE governance_events_v2;
+    CREATE INDEX governance_events_project_id ON governance_events(project_id, id DESC);
+    CREATE INDEX governance_events_id ON governance_events(id DESC);
+  `);
+  insertGlobalConfig(db, nowMs);
+
+  const rows = db.prepare('SELECT project_id, config_json FROM project_configs').all() as unknown as Array<{ project_id: string; config_json: string }>;
+  const update = db.prepare('UPDATE project_configs SET config_json = ? WHERE project_id = ?');
+  for (const row of rows) {
+    let config: unknown;
+    try {
+      config = JSON.parse(row.config_json);
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
+    if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+      throw new DomainError('database_corrupt');
+    }
+    const record = config as Record<string, unknown>;
+    const managed = record.managed;
+    const managedEnabled = typeof managed === 'object' && managed !== null && !Array.isArray(managed)
+      ? (managed as Record<string, unknown>).enabled === true
+      : false;
+    record.harness = {
+      enabled: true,
+      mode: managedEnabled ? 'managed' : 'log-only',
+      advisoryInjection: true,
+    };
+    update.run(JSON.stringify(record), row.project_id);
+  }
+  db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run('3', 'schema_version');
 }
 
 function insertMetadata(
@@ -510,6 +611,11 @@ function verifySchema(db: DatabaseSync, schemaDigest: string): void {
     meta.get('rule_schema_digest') !== schemaDigest
   ) {
     throw new DomainError('database_incompatible');
+  }
+
+  const globalRows = db.prepare('SELECT COUNT(*) AS count FROM global_config').get() as unknown as { count?: unknown } | undefined;
+  if (Number(globalRows?.count ?? 0) !== 1) {
+    throw new DomainError('database_corrupt');
   }
 
   const missingProjectConfig = db
