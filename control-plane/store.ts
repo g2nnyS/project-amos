@@ -40,8 +40,11 @@ import type {
   DecideProposalInput,
   GovernanceEventKind,
   GovernanceMetadataValue,
+  GlobalConfigUpdateResult,
+  GlobalHarnessConfig,
   Project,
   ProjectConfig,
+  ProjectConfigView,
   ProbeRunRecord,
   Proposal,
   ProposalDecision,
@@ -84,11 +87,15 @@ import {
   type VersionRow,
 } from './rows.ts';
 import {
+  DEFAULT_GLOBAL_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   buildManagedProjection,
+  hostRuntimeConfigDigest,
   managedAuditPath,
+  normalizeGlobalConfig,
   normalizeProjectConfig,
   readProjectConfig,
+  resolveHarnessConfig,
 } from './project-config.ts';
 import {
   expectationFromPublished,
@@ -832,14 +839,72 @@ class GovernanceControlPlane implements ControlPlane {
     });
   }
 
-  getProjectConfig(projectId: string): ProjectConfig {
+  getGlobalConfig(): GlobalHarnessConfig {
+    return this.guard(() => this.readGlobalConfigFor());
+  }
+
+  updateGlobalConfig(input: unknown, actor: Actor): GlobalConfigUpdateResult {
     return this.guard(() => {
-      const project = this.requireProjectRow(projectId);
-      return this.readProjectConfigFor(project);
+      assertHuman(actor);
+      const nowIso = new Date(this.nowMs()).toISOString();
+      const config = this.transaction(() => {
+        const next = normalizeGlobalConfig(input, this.readGlobalConfigFor());
+        this.db.prepare(
+          'UPDATE global_config SET config_json = ?, updated_at = ?, updated_by_json = ? WHERE id = 1',
+        ).run(JSON.stringify(next), nowIso, JSON.stringify(actor));
+        this.appendEvent({
+          projectId: null,
+          proposalId: null,
+          version: null,
+          kind: 'global_config_updated',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            enabled: next.enabled,
+            mode: next.mode,
+            advisoryInjection: next.advisoryInjection,
+          },
+        });
+        return next;
+      });
+
+      const projectionFailures: string[] = [];
+      for (const project of this.listProjects()) {
+        if (project.currentVersion === null) continue;
+        try {
+          const row = this.requireProjectRow(project.id);
+          const base = versionFromRow(this.requireVersionRow(row.id, project.currentVersion!));
+          const effective = this.loadStoredActivation(row, base);
+          if (!this.emitProjectArtifacts(
+            row.id,
+            row.workspace,
+            base.version,
+            effective.tightened ? 'tightening' : 'publish',
+            base.snapshot,
+            effective.snapshot,
+          )) {
+            projectionFailures.push(row.id);
+          }
+        } catch {
+          projectionFailures.push(project.id);
+        }
+      }
+      return deepFreeze({ config, projectionFailures });
     });
   }
 
-  getConfig(projectId: string): ProjectConfig {
+  getProjectConfig(projectId: string): ProjectConfigView {
+    return this.guard(() => {
+      const project = this.requireProjectRow(projectId);
+      const config = this.readProjectConfigFor(project);
+      return deepFreeze({
+        ...config,
+        effectiveHarness: resolveHarnessConfig(config, this.readGlobalConfigFor()),
+      });
+    });
+  }
+
+  getConfig(projectId: string): ProjectConfigView {
     return this.getProjectConfig(projectId);
   }
 
@@ -847,7 +912,7 @@ class GovernanceControlPlane implements ControlPlane {
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig {
+  ): ProjectConfigView {
     return this.updateProjectConfig(projectId, input, actor);
   }
 
@@ -855,7 +920,7 @@ class GovernanceControlPlane implements ControlPlane {
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig {
+  ): ProjectConfigView {
     return this.guard(() => {
       assertHuman(actor);
       const nowMs = this.nowMs();
@@ -870,6 +935,8 @@ class GovernanceControlPlane implements ControlPlane {
         });
         this.writeProjectConfigRow(projectId, config, actor, nowIso);
         this.syncConfiguredRolloutStates(project, config, actor, nowIso, input);
+        const globalConfig = this.readGlobalConfigFor();
+        const effectiveHarness = resolveHarnessConfig(config, globalConfig);
         this.appendEvent({
           projectId,
           proposalId: null,
@@ -878,22 +945,25 @@ class GovernanceControlPlane implements ControlPlane {
           actor,
           createdAt: nowIso,
           metadata: {
+            harnessEnabled: effectiveHarness.enabled,
+            harnessMode: effectiveHarness.mode,
+            advisoryInjection: effectiveHarness.advisoryInjection,
             workflowGateEnabled: config.workflowGate.enabled,
-            managedEnabled: config.managed.enabled,
+            managedEnabled: effectiveHarness.enabled && effectiveHarness.mode === 'managed',
             tighteningEnabled: config.tightening.enabled,
             tighteningTemplateCount: config.tightening.templates.length,
             rolloutThresholdCount: Object.keys(config.rollout.thresholdsByRule).length,
             rolloutRuleStateCount: Object.keys(config.rollout.ruleStates).length,
           },
         });
-        return { project, config };
+        return { project, config, effectiveHarness };
       });
       if (outcome.project.current_version !== null) {
         try {
           const base = versionFromRow(
             this.requireVersionRow(outcome.project.id, outcome.project.current_version),
           );
-          const effective = this.loadEffectiveActivation(outcome.project, base);
+          const effective = this.loadStoredActivation(outcome.project, base);
           this.emitProjectArtifacts(
             outcome.project.id,
             outcome.project.workspace,
@@ -903,11 +973,13 @@ class GovernanceControlPlane implements ControlPlane {
             effective.snapshot,
           );
         } catch {
-          // Configuration is committed. A clock/artifact failure is surfaced
-          // by the runtime status endpoint rather than as a false write error.
+          // Configuration is committed. Artifact failures surface as stale/missing.
         }
       }
-      return outcome.config;
+      return deepFreeze({
+        ...outcome.config,
+        effectiveHarness: outcome.effectiveHarness,
+      });
     });
   }
 
@@ -920,12 +992,19 @@ class GovernanceControlPlane implements ControlPlane {
       }
       const effective = this.loadEffectiveActivation(project, base);
       const expected = expectationFromPublished(base);
+      const config = this.readProjectConfigFor(project);
+      const configDigest = hostRuntimeConfigDigest({
+        config,
+        globalConfig: this.readGlobalConfigFor(),
+        auditPath: managedAuditPath(this.managedAuditDir, project.workspace, project.id),
+      });
       const effectiveExpectation: RuntimeExpectation = {
         projectId: project.id,
         version: base.version,
         activationDigest: effective.snapshot.activationDigest,
         policyVersion: effective.snapshot.project.projectConfigVersion,
         epoch: effective.snapshot.epoch,
+        configDigest,
       };
       return readRuntimeStatus(project.workspace, expected, effectiveExpectation);
     });
@@ -1709,14 +1788,34 @@ class GovernanceControlPlane implements ControlPlane {
     return projectConfigFromRow(this.requireProjectConfigRow(project.id), project.workspace);
   }
 
+  private readGlobalConfigFor(): GlobalHarnessConfig {
+    const row = this.db
+      .prepare('SELECT config_json FROM global_config WHERE id = 1')
+      .get() as unknown as { config_json?: unknown } | undefined;
+    if (typeof row?.config_json !== 'string') throw new DomainError('database_corrupt');
+    try {
+      return normalizeGlobalConfig(parseStoredJson(row.config_json), DEFAULT_GLOBAL_CONFIG);
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
+  }
+
   private requirePublishedVersion(project: ProjectRow): PublishedVersion | null {
     if (project.current_version === null) return null;
     return versionFromRow(this.requireVersionRow(project.id, project.current_version));
   }
 
+  private loadStoredActivation(
+    project: ProjectRow,
+    base: PublishedVersion,
+  ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
+    return this.loadEffectiveActivation(project, base, false);
+  }
+
   private loadEffectiveActivation(
     project: ProjectRow,
     base: PublishedVersion,
+    applyExpiry = true,
   ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
     const row = this.db
       .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
@@ -1738,6 +1837,8 @@ class GovernanceControlPlane implements ControlPlane {
     ) {
       throw new DomainError('database_corrupt');
     }
+
+    if (!applyExpiry) return { snapshot, tightened: true };
 
     // TTL expiry does not depend on a cleaner running. Reads and decisions
     // compute the post-expiry projection without writing governance state; an
@@ -2044,10 +2145,11 @@ class GovernanceControlPlane implements ControlPlane {
     kind: 'publish' | 'tightening',
     baseSnapshot: PublishedVersion['snapshot'],
     activationSnapshot: ProjectActivationSnapshot,
-  ): void {
+  ): boolean {
     try {
       const project = this.requireProjectRow(projectId);
       const config = this.readProjectConfigFor(project);
+      const globalConfig = this.readGlobalConfigFor();
       const auditPath = managedAuditPath(this.managedAuditDir, workspace, projectId);
       try {
         mkdirSync(dirname(auditPath), { recursive: true, mode: 0o700 });
@@ -2062,6 +2164,7 @@ class GovernanceControlPlane implements ControlPlane {
         kind,
         snapshot: activationSnapshot,
         config,
+        globalConfig,
         auditPath,
         publishedAt,
       });
@@ -2093,6 +2196,7 @@ class GovernanceControlPlane implements ControlPlane {
       }
       // A projection write is not a host receipt. Read the runtime report only
       // to make the status endpoint honest; never promote it to "effective".
+      const configDigest = hostRuntimeConfigDigest({ config, globalConfig, auditPath });
       readRuntimeStatus(
         workspace,
         {
@@ -2101,6 +2205,7 @@ class GovernanceControlPlane implements ControlPlane {
           activationDigest: activationSnapshot.activationDigest,
           policyVersion: activationSnapshot.project.projectConfigVersion,
           epoch: activationSnapshot.epoch,
+          configDigest,
         },
         {
           projectId,
@@ -2108,11 +2213,14 @@ class GovernanceControlPlane implements ControlPlane {
           activationDigest: activationSnapshot.activationDigest,
           policyVersion: activationSnapshot.project.projectConfigVersion,
           epoch: activationSnapshot.epoch,
+          configDigest,
         },
       );
+      return true;
     } catch {
       // The database state is authoritative. Missing/stale artifacts surface
       // through getRuntimeStatus() and are never reported as a host load.
+      return false;
     }
   }
 
