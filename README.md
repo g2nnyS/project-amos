@@ -2,11 +2,11 @@
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Deterministic policy governance, pre-execution harness gating, and verifiable audit for AI agents
+  Deterministic policy governance, pre-execution harness gating, dynamic engineering guidance injection, and verifiable audit for AI agents
 </p>
 
 <p align="center">
-  Move agent constraints out of wishful prompts and into a deterministic policy engine with a verifiable audit trail.
+  Move agent constraints out of wishful prompts and into a deterministic policy engine + context-aware advisory injector with a verifiable audit trail.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## What Is Amos?
 
-Writing safety rules in `AGENTS.md` or system prompts relies on model goodwill. **Amos takes a different path: the agent proposes an action, a deterministic policy engine evaluates it against explicit rules, and every decision leaves a clean audit trail.**
+Writing safety rules and engineering conventions in a monolithic `AGENTS.md` or system prompt either relies on model goodwill for hard boundaries or floods context with irrelevant rules. **Amos splits one project-activated catalog into two synchronized projections: a deterministic policy engine evaluates structured actions against hard rules (`deny`/`confirm`/`allow`), while a session-pinned advisory injector dynamically delivers relevant engineering conventions, architecture invariants, and design preferences (`<amos-guidance>`) by area, path, task tag, and prompt tokens.**
 
 > **Security boundary**: Security adapters are log-only by default. Pi `.pi/amos.json` `managed.enabled` is an explicit opt-in Harness-layer gate that can block normalized tool calls and review confirms; it is **not an OS sandbox**, does not cover every entry/side effect, and its audit is not tamper-proof. The separate engineering workflow gate remains an opt-in guard. See [Security Model](docs/security-model.md), [Harness Gate ADR](docs/adr-harness-gate.md), and [Workflow Gate](docs/workflow-gate.md).
 
@@ -69,6 +69,17 @@ Sanitized JSONL audit log & snapshot archive ──► injection-safe human revi
 ```
 
 In default `log-only` mode, the only side effects are writing the audit record and its content-addressed policy snapshot. When Pi `managed.enabled` is turned on, normalized file/search tool calls are gated before execution against the published P1 snapshot. The separate engineering workflow gate can also block dangerous shell commands or hold work for review.
+
+---
+
+## Dynamic Engineering Guidance & Design Preferences
+
+Amos treats engineering conventions, architectural invariants, and repository design preferences as first-class versioned rules (`policy_class: engineering` / `expressivity: advisory_only` or paired hard-rule narratives) compiled from the same P1 project activation snapshot (`activation/` + `injector/`):
+
+- **Curated Engineering Packs & Custom Conventions**: Seeded with 7 domain packs in `guidance/packs.ts` (`typescript-base`, `engine-invariants`, `adapters`, `supervisor-core`, `decision-jev`, `dependencies-and-manifests`, `workflow-security`) covering strict ESM/Node 26 discipline, pure-engine boundaries, dependency minimalism (no unapproved HTTP/ORM frameworks), and adapter normalization. Teams can author project-specific `advisory_only` design preferences or attach `narrative` guidance to deterministic rules in the console or YAML (`injection.baselineRuleIds` + `injection.routes`).
+- **Two-Stage Deterministic Selection (`injector/select.ts`)**: Filters active rules by `languages` / `frameworks` applicability, then ranks candidates by level ascending and weighted signals (`areas`, `pathHints` globs, `taskTags`, and bounded prompt keyword tokens), plus explicit route `add`/`suppress`. If no signal matches or routing fails, it falls back to the project's active narratives (`baselineRuleIds` prioritized)—never an unactivated global pack.
+- **Session-Pinned Delivery & Budgets (`injector/session.ts`, `injector/render.ts`)**: Renders XML-escaped `<amos-guidance policy="..." digest="..." mode="advisory">` blocks under strict character budgets (`1,800` prompt / `1,200` fallback / `900` area / `6,000` session total, max `6` rules per block). User turns inject prompt-matched conventions; normalized write/edit actions (`write`/`edit`/`file_write`) queue path-matched area guidance for the tool result or next context turn. Rules and areas are deduplicated per session only after the host confirms emission (`commit`), and budget-dropped rules are reported via `omittedRefs` / `incomplete: true`.
+- **Non-Interference Invariant**: Prompts, task tags, and character budgets only rank or truncate advisory text; they never filter hard enforcement rules, grant permissions, or alter gate/audit outcomes.
 
 ---
 
@@ -135,12 +146,12 @@ npm run audit:review -- \
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
-- [Product Scope](docs/product-design.md) · [Implementation Status](docs/product-gap-plan.md)
+- [Product Scope](docs/product-design.md) · [Project Activation & Dual Projections](docs/project-activation.md) · [Implementation Status](docs/product-gap-plan.md)
 - [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
-- [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
+- [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate & Advisory Injection](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
 - [Delivery Status](docs/delivery-status.md) · [AC-01–22 Acceptance Matrix](docs/acceptance-one-shot.md) · [One-Shot Verification](docs/verification-one-shot.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
-- Safety ADRs: [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
+- Safety & Architecture ADRs: [unified rule catalog](docs/adr-unified-rule-catalog.md) · [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
 
 ---

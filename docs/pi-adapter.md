@@ -1,6 +1,6 @@
 # Pi Coding Agent 适配器
 
-当前状态：**Pi 1.4.0 安全适配仍为 log-only；真实安全 deny/confirm 尚未启用。** 另有独立的工程工作流硬门，可在启用后阻断危险 Shell，详见 [工作流硬门](workflow-gate.md)。真实会话日志与派生样本仅保存在本地，不随仓库分发。
+当前状态：**默认 Pi 1.4.0 安全适配仍为 Stage A log-only；显式配置 `managed.enabled: true` 可启用限定范围的 Harness 层工具前阻断、Jev confirm 审查与同源动态规范注入（详见 [配置与受管启动](configuration-one-shot.md) 与 [MVP 交付](mvp-delivery.md)）。** 另有独立的工程工作流硬门，可在启用后阻断危险 Shell 并注入 `<amos-guidance>` 工程规范，详见 [工作流硬门](workflow-gate.md)。真实会话日志与派生样本仅保存在本地，不随仓库分发。
 
 OpenCode V2 保留为参考适配器。Pi 因用户确认日常主用而解锁为第二适配器；两者只共享结构化归一化结果、快照评估和 JSONL 记录，不共享模型 provider，也不建立通用 harness 框架。
 
@@ -117,7 +117,7 @@ omp --print --no-session --no-extensions \
 
 ## 尚未解锁的能力与已知旁路
 
-- 真实 deny、confirm、项目激活、narrative 注入和治理均未启用。
+- 默认 log-only 模式不启用真实 deny/confirm；显式 `managed.enabled: true` 提供归一化文件/检索工具的 Harness 层拦截与 P1 快照同源 `<amos-guidance>` 注入（见 [配置与受管启动](configuration-one-shot.md)），但仍非 OS 沙箱。普通模式下配置 `activation` 字段也可单独从 `.pi/activation.json` 加载项目的工程规范与设计偏好投影。
 - Pi 没有原生 permission 体系。后续 confirm 只能依赖 TUI/RPC；print/JSON 等非交互模式必须 fail-closed，不能假装存在确认。
 - bash 只有原始命令字符串，不能用正则猜测目标或声称已覆盖 shell 写副作用。
 - `pi.exec()`、`user_bash` 的其他执行方式、扩展内部副作用、`commandPrefix`/`spawnHook`、同名工具覆盖、后续扩展修改 input，以及 `--no-extensions`/SDK 未加载本扩展，都需要在强制前单独处理。

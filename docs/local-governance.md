@@ -24,7 +24,7 @@ npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
 
 1. 创建项目并填写规范化绝对 workspace；该路径用于策略绑定，不授权网页读取该目录。
-2. 导入仓库规则或从已发布版本开始，编辑规则及激活/排除集合，先校验再提交提案。
+2. 导入仓库规则或从已发布版本开始，编辑确定性安全/工程规则、纯建议性工程规范/设计偏好（`expressivity: advisory_only`、`predicate: null`、`policy_class: engineering`）及激活/排除集合与动态注入配置（`injection.baselineRuleIds`、`injection.routes`），先校验再提交提案。
 3. 审阅当前/候选差异，批准并发布或拒绝；不可修改已提交正文，修订须新提案。
 4. 在版本页导出已批准的有效规则 YAML 或完整版本 JSON；回滚生成新提案，不回退版本号。
 5. 治理审计记录状态变化，不复制规则正文或自由文本审批备注。规则和提案详情包含敏感策略信息，仅供本机有权限用户查看。
@@ -56,7 +56,7 @@ npm run console:serve -- --audit-log /absolute/path/to/opencode.jsonl
 - 回滚复用历史候选生成新提案，经批准产生递增新版本，不移动指针回旧版本。
 - 提案过期与规则 TTL 分开；TTL 仍由注入时钟的引擎判断，不自动发布版本。
 - 初次提案 `baseVersion = 0`，已发布版本从 1 递增；项目未发布时仍是 `currentVersion = null`。HTTP 接受初始 null 为 0，未填提案期限时默认 7 天。
-- 新快照使用独立版本化格式，不改变 `storage/snapshot.ts` 的历史 digest 合同。enforcement 包含全部选中的 deterministic 规则（包括 ci/server 元数据），advisory 包含 advisory_only；不得声称 metadata 是运行授权。
+- 新快照使用独立版本化格式，不改变 `storage/snapshot.ts` 的历史 digest 合同。enforcement 包含全部选中的 deterministic 规则（包括 ci/server 元数据），advisory 包含 advisory_only；发布同时编译 P1 `amos-unified-rule-catalog` v2 快照（含已激活硬规则配对 narrative 与 `advisory_only` 工程规范/设计偏好投影）并写入 `<workspace>/.pi/activation.json`；不得声称 metadata 是运行授权。
 - snapshot digest 绑定 project、workspace、版本、schema/compiler、激活集、编译内容；分开 enforcement/advisory digest。导出为派生产物，不参与 DB/文件跨域事务。
 - YAML 导出保留原候选的 `${SESSION_WORKSPACE}` 供旧适配器解析；新快照保存已展开内容。两种 digest 不可互换。模拟使用独立引擎默认值（未命中为 allow），不同于既有 log-only 记录器的显式 default-deny，均不代表工具执行许可。
 
