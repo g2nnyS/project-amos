@@ -2,17 +2,18 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../lib/api.js'
 import { readStoredJson, writeStoredJson, removeStored } from '../lib/storage.js'
-import type { CreateProjectInput, HarnessRuntimeStatus, Project, Proposal, PublishedVersion, RuntimeStatus } from '../types/index.js'
+import type { CreateProjectInput, HarnessRuntimeStatus, ProbeRunRecord, Project, ProjectConfig, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
 
 const KEY = 'amos:console:activeProjectId'
 export const useGovernanceStore = defineStore('governance', () => {
   const projects = ref<Project[]>([]), activeProjectId = ref<string | null>(null)
   const policy = ref<PublishedVersion | null>(null), proposals = ref<Proposal[]>([]), versions = ref<PublishedVersion[]>([]), status = ref<RuntimeStatus | null>(null), runtime = ref<HarnessRuntimeStatus | null>(null)
+  const config = ref<ProjectConfig | null>(null), tightenings = ref<TemporaryTighteningStatus | null>(null), probes = ref<ProbeRunRecord[]>([]), rollouts = ref<RuleRolloutRecord[]>([])
   const loading = ref(false), error = ref<string | null>(null)
   const activeProject = computed(() => projects.value.find(p => p.id === activeProjectId.value) ?? null)
   let epoch = 0
   let preferred = readStoredJson(KEY, (value): value is string => typeof value === 'string' && value.length > 0)
-  function resetProject() { policy.value = null; proposals.value = []; versions.value = []; runtime.value = null }
+  function resetProject() { policy.value = null; proposals.value = []; versions.value = []; runtime.value = null; config.value = null; tightenings.value = null; probes.value = []; rollouts.value = [] }
   function clear() { epoch++; projects.value = []; activeProjectId.value = null; resetProject(); status.value = null; error.value = null; loading.value = false; preferred = null; removeStored(KEY) }
   function save(id: string | null) { preferred = id; if (id) writeStoredJson(KEY, id); else removeStored(KEY) }
   async function refreshProjects() {
@@ -25,14 +26,19 @@ export const useGovernanceStore = defineStore('governance', () => {
     if (!id) { resetProject(); return }
     loading.value = true; error.value = null
     try {
-      const [p, ps, vs, run] = await Promise.all([
+      const [p, ps, vs, run, cfg, tight, probe, roll] = await Promise.all([
         api.policy(id),
         api.proposals(id),
         api.versions(id),
         api.runtime(id).catch(() => null),
+        api.config(id).catch(() => null),
+        api.tightenings(id).catch(() => null),
+        api.probes(id).catch(() => [] as ProbeRunRecord[]),
+        api.rollouts(id).catch(() => [] as RuleRolloutRecord[]),
       ])
       if (current !== epoch || id !== activeProjectId.value) return
       policy.value = p; proposals.value = ps; versions.value = vs; runtime.value = run
+      config.value = cfg; tightenings.value = tight; probes.value = probe ?? []; rollouts.value = roll ?? []
     } catch (e) { if (current === epoch) { resetProject(); error.value = e instanceof Error ? e.message : '加载项目失败。'; throw e } }
     finally { if (current === epoch) loading.value = false }
   }
@@ -62,5 +68,53 @@ export const useGovernanceStore = defineStore('governance', () => {
     if (!id) { runtime.value = null; return }
     try { runtime.value = await api.runtime(id) } catch { runtime.value = null }
   }
-  return { projects, activeProjectId, activeProject, policy, proposals, versions, status, runtime, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, createProject, clear }
+  async function updateProjectConfig(input: UpdateProjectConfigInput): Promise<ProjectConfig | null> {
+    const id = activeProjectId.value
+    if (!id) return null
+    const current = epoch
+    const result = await api.updateConfig(id, input)
+    if (current !== epoch || id !== activeProjectId.value) return null
+    config.value = result
+    await refreshProject()
+    if (current !== epoch) return null
+    return result
+  }
+  async function applyTightening(templateId: string, ttlMs: number): Promise<TemporaryTighteningStatus | null> {
+    const id = activeProjectId.value
+    if (!id) return null
+    const current = epoch
+    const result = await api.applyTightening(id, { templateId, ttlMs })
+    if (current !== epoch || id !== activeProjectId.value) return null
+    tightenings.value = result
+    await refreshRuntime()
+    return result
+  }
+  async function expireTightenings(): Promise<TemporaryTighteningStatus | null> {
+    const id = activeProjectId.value
+    if (!id) return null
+    const current = epoch
+    const result = await api.expireTightenings(id)
+    if (current !== epoch || id !== activeProjectId.value) return null
+    tightenings.value = result
+    await refreshRuntime()
+    return result
+  }
+  async function refreshRollout(): Promise<void> {
+    const id = activeProjectId.value
+    if (!id) { probes.value = []; rollouts.value = []; return }
+    try {
+      const [probe, roll] = await Promise.all([api.probes(id), api.rollouts(id)])
+      probes.value = probe; rollouts.value = roll
+    } catch { probes.value = []; rollouts.value = [] }
+  }
+  async function promoteRollout(ruleId: string, input: Parameters<typeof api.promoteRollout>[2]): Promise<RolloutEvaluation | null> {
+    const id = activeProjectId.value
+    if (!id) return null
+    const current = epoch
+    const result = await api.promoteRollout(id, ruleId, input)
+    if (current !== epoch || id !== activeProjectId.value) return null
+    await refreshRollout()
+    return result
+  }
+  return { projects, activeProjectId, activeProject, policy, proposals, versions, status, runtime, config, tightenings, probes, rollouts, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, refreshRollout, createProject, updateProjectConfig, applyTightening, expireTightenings, promoteRollout, clear }
 })

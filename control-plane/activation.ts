@@ -56,12 +56,23 @@ export interface PublishCompileInput {
   readonly version: number;
   readonly baseVersion: number;
   readonly candidate: Candidate;
+  /**
+   * Rules that may be added only as hard-rule tightening templates. Their
+   * advisory metadata is suppressed so adding one never changes the paired
+   * advisory projection. Publication omits this hint.
+   */
+  readonly injectionlessRuleIds?: readonly string[];
 }
 
 export interface PublishCompilation {
   readonly snapshot: ProjectActivationSnapshot;
   /** JSON text written to the harness artifact. Deterministic for the version. */
   readonly artifact: string;
+  /**
+   * The exact compiler used for this candidate. Temporary tightening reuses it
+   * so an applied template cannot introduce a rule outside the published set.
+   */
+  readonly compiler: import('../activation/types.ts').ProjectActivationCompiler;
 }
 
 export function createActivationCatalog(
@@ -140,10 +151,17 @@ export function compileProjectActivation(
   input: PublishCompileInput,
 ): PublishCompilation {
   const projectRules = projectOnlyRules(catalog, input.candidate.rules);
+  const injectionless = new Set(input.injectionlessRuleIds ?? []);
+  const combinedRules = [...catalog.rules, ...projectRules.map((entry) => entry.entry)].map(
+    (entry) =>
+      injectionless.has(entry.id) && entry.injection !== null
+        ? Object.freeze({ ...entry, injection: null })
+        : entry,
+  );
   const compilerOptions: ActivationCompilerOptions = {
     rawSchema: catalog.rawSchema,
     catalogVersion: `${catalog.catalogVersion}+v${input.version}`,
-    rules: Object.freeze([...catalog.rules, ...projectRules.map((entry) => entry.entry)]),
+    rules: Object.freeze(combinedRules),
     mandatoryRuleRefs: catalog.mandatoryRuleRefs,
   };
   const compiler = createProjectActivationCompiler(compilerOptions);
@@ -181,6 +199,7 @@ export function compileProjectActivation(
     return {
       snapshot,
       artifact: `${JSON.stringify(snapshot)}\n`,
+      compiler,
     };
   } catch {
     throw new DomainError('candidate_invalid');

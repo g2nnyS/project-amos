@@ -1,5 +1,5 @@
 /**
- * Process-local, append-only temporary tightening.
+ * Append-only temporary tightening.
  *
  * A publisher may only apply rules from a closed list of approved templates.
  * Every application recompiles the same project activation with exactly one
@@ -10,8 +10,9 @@
  * accepted.
  *
  * Limits (deliberate):
- * - State is in memory only. A restart loses every applied tightening; restart
- *   recovery is future work, not a guarantee.
+ * - Without `recovered` input the publisher is process-local and a restart
+ *   loses every applied tightening. The control plane supplies SQLite-backed
+ *   recovery so persisted TTLs and quotas survive restarts.
  * - There is no background cleanup timer and no retry/extension path. `expire()`
  *   must be called with the trusted clock; `apply()` never renews an entry.
  * - A template's `ruleDigest` binds the exact compiled (workspace-expanded)
@@ -49,6 +50,22 @@ export interface TighteningQuota {
   readonly windowMs: number;
 }
 
+export interface TemporaryTighteningRecovery {
+  /**
+   * Applications already persisted for this generation, in application order,
+   * including retired entries needed to validate later apply-time snapshots.
+   */
+  readonly entries: readonly AppliedTightening[];
+  /** Latest persisted effective snapshot (may already reflect a prior expiry). */
+  readonly currentSnapshot?: ProjectActivationSnapshot;
+  /** All persisted application times used for quota windows. */
+  readonly applicationTimes: readonly number[];
+  /** Per-template application times used for quota windows. */
+  readonly templateTimes: Readonly<Record<string, readonly number[]>>;
+  /** Last trusted-clock observation; a smaller `now` is a regression. */
+  readonly lastObservedAt: number;
+}
+
 export interface TemporaryTighteningOptions {
   readonly compiler: ProjectActivationCompiler;
   readonly base: ProjectActivationSnapshot;
@@ -58,6 +75,11 @@ export interface TemporaryTighteningOptions {
   /** Caller supplies the next version/base identity; never derived from model text. */
   readonly newProjectConfigVersion: string;
   readonly newBaseVersion: string;
+  /**
+   * Optional SQLite-backed recovery state. Persisted TTLs are preserved; this
+   * module never re-applies an old entry with a fresh clock or resets quota.
+   */
+  readonly recovered?: TemporaryTighteningRecovery;
 }
 
 export interface AppliedTightening {
@@ -67,6 +89,8 @@ export interface AppliedTightening {
   readonly appliedAt: number;
   readonly expiresAt: number;
   readonly epoch: number;
+  /** Set when the application has expired and no longer contributes a rule. */
+  readonly retiredAt?: number;
 }
 
 export interface TemporaryTighteningPublisher {
@@ -96,7 +120,7 @@ interface PublisherConfig {
   readonly newBaseVersion: string;
 }
 
-/** Process-local publisher. Restart recovery is explicitly future work. */
+/** Publisher over an optional caller-supplied recovery state. */
 export function createTemporaryTighteningPublisher(
   options: TemporaryTighteningOptions,
 ): TemporaryTighteningPublisher {
@@ -114,9 +138,18 @@ export function createTemporaryTighteningPublisher(
   let activeEntries: AppliedTightening[] = [];
   // Trusted-clock observations used only for quota windows. They are never
   // cleared by apply/expire cycles, so a retry cannot reset the quota.
-  const applicationTimes: number[] = [];
-  const templateTimes = new Map<string, number[]>();
+  let applicationTimes: number[] = [];
+  let templateTimes = new Map<string, number[]>();
   let lastObserved: number | null = null;
+
+  if (options.recovered !== undefined) {
+    const recovered = readRecovery(options.recovered, base);
+    currentSnapshot = recovered.currentSnapshot;
+    activeEntries = recovered.entries;
+    applicationTimes = recovered.applicationTimes;
+    templateTimes = recovered.templateTimes;
+    lastObserved = recovered.lastObservedAt;
+  }
 
   function readNow(): number {
     let value: number;
@@ -284,6 +317,200 @@ export function createTemporaryTighteningPublisher(
   });
 }
 
+export function validateApprovedTighteningTemplates(
+  value: unknown,
+): readonly ApprovedTighteningTemplate[] {
+  try {
+    return Object.freeze([...readTemplates(value).values()]);
+  } catch {
+    throw new ActivationError();
+  }
+}
+
+export function validateTighteningQuota(value: unknown): TighteningQuota {
+  try {
+    return readQuota(value);
+  } catch {
+    throw new ActivationError();
+  }
+}
+
+interface NormalizedRecovery {
+  readonly entries: AppliedTightening[];
+  readonly currentSnapshot: ProjectActivationSnapshot;
+  readonly applicationTimes: number[];
+  readonly templateTimes: Map<string, number[]>;
+  readonly lastObservedAt: number;
+}
+
+function readRecovery(value: unknown, base: ProjectActivationSnapshot): NormalizedRecovery {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ActivationError();
+  }
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set(['entries', 'currentSnapshot', 'applicationTimes', 'templateTimes', 'lastObservedAt']);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new ActivationError();
+  }
+  if (!Array.isArray(raw.entries) || raw.entries.length > 64) throw new ActivationError();
+  if (typeof raw.lastObservedAt !== 'number' || !Number.isSafeInteger(raw.lastObservedAt) || raw.lastObservedAt < 0) {
+    throw new ActivationError();
+  }
+  const entries: AppliedTightening[] = [];
+  const keyOf = (ref: RuleRef): string => `${ref.id}\0${ref.version}`;
+  const baseKeys = new Set(base.activeRules.map(keyOf));
+  const knownRules = new Map(
+    base.activeRules.map((item): [string, ActiveRule] => [keyOf(item), item]),
+  );
+  let sawEntry = false;
+  let previousAppliedAt = -1;
+  let previousEpoch = base.epoch;
+  for (const candidate of raw.entries) {
+    const entry = readRecoveredEntry(candidate);
+    sawEntry = true;
+    if (entry.appliedAt <= previousAppliedAt) throw new ActivationError();
+    previousAppliedAt = entry.appliedAt;
+    if (
+      entry.snapshot.project.projectId !== base.project.projectId ||
+      entry.snapshot.project.workspace !== base.project.workspace ||
+      entry.snapshot.project.baseVersion !== base.project.baseVersion
+    ) {
+      throw new ActivationError();
+    }
+    // Each application adds exactly one rule to a snapshot of the same
+    // generation. Expiry later removes rules, so a historical snapshot may
+    // contain retired entries but never an unknown or rewritten one.
+    if (entry.epoch <= previousEpoch) throw new ActivationError();
+    previousEpoch = entry.epoch;
+    const entryKey = keyOf(entry.ruleRef);
+    if (!entry.snapshot.activeRules.some((item) => keyOf(item) === entryKey)) {
+      throw new ActivationError();
+    }
+    assertSameImmutableProjection(base, entry.snapshot);
+    for (const item of entry.snapshot.activeRules) {
+      const key = keyOf(item);
+      const known = knownRules.get(key);
+      if (known === undefined) {
+        if (key !== entryKey) throw new ActivationError();
+        knownRules.set(key, item);
+      } else if (canonicalJson(known) !== canonicalJson(item)) {
+        throw new ActivationError();
+      }
+    }
+    if (entry.retiredAt === undefined) entries.push(entry);
+  }
+
+  let currentSnapshot: ProjectActivationSnapshot;
+  if (raw.currentSnapshot !== undefined) {
+    currentSnapshot = verifyProjectActivationSnapshot(raw.currentSnapshot);
+    if (
+      currentSnapshot.project.projectId !== base.project.projectId ||
+      currentSnapshot.project.workspace !== base.project.workspace ||
+      currentSnapshot.project.baseVersion !== base.project.baseVersion
+    ) {
+      throw new ActivationError();
+    }
+    if (currentSnapshot.epoch < previousEpoch) throw new ActivationError();
+    assertSameImmutableProjection(base, currentSnapshot);
+    for (const item of currentSnapshot.activeRules) {
+      const known = knownRules.get(keyOf(item));
+      if (known === undefined || canonicalJson(known) !== canonicalJson(item)) {
+        throw new ActivationError();
+      }
+    }
+    const activeKeys = new Set(entries.map((entry) => keyOf(entry.ruleRef)));
+    for (const key of activeKeys) {
+      if (!currentSnapshot.activeRules.some((item) => keyOf(item) === key)) {
+        throw new ActivationError();
+      }
+    }
+    // Base rules cannot disappear without an expiry record.
+    for (const key of baseKeys) {
+      if (currentSnapshot.activeRules.some((item) => keyOf(item) === key)) continue;
+      throw new ActivationError();
+    }
+  } else {
+    // A tightened generation always persists its current snapshot; rows
+    // without one cannot be reconstructed safely.
+    if (sawEntry) throw new ActivationError();
+    currentSnapshot = base;
+  }
+
+  if (raw.lastObservedAt < previousAppliedAt) {
+    // A restart behind a persisted application is a clock regression, never a
+    // reason to re-heal or extend the TTL.
+    throw new ActivationError();
+  }
+  if (!Array.isArray(raw.applicationTimes)) throw new ActivationError();
+  const applicationTimes = raw.applicationTimes.map(readRecoveredTime);
+  if (!isPlainRecoveryRecord(raw.templateTimes)) throw new ActivationError();
+  const templateTimes = new Map<string, number[]>();
+  for (const [templateId, times] of Object.entries(raw.templateTimes)) {
+    if (typeof templateId !== 'string' || templateId.length === 0) throw new ActivationError();
+    if (!Array.isArray(times)) throw new ActivationError();
+    templateTimes.set(templateId, times.map(readRecoveredTime));
+  }
+
+  return {
+    entries,
+    currentSnapshot,
+    applicationTimes,
+    templateTimes,
+    lastObservedAt: raw.lastObservedAt,
+  };
+}
+
+function readRecoveredEntry(value: unknown): AppliedTightening {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ActivationError();
+  }
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set(['snapshot', 'templateId', 'ruleRef', 'appliedAt', 'expiresAt', 'epoch', 'retiredAt']);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new ActivationError();
+  }
+  if (typeof raw.templateId !== 'string' || raw.templateId.length === 0 || raw.templateId.length > 160) {
+    throw new ActivationError();
+  }
+  if (raw.ruleRef === null || typeof raw.ruleRef !== 'object' || Array.isArray(raw.ruleRef)) {
+    throw new ActivationError();
+  }
+  const ref = raw.ruleRef as Record<string, unknown>;
+  if (
+    typeof ref.id !== 'string' || ref.id.length === 0 || ref.id.length > 160 ||
+    typeof ref.version !== 'number' || !Number.isSafeInteger(ref.version) || ref.version < 1
+  ) throw new ActivationError();
+  const appliedAt = readRecoveredTime(raw.appliedAt);
+  const expiresAt = readRecoveredTime(raw.expiresAt);
+  const epoch = raw.epoch;
+  if (expiresAt <= appliedAt) throw new ActivationError();
+  if (typeof epoch !== 'number' || !Number.isSafeInteger(epoch) || epoch < 1) throw new ActivationError();
+  const retiredAt = raw.retiredAt === undefined ? undefined : readRecoveredTime(raw.retiredAt);
+  if (retiredAt !== undefined && retiredAt < appliedAt) throw new ActivationError();
+  const snapshot = verifyProjectActivationSnapshot(raw.snapshot);
+  if (snapshot.epoch !== epoch) throw new ActivationError();
+  return Object.freeze({
+    snapshot,
+    templateId: raw.templateId,
+    ruleRef: Object.freeze({ id: ref.id, version: ref.version }),
+    appliedAt,
+    expiresAt,
+    epoch,
+    ...(retiredAt === undefined ? {} : { retiredAt }),
+  });
+}
+
+function readRecoveredTime(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ActivationError();
+  }
+  return value;
+}
+
+function isPlainRecoveryRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function countWithin(times: readonly number[], now: number, windowMs: number): number {
   let count = 0;
   for (const time of times) {
@@ -360,6 +587,29 @@ function assertAppendOnly(
     if (after.mandatory) throw new ActivationError();
   }
 
+  assertSameAdvisory(previous, next);
+}
+
+function assertSameImmutableProjection(
+  previous: ProjectActivationSnapshot,
+  next: ProjectActivationSnapshot,
+): void {
+  if (canonicalJson(next.project.excludedRuleIds) !== canonicalJson(previous.project.excludedRuleIds)) {
+    throw new ActivationError();
+  }
+  if (canonicalJson(next.project.advisoryBaselineRuleIds) !== canonicalJson(previous.project.advisoryBaselineRuleIds)) {
+    throw new ActivationError();
+  }
+  if (canonicalJson(next.project.routes) !== canonicalJson(previous.project.routes)) {
+    throw new ActivationError();
+  }
+  assertSameAdvisory(previous, next);
+}
+
+function assertSameAdvisory(
+  previous: ProjectActivationSnapshot,
+  next: ProjectActivationSnapshot,
+): void {
   // The advisory projection may change its identity (epoch/version), but it
   // must not gain, lose, or rewrite a narrative. A tightening is hard-rule only.
   const beforeAdvisory = previous.advisory;

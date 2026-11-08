@@ -4,6 +4,7 @@ export * from './calibration.ts';
 export * from './authority.ts';
 export * from './provider.ts';
 export * from './reviewer.ts';
+export * from './jev-reviewer.ts';
 export {
   LOCAL_REVIEWER_MODEL,
   createLocalReviewProvider,

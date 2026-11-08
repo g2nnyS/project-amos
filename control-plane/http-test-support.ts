@@ -15,6 +15,7 @@ import {
   startGovernanceServer,
   type RunningGovernanceServer,
 } from './http.ts';
+import { JevSettingsStore } from './jev-settings.ts';
 import type { ObservationLogs } from './observations.ts';
 import { createControlPlane } from './store.ts';
 
@@ -47,6 +48,7 @@ export interface HarnessOptions {
   readonly loginWindowMs?: number;
   readonly requestTimeoutMs?: number;
   readonly observations?: ObservationLogs | null;
+  readonly jevFetch?: typeof fetch;
 }
 
 export async function createStaticDir(root: string): Promise<string> {
@@ -129,6 +131,7 @@ export async function createHarness(
     ...(options.observations === undefined
       ? {}
       : { observations: options.observations }),
+    jevSettings: new JevSettingsStore(join(dir, 'secrets'), options.jevFetch),
   });
 
   return {

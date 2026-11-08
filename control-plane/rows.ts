@@ -1,16 +1,22 @@
 import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
 import type { ProjectActivationSnapshot } from '../activation/types.ts';
 import { SNAPSHOT_FORMAT, deepFreeze } from './compiler.ts';
+import { readProjectConfig } from './project-config.ts';
+import { createProbeRun, isRolloutStage, type ProbeRun, type RolloutStage } from '../rollout/contracts.ts';
 import type {
   Actor,
   Candidate,
   GovernanceEvent,
   GovernanceMetadataValue,
   Project,
+  ProjectConfig,
   Proposal,
   ProposalDecision,
   ProposalStatus,
+  ProbeRunRecord,
   PublishedVersion,
+  RuleRolloutRecord,
+  TemporaryTighteningRecord,
 } from './contracts.ts';
 import { DomainError } from './errors.ts';
 
@@ -60,6 +66,57 @@ export interface EventRow {
   actor_json: string;
   created_at: string;
   metadata_json: string;
+}
+
+export interface ProjectConfigRow {
+  project_id: string;
+  config_json: string;
+  updated_at: string;
+  updated_by_json: string;
+}
+
+export interface TemporaryTighteningRow {
+  id: number;
+  project_id: string;
+  template_id: string;
+  rule_id: string;
+  rule_version: number;
+  applied_at: number;
+  expires_at: number;
+  epoch: number;
+  snapshot_json: string;
+  actor_json: string;
+  created_at: string;
+  retired_at: number | null;
+}
+
+export interface TighteningStateRow {
+  project_id: string;
+  snapshot_json: string;
+  epoch: number;
+  last_observed_at: number;
+  updated_at: string;
+}
+
+export interface ProbeRunRow {
+  id: string;
+  project_id: string;
+  rule_id: string;
+  rule_version: number;
+  probe_digest: string;
+  run_json: string;
+  actor_json: string;
+  recorded_at: number;
+  created_at: string;
+}
+
+export interface RuleRolloutRow {
+  project_id: string;
+  rule_id: string;
+  rule_version: number;
+  state: RolloutStage;
+  updated_at: string;
+  updated_by_json: string;
 }
 
 export function projectFromRow(row: ProjectRow): Project {
@@ -183,6 +240,89 @@ export function eventFromRow(row: EventRow): GovernanceEvent {
     actor,
     createdAt: row.created_at,
     metadata,
+  });
+}
+
+export function projectConfigFromRow(row: ProjectConfigRow, workspace: string): ProjectConfig {
+  try {
+    return readProjectConfig(parseStoredJson(row.config_json), workspace);
+  } catch {
+    throw new DomainError('database_corrupt');
+  }
+}
+
+export function tighteningFromRow(
+  row: TemporaryTighteningRow,
+  nowMs: number,
+): TemporaryTighteningRecord {
+  let snapshot: ProjectActivationSnapshot;
+  try {
+    snapshot = verifyProjectActivationSnapshot(
+      deepFreeze(parseStoredJson(row.snapshot_json) as ProjectActivationSnapshot),
+    );
+  } catch {
+    throw new DomainError('database_corrupt');
+  }
+  if (
+    snapshot.epoch !== row.epoch ||
+    snapshot.project.projectId !== row.project_id ||
+    snapshot.activeRules.every((item) => item.id !== row.rule_id || item.version !== row.rule_version)
+  ) {
+    throw new DomainError('database_corrupt');
+  }
+  const expired = row.retired_at !== null || row.expires_at <= nowMs;
+  return deepFreeze({
+    id: row.id,
+    projectId: row.project_id,
+    templateId: row.template_id,
+    ruleRef: { id: row.rule_id, version: row.rule_version },
+    appliedAt: row.applied_at,
+    expiresAt: row.expires_at,
+    remainingTtlMs: expired ? 0 : Math.max(0, row.expires_at - nowMs),
+    epoch: row.epoch,
+    status: expired ? 'expired' : 'active',
+    snapshotDigest: snapshot.digest,
+    activationDigest: snapshot.activationDigest,
+    appliedBy: parseStoredJson(row.actor_json) as Actor,
+  });
+}
+
+export function probeRunFromRow(row: ProbeRunRow): ProbeRunRecord {
+  let run: ProbeRun;
+  try {
+    run = createProbeRun(parseStoredJson(row.run_json));
+  } catch {
+    throw new DomainError('database_corrupt');
+  }
+  if (
+    run.digest !== row.probe_digest ||
+    run.ruleRef.id !== row.rule_id ||
+    run.ruleRef.version !== row.rule_version ||
+    run.recordedAt !== row.recorded_at
+  ) {
+    throw new DomainError('database_corrupt');
+  }
+  return deepFreeze({
+    id: row.id,
+    projectId: row.project_id,
+    ruleRef: { id: row.rule_id, version: row.rule_version },
+    digest: row.probe_digest,
+    run,
+    recordedAt: row.recorded_at,
+    createdAt: row.created_at,
+    recordedBy: parseStoredJson(row.actor_json) as Actor,
+  });
+}
+
+export function ruleRolloutFromRow(row: RuleRolloutRow): RuleRolloutRecord {
+  if (!isRolloutStage(row.state)) throw new DomainError('database_corrupt');
+  return deepFreeze({
+    projectId: row.project_id,
+    ruleId: row.rule_id,
+    ruleVersion: row.rule_version,
+    state: row.state,
+    updatedAt: row.updated_at,
+    updatedBy: parseStoredJson(row.updated_by_json) as Actor,
   });
 }
 

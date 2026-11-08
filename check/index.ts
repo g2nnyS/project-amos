@@ -17,6 +17,7 @@ export {
   DEFAULT_MAX_FILES,
   SKIPPED_DIRECTORIES,
   TREE_DIGEST_DOMAIN,
+  computeWorkspaceTreeDigest,
   digestTree,
   type TreeDigestOptions,
   type TreeDigestResult,

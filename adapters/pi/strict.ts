@@ -945,7 +945,6 @@ export async function createStrictPiSession(
       timeout = setTimeout(() => {
         haltRun(BUDGET_CODE.timeout);
       }, promptTimeoutMs);
-      timeout.unref?.();
 
       // The model receives no template, skill, or extension command expansion.
       await session.prompt(text, { expandPromptTemplates: false });

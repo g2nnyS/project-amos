@@ -1,6 +1,13 @@
 import type { PolicyDecision } from '../engine/engine.ts';
 import type { InjectionRoute } from '../injector/snapshot.ts';
 import type { ProjectActivationSnapshot } from '../activation/types.ts';
+import type {
+  ApprovedTighteningTemplate,
+  TighteningQuota,
+} from '../activation/tighten.ts';
+import type { PromotionThresholds, ProbeRun, RolloutStage } from '../rollout/contracts.ts';
+import type { CalibrationEvidence, ReviewerPolicy } from '../review/calibration.ts';
+import type { JevPublicConfig } from '../decision/config.ts';
 
 /**
  * Public domain contract for the local governance product.
@@ -191,12 +198,18 @@ export interface PublishedVersion {
 
 export type GovernanceEventKind =
   | 'project_created'
+  | 'project_config_updated'
   | 'proposal_created'
   | 'proposal_approved'
   | 'proposal_rejected'
   | 'proposal_withdrawn'
   | 'proposal_expired'
-  | 'version_published';
+  | 'version_published'
+  | 'temporary_tightening_applied'
+  | 'temporary_tightening_expired'
+  | 'probe_run_recorded'
+  | 'rollout_promoted'
+  | 'rollout_promotion_held';
 
 export type GovernanceMetadataValue = string | number | boolean | null;
 
@@ -274,6 +287,240 @@ export interface PublishArtifactInput {
   readonly snapshot: PolicySnapshot;
   /** Deterministic P1 snapshot JSON written to the harness artifact path. */
   readonly artifact: string;
+  /** Present on every new writer; legacy test callbacks may ignore it. */
+  readonly kind?: 'publish' | 'tightening';
+  readonly managedArtifact?: string;
+  readonly activationSnapshot?: ProjectActivationSnapshot;
+  readonly managedProjection?: unknown;
+}
+
+export interface ProjectWorkflowGateConfig {
+  readonly enabled: boolean;
+  readonly guidance: boolean;
+  readonly shellGate: boolean;
+  readonly completionReview: boolean;
+  readonly jevConfigPath: string | null;
+  readonly actionAssessment: boolean;
+  readonly requirementEgress: 'allowed' | 'denied';
+}
+
+/**
+ * Non-secret managed-host settings. Credentials are represented only by an
+ * environment-variable name; a literal key is rejected on write.
+ *
+ * `reviewer` is the discriminator for the managed review semantics. `'jev'`
+ * selects the Jev provider that reads `jevConfigPath`; `null` with any legacy
+ * reviewer field present is the stopped migration state. The legacy
+ * `reviewEndpoint`/`reviewModel`/`apiKeyEnv` fields stay stored so the
+ * migration gate can recognize an old configuration, and are never projected.
+ */
+export interface ProjectManagedConfig {
+  readonly enabled: boolean;
+  readonly requirementEgress: 'allowed' | 'denied';
+  readonly grantTtlMs: number;
+  readonly reviewer: 'jev' | null;
+  readonly jevConfigPath: string | null;
+  readonly reviewEndpoint: string | null;
+  readonly reviewModel: string | null;
+  readonly apiKeyEnv: string | null;
+  readonly ceilingDigest: string | null;
+  readonly reviewPolicy: ReviewerPolicy | null;
+  readonly reviewCalibration: CalibrationEvidence | null;
+}
+
+export interface ProjectTighteningConfig {
+  readonly enabled: boolean;
+  readonly quota: TighteningQuota;
+  readonly templates: readonly ApprovedTighteningTemplate[];
+}
+
+export interface ProjectRolloutConfig {
+  /**
+   * Last-pre-registered threshold. Per-rule thresholds remain available in
+   * `thresholdsByRule`; this alias keeps the single-threshold contract while
+   * allowing multiple rules to be promoted independently.
+   */
+  readonly thresholds: PromotionThresholds | null;
+  readonly thresholdsByRule: Readonly<Record<string, PromotionThresholds>>;
+  readonly ruleStates: Readonly<Record<string, RolloutStage>>;
+}
+
+export interface JevSettingsView {
+  readonly config: JevPublicConfig | null;
+  readonly hasApiKey: boolean;
+}
+
+export interface SaveJevSettingsInput extends JevPublicConfig {
+  /** Empty or omitted retains the existing credential. */
+  readonly apiKey?: string;
+}
+
+export interface JevSettingsTestResult {
+  readonly ok: true;
+  readonly model: string;
+}
+
+/** Full non-secret project configuration owned by the governance service. */
+export interface ProjectConfig {
+  readonly workflowGate: ProjectWorkflowGateConfig;
+  readonly managed: ProjectManagedConfig;
+  readonly tightening: ProjectTighteningConfig;
+  readonly rollout: ProjectRolloutConfig;
+}
+
+export interface UpdateProjectConfigInput {
+  readonly workflowGate?: unknown;
+  readonly managed?: unknown;
+  readonly tightening?: unknown;
+  readonly rollout?: unknown;
+}
+
+export interface TemporaryTighteningRecord {
+  readonly id: number;
+  readonly projectId: string;
+  readonly templateId: string;
+  readonly ruleRef: { readonly id: string; readonly version: number };
+  readonly appliedAt: number;
+  readonly expiresAt: number;
+  readonly remainingTtlMs: number;
+  readonly epoch: number;
+  readonly status: 'active' | 'expired';
+  readonly snapshotDigest: string;
+  readonly activationDigest: string;
+  readonly appliedBy: Actor;
+}
+
+export interface TemporaryTighteningStatus {
+  readonly projectId: string;
+  readonly baseVersion: number | null;
+  readonly epoch: number;
+  readonly policyVersion: string | null;
+  readonly activationDigest: string | null;
+  readonly lastObservedAt: number | null;
+  readonly active: readonly TemporaryTighteningRecord[];
+  readonly expired: readonly TemporaryTighteningRecord[];
+}
+
+export interface ApplyTemporaryTighteningInput {
+  readonly templateId: string;
+  readonly ttlMs: number;
+}
+
+/**
+ * Raw `amos-probe-run` v1 content, or `{ probe }`. The service accepts both
+ * shapes and validates the run with `createProbeRun`.
+ */
+export type RecordProbeRunInput = unknown;
+
+export interface RolloutCurrentBinding {
+  readonly activationDigest: string;
+  readonly host: { readonly id: string; readonly version: string };
+  readonly check: { readonly id: string; readonly version: string } | null;
+  readonly environment: { readonly id: string; readonly version: string };
+}
+
+export interface EvaluateRulePromotionInput {
+  /** Optional pre-registration candidate; must be human-authored. */
+  readonly thresholds?: unknown;
+  /** Raw probe runs. Each digest must already be recorded for this project. */
+  readonly evidence?: readonly unknown[];
+  /** Recorded probe-run digests or ids, used when `evidence` is omitted. */
+  readonly probeRunIds?: readonly string[];
+  readonly reviewerCalibration?: unknown;
+  readonly current: RolloutCurrentBinding;
+  readonly ruleVersion?: number;
+}
+
+export interface ProbeRunRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly ruleRef: { readonly id: string; readonly version: number };
+  readonly digest: string;
+  readonly run: ProbeRun;
+  readonly recordedAt: number;
+  readonly createdAt: string;
+  readonly recordedBy: Actor;
+}
+
+export interface RuleRolloutRecord {
+  readonly projectId: string;
+  readonly ruleId: string;
+  readonly ruleVersion: number;
+  readonly state: RolloutStage;
+  readonly updatedAt: string;
+  readonly updatedBy: Actor;
+}
+
+export interface RolloutEvaluation {
+  readonly ruleId: string;
+  readonly ruleVersion: number;
+  readonly fromStage: RolloutStage;
+  readonly toStage: RolloutStage;
+  readonly decision: 'promote' | 'hold' | 'reject';
+  /** Alias for callers that use `decision.action` vocabulary. */
+  readonly action: 'promote' | 'hold' | 'reject';
+  readonly reasons: readonly string[];
+  readonly state: RolloutStage;
+  readonly changed: boolean;
+}
+
+export interface PublishArtifactWrite {
+  readonly projectId: string;
+  readonly workspace: string;
+  readonly version: number;
+  readonly kind: 'publish' | 'tightening';
+  /** Exact P1 activation snapshot serialized to `.pi/activation.json`. */
+  readonly activationSnapshot: ProjectActivationSnapshot;
+  readonly activationArtifact: string;
+  /** Generated non-secret projection serialized to `.pi/amos.managed.json`. */
+  readonly managedProjection: unknown;
+  readonly managedArtifact: string;
+}
+
+export interface HarnessRuntimeReport {
+  readonly format: 'amos-harness-runtime';
+  readonly version: 1;
+  readonly projectId: string;
+  readonly activationDigest: string;
+  readonly epoch: number;
+  readonly policyVersion: string;
+  readonly loadedAt: string;
+  readonly lastToolAt?: string;
+  readonly harness: 'pi' | 'opencode';
+  readonly mode: 'enforcing';
+  readonly capabilities: Readonly<Record<string, unknown>>;
+}
+
+export type HarnessRuntimeState =
+  | 'loaded'
+  | 'stale'
+  | 'never'
+  | 'invalid'
+  | 'unpublished';
+
+export type ManagedProjectionState =
+  | 'written'
+  | 'missing'
+  | 'invalid'
+  | 'stale';
+
+export interface ManagedProjectionStatus {
+  readonly status: ManagedProjectionState;
+  readonly projectId: string | null;
+  readonly activationDigest: string | null;
+  readonly epoch: number | null;
+  readonly policyVersion: string | null;
+}
+
+export interface RuntimeStatus {
+  readonly status: HarnessRuntimeState;
+  readonly runtime: HarnessRuntimeReport | null;
+  readonly published: {
+    readonly version: number;
+    readonly activationDigest: string;
+    readonly policyVersion?: string;
+  } | null;
+  readonly projection: ManagedProjectionStatus;
 }
 
 export interface CreateControlPlaneOptions {
@@ -294,6 +541,14 @@ export interface CreateControlPlaneOptions {
    * never disguised as a host load.
    */
   readonly publishArtifact?: (input: PublishArtifactInput) => void;
+  /**
+   * New atomic dual-artifact writer. It receives both `.pi/activation.json`
+   * and `.pi/amos.managed.json` content; failures are reported honestly by the
+   * runtime status endpoint and never roll back the database version.
+   */
+  readonly writeArtifacts?: (input: PublishArtifactWrite) => void;
+  /** Directory outside project workspaces for managed journals. */
+  readonly managedAuditDir?: string;
   readonly now?: () => number;
 }
 
@@ -327,6 +582,44 @@ export interface ControlPlane {
   ): Proposal;
   listAudit(query?: AuditQuery): AuditPage;
   simulate(projectId: string, input: SimulateInput): PolicyDecision;
+  getProjectConfig(projectId: string): ProjectConfig;
+  /** Compatibility alias for `getProjectConfig`. */
+  getConfig(projectId: string): ProjectConfig;
+  updateProjectConfig(
+    projectId: string,
+    input: UpdateProjectConfigInput,
+    actor: Actor,
+  ): ProjectConfig;
+  /** Compatibility alias for `updateProjectConfig`. */
+  updateConfig(
+    projectId: string,
+    input: UpdateProjectConfigInput,
+    actor: Actor,
+  ): ProjectConfig;
+  getRuntimeStatus(projectId: string): RuntimeStatus;
+  applyTemporaryTightening(
+    projectId: string,
+    input: ApplyTemporaryTighteningInput,
+    actor: Actor,
+  ): TemporaryTighteningStatus;
+  expireTemporaryTightenings(
+    projectId: string,
+    actor?: Actor,
+  ): TemporaryTighteningStatus;
+  listTemporaryTightenings(projectId: string): TemporaryTighteningStatus;
+  recordProbeRun(
+    projectId: string,
+    input: RecordProbeRunInput,
+    actor: Actor,
+  ): ProbeRunRecord;
+  listProbeRuns(projectId: string): ProbeRunRecord[];
+  evaluateRulePromotion(
+    projectId: string,
+    ruleId: string,
+    input: EvaluateRulePromotionInput,
+    actor: Actor,
+  ): RolloutEvaluation;
+  listRuleRollouts(projectId: string): RuleRolloutRecord[];
 }
 
 export { DomainError, isDomainError } from './errors.ts';

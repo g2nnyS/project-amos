@@ -30,6 +30,11 @@ import {
 } from '../../decision/grant.ts';
 import type { RequirementFrame } from '../../decision/requirement.ts';
 import { createRequirementSessionStore } from '../../decision/session.ts';
+import {
+  createRequirementRegistry,
+  defaultRequirementRegistryPath,
+  type RequirementRegistry,
+} from '../../decision/requirement-registry.ts';
 import type { AssessmentContext } from '../../decision/types.ts';
 import {
   createInjectorSession,
@@ -68,14 +73,20 @@ import {
   loadActivationGuidance,
   loadActivationRuntime,
 } from '../shared/activation-guidance.ts';
+import { readHostProjection } from '../shared/host-projection.ts';
 import {
   PI_MANAGED_CAPABILITIES,
   writeHarnessRuntimeReport,
 } from '../shared/runtime-report.ts';
 import type { ActivationRuntime } from '../../activation/runtime.ts';
-import { createHarnessGate, type HarnessGate } from '../../managed/harness.ts';
 import {
-  createHttpReviewProvider,
+  createHarnessGate,
+  type HarnessGate,
+  type HarnessRequirementState,
+  type HarnessReviewOptions,
+} from '../../managed/harness.ts';
+import {
+  createJevManagedReviewer,
   isValidPolicy,
   type CalibrationEvidence,
   type ReviewerPolicy,
@@ -180,6 +191,11 @@ export function readPiConfig(directory: string): PiAmosConfig | null {
 interface PiActivationGuidanceConfig {
   readonly snapshotPath: string;
   readonly projectId: string;
+  readonly expected?: {
+    readonly activationDigest: string;
+    readonly epoch: number;
+    readonly policyVersion: string;
+  };
 }
 
 type PiActivationGuidanceState =
@@ -197,6 +213,22 @@ function readPiActivationGuidanceConfig(
 ): PiActivationGuidanceState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
+  }
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') return { status: 'error' };
+  if (projection.status === 'ready') {
+    return {
+      status: 'enabled',
+      config: {
+        snapshotPath: projection.projection.activation.snapshotPath,
+        projectId: projection.projection.activation.projectId,
+        expected: {
+          activationDigest: projection.projection.activationDigest,
+          epoch: projection.projection.epoch,
+          policyVersion: projection.projection.policyVersion,
+        },
+      },
+    };
   }
   const configPath = join(directory, '.pi', 'amos.json');
   if (!existsSync(configPath)) {
@@ -236,9 +268,8 @@ function readPiActivationGuidanceConfig(
 }
 
 interface PiManagedReviewConfig {
-  readonly endpoint: string;
-  readonly model: string;
-  readonly apiKeyEnv: string;
+  readonly reviewer: 'jev';
+  readonly jevConfigPath: string;
   readonly policy: ReviewerPolicy;
   readonly calibration: CalibrationEvidence | null;
   readonly ceilingDigest: string;
@@ -254,7 +285,7 @@ interface PiManagedConfig {
 type PiManagedState =
   | { readonly status: 'absent' }
   | { readonly status: 'enabled'; readonly config: PiManagedConfig }
-  | { readonly status: 'error' };
+  | { readonly status: 'error'; readonly code?: string };
 
 /**
  * Optional `.pi/amos.json` `managed` field. When enabled, the harness pre-call
@@ -265,6 +296,36 @@ type PiManagedState =
 function readPiManagedState(directory: string): PiManagedState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
+  }
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') {
+    return {
+      status: 'error',
+      ...(projection.code === undefined ? {} : { code: projection.code }),
+    };
+  }
+  if (projection.status === 'ready') {
+    const managed = projection.projection.managed;
+    if (!managed.enabled) return { status: 'absent' };
+    const review = managed.review;
+    return {
+      status: 'enabled',
+      config: {
+        auditPath: managed.auditPath,
+        requirementEgress: managed.requirementEgress,
+        review:
+          review === null
+            ? null
+            : {
+                reviewer: review.reviewer,
+                jevConfigPath: review.jevConfigPath,
+                policy: review.policy,
+                calibration: review.calibration,
+                ceilingDigest: review.ceilingDigest,
+                grantTtlMs: review.grantTtlMs,
+              },
+      },
+    };
   }
   const configPath = join(directory, '.pi', 'amos.json');
   if (!existsSync(configPath)) {
@@ -308,6 +369,9 @@ function readPiManagedState(directory: string): PiManagedState {
       return { status: 'error' };
     }
     const review = readPiManagedReview(raw.managed.review);
+    if (review === LEGACY_REVIEWER) {
+      return { status: 'error', code: 'reviewer_migration_required' };
+    }
     if (review === undefined) return { status: 'error' };
     return {
       status: 'enabled',
@@ -322,37 +386,40 @@ function readPiManagedState(directory: string): PiManagedState {
   }
 }
 
+const LEGACY_REVIEWER = 'reviewer_migration_required' as const;
+
 function readPiManagedReview(
   value: unknown,
-): PiManagedReviewConfig | null | undefined {
+): PiManagedReviewConfig | null | undefined | typeof LEGACY_REVIEWER {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) return undefined;
   const keys = Object.keys(value);
+  // Legacy HTTP-reviewer fields are an explicit migration stop, never a
+  // silent fallback: managed mode stays blocked until a human republishes a
+  // Jev reviewer configuration.
   if (
     keys.some(
       (key) =>
-        key !== 'endpoint' &&
-        key !== 'model' &&
-        key !== 'apiKeyEnv' &&
+        key !== 'reviewer' &&
+        key !== 'jevConfigPath' &&
         key !== 'policy' &&
         key !== 'calibration' &&
         key !== 'ceilingDigest' &&
         key !== 'grantTtlMs',
     )
   ) {
-    return undefined;
+    return LEGACY_REVIEWER;
   }
   if (
-    !isNonBlankString(value.endpoint) ||
-    !isNonBlankString(value.model) ||
-    !isNonBlankString(value.apiKeyEnv) ||
+    value.reviewer !== 'jev' ||
+    !isNonBlankString(value.jevConfigPath) ||
+    value.jevConfigPath.includes('\0') ||
     !isNonBlankString(value.ceilingDigest) ||
     !/^sha256:[a-f0-9]{64}$/.test(value.ceilingDigest) ||
     !isValidPolicy(value.policy)
   ) {
     return undefined;
   }
-  if (value.policy.model !== value.model) return undefined;
   const calibration = value.calibration;
   if (
     calibration !== null &&
@@ -372,16 +439,9 @@ function readPiManagedReview(
   ) {
     return undefined;
   }
-  try {
-    const url = new URL(value.endpoint);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
-  } catch {
-    return undefined;
-  }
   return {
-    endpoint: value.endpoint,
-    model: value.model,
-    apiKeyEnv: value.apiKeyEnv,
+    reviewer: 'jev',
+    jevConfigPath: value.jevConfigPath,
     policy: value.policy,
     calibration: (calibration ?? null) as CalibrationEvidence | null,
     ceilingDigest: value.ceilingDigest,
@@ -431,6 +491,15 @@ export function readPiWorkflowGateState(
 ): PiWorkflowGateState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent', config: null };
+  }
+
+  const projection = readHostProjection(directory);
+  if (projection.status === 'error') return { status: 'error', config: null };
+  if (projection.status === 'ready') {
+    const config = projection.projection.workflowGate as WorkflowGateConfig;
+    return config.enabled
+      ? { status: 'enabled', config }
+      : { status: 'absent', config: null };
   }
 
   const configPath = join(directory, '.pi', 'amos.json');
@@ -555,7 +624,7 @@ interface GuidanceSessionState {
 
 type ManagedGateState =
   | { readonly status: 'absent' }
-  | { readonly status: 'error' }
+  | { readonly status: 'error'; readonly code?: string }
   | {
       readonly status: 'ready';
       readonly gate: HarnessGate;
@@ -580,6 +649,138 @@ export default function amosPiLogOnly(
   };
 
   const recorders = new Map<string, LogOnlyRecorder>();
+
+  function requirementContext(
+    directory: string,
+  ): { readonly projectId: string; readonly epoch: number } | null {
+    const cached = requirementContexts.get(directory);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let context: { readonly projectId: string; readonly epoch: number } | null =
+      null;
+    try {
+      const activation = readPiActivationGuidanceConfig(directory);
+      if (activation.status === 'enabled') {
+        const loaded = loadActivationRuntime({
+          snapshotPath: activation.config.snapshotPath,
+          projectId: activation.config.projectId,
+          workspace: directory,
+        });
+        if (loaded.status === 'ready') {
+          context = {
+            projectId: loaded.runtime.projectId,
+            epoch: loaded.runtime.epoch,
+          };
+        }
+      }
+    } catch {
+      context = null;
+    }
+    requirementContexts.set(directory, context);
+    return context;
+  }
+
+  function ownerUid(): number | null {
+    return typeof process.getuid === 'function' ? process.getuid() : null;
+  }
+
+  function requirementRegistry(
+    directory: string,
+  ): { readonly registry: RequirementRegistry; readonly epoch: number } | null {
+    const context = requirementContext(directory);
+    const uid = ownerUid();
+    if (context === null || uid === null) {
+      return null;
+    }
+    const path = defaultRequirementRegistryPath(context.projectId);
+    const existing = requirementRegistries.get(path);
+    if (existing !== undefined) {
+      return { registry: existing, epoch: context.epoch };
+    }
+    try {
+      const registry = createRequirementRegistry({
+        path,
+        projectId: context.projectId,
+        ownerUid: uid,
+        now: () => Date.now(),
+      });
+      requirementRegistries.set(path, registry);
+      return { registry, epoch: context.epoch };
+    } catch {
+      return null;
+    }
+  }
+
+  function captureRequirement(
+    directory: string,
+    key: string,
+    text: string,
+    egress: 'allowed' | 'denied',
+  ): void {
+    const store = requirementRegistry(directory);
+    if (store === null) {
+      return;
+    }
+    try {
+      store.registry.captureUserMessage({
+        sessionId: safeManagedSessionId(key),
+        text,
+        egress,
+        declaredScope: [],
+        actor: 'user',
+        capturedBy: 'harness',
+        epoch: store.epoch,
+      });
+    } catch {
+      // A failed capture leaves the previous version in place; the gate reads
+      // the persisted state and stops when it is not `ready`.
+    }
+  }
+
+  function revokeRequirement(directory: string, key: string): void {
+    const store = requirementRegistry(directory);
+    if (store === null) {
+      return;
+    }
+    try {
+      store.registry.revoke(safeManagedSessionId(key));
+    } catch {
+      // The gate resolves `unavailable` on the next call.
+    }
+  }
+
+  function requirementState(
+    directory: string,
+    key: string,
+    epoch: number,
+  ): HarnessRequirementState {
+    const unavailable: HarnessRequirementState = {
+      status: 'unavailable',
+      frame: null,
+      version: null,
+      digest: null,
+    };
+    const store = requirementRegistry(directory);
+    if (store === null) {
+      return unavailable;
+    }
+    try {
+      const resolved = store.registry.resolve(
+        safeManagedSessionId(key),
+        epoch,
+      );
+      return {
+        status: resolved.status,
+        frame: resolved.frame,
+        version: resolved.version,
+        digest: resolved.digest,
+      };
+    } catch {
+      return unavailable;
+    }
+  }
+
   const managedGates = new Map<string, ManagedGateState>();
   const runtimeUsed = new Set<string>();
   const managedPending = new Map<
@@ -589,6 +790,13 @@ export default function amosPiLogOnly(
   // One bounded, memory-only requirement capture per extension. Frames are
   // keyed by session and only ever created from the direct user prompt.
   const requirementStore = createRequirementSessionStore();
+  // Versioned, restart-recovered requirement state for the managed gate. The
+  // in-memory store above still backs the advisory literal-command path.
+  const requirementRegistries = new Map<string, RequirementRegistry>();
+  const requirementContexts = new Map<
+    string,
+    { readonly projectId: string; readonly epoch: number } | null
+  >();
   const guidanceSessions = new Map<string, GuidanceSessionState>();
   const queuedToolCalls = new Map<string, string>();
   const repairContinuedSessions = new Set<string>();
@@ -649,6 +857,11 @@ export default function amosPiLogOnly(
 
     const config = readPiConfig(directory);
     if (config === null) {
+      // A generated managed projection is a complete enforcement input; the
+      // legacy Stage A shadow recorder is not required in that mode.
+      if (readPiManagedState(directory).status === 'enabled') {
+        return null;
+      }
       reportConfigErrorOnce();
       return null;
     }
@@ -688,7 +901,7 @@ export default function amosPiLogOnly(
       return state;
     }
     if (managed.status === 'error') {
-      const state: ManagedGateState = { status: 'error' };
+      const state: ManagedGateState = { status: 'error', code: managed.code };
       managedGates.set(cacheKey, state);
       return state;
     }
@@ -709,37 +922,50 @@ export default function amosPiLogOnly(
       managedGates.set(cacheKey, state);
       return state;
     }
+    if (
+      activation.config.expected !== undefined &&
+      (loaded.runtime.activationDigest !== activation.config.expected.activationDigest ||
+        loaded.runtime.epoch !== activation.config.expected.epoch ||
+        loaded.runtime.snapshot.project.projectConfigVersion !== activation.config.expected.policyVersion)
+    ) {
+      const state: ManagedGateState = { status: 'error' };
+      managedGates.set(cacheKey, state);
+      return state;
+    }
 
     try {
       const configured = managed.config;
-      let review:
-        | {
-            provider: ReturnType<typeof createHttpReviewProvider>;
-            policy: ReviewerPolicy;
-            calibration: CalibrationEvidence | null;
-            ceilingDigest: string;
-            grantTtlMs?: number;
-          }
-        | null = null;
+      let review: HarnessReviewOptions | null = null;
       if (configured.review !== null) {
         const r = configured.review;
-        review = {
-          provider: createHttpReviewProvider({
-            endpoint: r.endpoint,
-            model: r.model,
-            apiKeyEnv: r.apiKeyEnv,
-          }),
-          policy: r.policy,
-          calibration: r.calibration,
-          ceilingDigest: r.ceilingDigest,
-          ...(r.grantTtlMs === undefined ? {} : { grantTtlMs: r.grantTtlMs }),
-        };
+        // The Jev reviewer is loaded from the shared Jev config entry; a
+        // failure here keeps the managed gate at `error` so every call blocks.
+        try {
+          const jev = loadJevConfig(r.jevConfigPath);
+          review = {
+            reviewer: createJevManagedReviewer({
+              provider: jev.assessmentProvider,
+              policy: r.policy,
+              calibration: r.calibration,
+            }),
+            policy: r.policy,
+            ceilingDigest: r.ceilingDigest,
+            ...(r.grantTtlMs === undefined ? {} : { grantTtlMs: r.grantTtlMs }),
+          };
+        } catch {
+          const state: ManagedGateState = {
+            status: 'error',
+            code: 'reviewer_unavailable',
+          };
+          managedGates.set(cacheKey, state);
+          return state;
+        }
       }
       const gate = createHarnessGate({
         activation: loaded.runtime,
         auditPath: configured.auditPath,
         sessionId: safeManagedSessionId(key),
-        requirement: () => requirementStore.current(key),
+        requirement: () => requirementState(directory, key, loaded.runtime.epoch),
         review,
         now: () => Date.now(),
       });
@@ -800,7 +1026,10 @@ export default function amosPiLogOnly(
         return null;
       }
       if (state.status === 'error') {
-        return { action: 'block', code: 'amos_managed_config_error' };
+        return {
+          action: 'block',
+          code: `amos_managed_${state.code ?? 'config_error'}`,
+        };
       }
       if (normalized === null || normalized.kind !== 'action') {
         return { action: 'block', code: 'amos_managed_coverage_gap' };
@@ -1606,8 +1835,15 @@ export default function amosPiLogOnly(
             typeof event.prompt === 'string' ? event.prompt : '',
             managedState.config.requirementEgress,
           );
+          captureRequirement(
+            ctx.cwd,
+            key,
+            typeof event.prompt === 'string' ? event.prompt : '',
+            managedState.config.requirementEgress,
+          );
         } catch {
           requirementStore.clear(key);
+          revokeRequirement(ctx.cwd, key);
         }
       } else if (actionAssessmentConfig === null) {
         requirementStore.clear(key);
@@ -1618,8 +1854,15 @@ export default function amosPiLogOnly(
             typeof event.prompt === 'string' ? event.prompt : '',
             actionAssessmentConfig.requirementEgress,
           );
+          captureRequirement(
+            ctx.cwd,
+            key,
+            typeof event.prompt === 'string' ? event.prompt : '',
+            actionAssessmentConfig.requirementEgress,
+          );
         } catch {
           requirementStore.clear(key);
+          revokeRequirement(ctx.cwd, key);
         }
       }
       if (

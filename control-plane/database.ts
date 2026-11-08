@@ -9,8 +9,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { COMPILER_VERSION } from './compiler.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import { classifyOpenError } from './sqlite-errors.ts';
+import { DEFAULT_PROJECT_CONFIG } from './project-config.ts';
 
-export const DATABASE_SCHEMA_VERSION = 1;
+export const DATABASE_SCHEMA_VERSION = 2;
 const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
 const KNOWN_TABLES = [
@@ -19,6 +20,11 @@ const KNOWN_TABLES = [
   'proposals',
   'versions',
   'governance_events',
+  'project_configs',
+  'temporary_tightenings',
+  'tightening_state',
+  'probe_runs',
+  'rule_rollouts',
 ] as const;
 
 /**
@@ -188,6 +194,9 @@ function migrateOrVerify(
       createSchema(db);
       insertMetadata(db, schemaDigest, nowMs);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+    } else if (version === 1) {
+      migrateV1ToV2(db, schemaDigest);
+      db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
     } else if (version === DATABASE_SCHEMA_VERSION) {
       verifySchema(db, schemaDigest);
     } else {
@@ -259,7 +268,7 @@ function createSchema(db: DatabaseSync): void {
       project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
       proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
       version INTEGER,
-      kind TEXT NOT NULL CHECK (kind IN ('project_created', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published')),
+      kind TEXT NOT NULL CHECK (kind IN ('project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
       actor_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       metadata_json TEXT NOT NULL
@@ -270,7 +279,197 @@ function createSchema(db: DatabaseSync): void {
     CREATE INDEX versions_project_version ON versions(project_id, version DESC);
     CREATE INDEX governance_events_project_id ON governance_events(project_id, id DESC);
     CREATE INDEX governance_events_id ON governance_events(id DESC);
+
+    CREATE TABLE project_configs (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE RESTRICT,
+      config_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL
+    );
+
+    CREATE TABLE temporary_tightenings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      template_id TEXT NOT NULL,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      applied_at INTEGER NOT NULL CHECK (applied_at >= 0),
+      expires_at INTEGER NOT NULL CHECK (expires_at > applied_at),
+      epoch INTEGER NOT NULL CHECK (epoch > 0),
+      snapshot_json TEXT NOT NULL,
+      actor_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      retired_at INTEGER,
+      UNIQUE (project_id, template_id, rule_id, rule_version, applied_at),
+      CHECK (retired_at IS NULL OR retired_at >= applied_at)
+    );
+    CREATE INDEX temporary_tightenings_project_active
+      ON temporary_tightenings(project_id, retired_at, expires_at);
+
+    CREATE TABLE tightening_state (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE RESTRICT,
+      snapshot_json TEXT NOT NULL,
+      epoch INTEGER NOT NULL CHECK (epoch > 0),
+      last_observed_at INTEGER NOT NULL CHECK (last_observed_at >= 0),
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE probe_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      probe_digest TEXT NOT NULL UNIQUE,
+      run_json TEXT NOT NULL,
+      actor_json TEXT NOT NULL,
+      recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX probe_runs_project_rule
+      ON probe_runs(project_id, rule_id, recorded_at DESC);
+
+    CREATE TABLE rule_rollouts (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      state TEXT NOT NULL CHECK (state IN ('draft', 'log_only', 'selective_deny', 'confirm_enabled', 'retired')),
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL,
+      PRIMARY KEY (project_id, rule_id)
+    );
   `);
+}
+
+/**
+ * Strict version-1 -> version-2 migration. It adds configuration, tightening,
+ * probe and rollout tables, and rebuilds the event table so its closed kind
+ * list includes the new lifecycle records. Existing rows are copied unchanged.
+ */
+function migrateV1ToV2(db: DatabaseSync, schemaDigest: string): void {
+  const tables = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )
+    .all() as unknown as Array<{ name: string }>;
+  const names = new Set(tables.map((table) => table.name));
+  for (const required of ['governance_meta', 'projects', 'proposals', 'versions', 'governance_events']) {
+    if (!names.has(required)) throw new DomainError('database_incompatible');
+  }
+  for (const added of ['project_configs', 'temporary_tightenings', 'tightening_state', 'probe_runs', 'rule_rollouts']) {
+    if (names.has(added)) throw new DomainError('database_incompatible');
+  }
+
+  const metaRows = db
+    .prepare('SELECT key, value FROM governance_meta')
+    .all() as unknown as Array<{ key: string; value: string }>;
+  const meta = new Map(metaRows.map((row) => [row.key, row.value]));
+  if (
+    meta.get('schema_version') !== '1' ||
+    meta.get('compiler_version') !== COMPILER_VERSION ||
+    meta.get('rule_schema_digest') !== schemaDigest
+  ) {
+    throw new DomainError('database_incompatible');
+  }
+
+  db.exec(`
+    CREATE TABLE project_configs (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE RESTRICT,
+      config_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL
+    );
+
+    CREATE TABLE temporary_tightenings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      template_id TEXT NOT NULL,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      applied_at INTEGER NOT NULL CHECK (applied_at >= 0),
+      expires_at INTEGER NOT NULL CHECK (expires_at > applied_at),
+      epoch INTEGER NOT NULL CHECK (epoch > 0),
+      snapshot_json TEXT NOT NULL,
+      actor_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      retired_at INTEGER,
+      UNIQUE (project_id, template_id, rule_id, rule_version, applied_at),
+      CHECK (retired_at IS NULL OR retired_at >= applied_at)
+    );
+    CREATE INDEX temporary_tightenings_project_active
+      ON temporary_tightenings(project_id, retired_at, expires_at);
+
+    CREATE TABLE tightening_state (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE RESTRICT,
+      snapshot_json TEXT NOT NULL,
+      epoch INTEGER NOT NULL CHECK (epoch > 0),
+      last_observed_at INTEGER NOT NULL CHECK (last_observed_at >= 0),
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE probe_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      probe_digest TEXT NOT NULL UNIQUE,
+      run_json TEXT NOT NULL,
+      actor_json TEXT NOT NULL,
+      recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX probe_runs_project_rule
+      ON probe_runs(project_id, rule_id, recorded_at DESC);
+
+    CREATE TABLE rule_rollouts (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+      rule_id TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version > 0),
+      state TEXT NOT NULL CHECK (state IN ('draft', 'log_only', 'selective_deny', 'confirm_enabled', 'retired')),
+      updated_at TEXT NOT NULL,
+      updated_by_json TEXT NOT NULL,
+      PRIMARY KEY (project_id, rule_id)
+    );
+
+    ALTER TABLE governance_events RENAME TO governance_events_v1;
+    DROP INDEX IF EXISTS governance_events_project_id;
+    DROP INDEX IF EXISTS governance_events_id;
+    CREATE TABLE governance_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+      proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
+      version INTEGER,
+      kind TEXT NOT NULL CHECK (kind IN ('project_created', 'project_config_updated', 'proposal_created', 'proposal_approved', 'proposal_rejected', 'proposal_withdrawn', 'proposal_expired', 'version_published', 'temporary_tightening_applied', 'temporary_tightening_expired', 'probe_run_recorded', 'rollout_promoted', 'rollout_promotion_held')),
+      actor_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+    INSERT INTO governance_events (id, project_id, proposal_id, version, kind, actor_json, created_at, metadata_json)
+      SELECT id, project_id, proposal_id, version, kind, actor_json, created_at, metadata_json FROM governance_events_v1;
+    DROP TABLE governance_events_v1;
+    CREATE INDEX governance_events_project_id ON governance_events(project_id, id DESC);
+    CREATE INDEX governance_events_id ON governance_events(id DESC);
+  `);
+
+  const created = db
+    .prepare('SELECT value FROM governance_meta WHERE key = ?')
+    .get('created_at') as { value?: unknown } | undefined;
+  const updatedAt = typeof created?.value === 'string' ? created.value : new Date(0).toISOString();
+  const projects = db.prepare('SELECT id FROM projects ORDER BY rowid ASC').all() as unknown as Array<{ id: string }>;
+  const insert = db.prepare(
+    'INSERT INTO project_configs (project_id, config_json, updated_at, updated_by_json) VALUES (?, ?, ?, ?)',
+  );
+  const actor = JSON.stringify({ id: 'migration', role: 'human' });
+  for (const project of projects) {
+    insert.run(project.id, JSON.stringify(DEFAULT_PROJECT_CONFIG), updatedAt, actor);
+  }
+  db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run(
+    String(DATABASE_SCHEMA_VERSION),
+    'schema_version',
+  );
+  db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run(
+    schemaDigest,
+    'rule_schema_digest',
+  );
 }
 
 function insertMetadata(
@@ -311,6 +510,19 @@ function verifySchema(db: DatabaseSync, schemaDigest: string): void {
     meta.get('rule_schema_digest') !== schemaDigest
   ) {
     throw new DomainError('database_incompatible');
+  }
+
+  const missingProjectConfig = db
+    .prepare(
+      `SELECT COUNT(*) AS count
+         FROM projects p
+        WHERE NOT EXISTS (
+          SELECT 1 FROM project_configs c WHERE c.project_id = p.id
+        )`,
+    )
+    .get() as unknown as { count?: unknown } | undefined;
+  if (Number(missingProjectConfig?.count ?? 0) !== 0) {
+    throw new DomainError('database_corrupt');
   }
 
   const brokenProjectPointer = db
