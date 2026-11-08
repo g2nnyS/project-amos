@@ -63,6 +63,7 @@ test('401 clears authentication, project data and pending responses', async () =
     if (path === '/api/login') return json(human)
     if (path === '/api/projects') return json([project('p')])
     if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
     if (path.endsWith('/policy')) return new Promise<Response>(resolve => { release = resolve })
     if (path.endsWith('/proposals') || path.endsWith('/versions')) return json([])
     return json({}, 401)
@@ -74,7 +75,32 @@ test('401 clears authentication, project data and pending responses', async () =
   const initialization = governance.initialize(); await new Promise(resolve => setTimeout(resolve, 0))
   await assert.rejects(api.proposal('missing'), (e: unknown) => e instanceof ApiError && e.code === 'unauthorized')
   release(json(null)); await initialization
-  assert.equal(auth.authenticated, false); assert.deepEqual(governance.projects, []); assert.equal(governance.policy, null)
+  assert.equal(auth.authenticated, false); assert.deepEqual(governance.projects, []); assert.equal(governance.policy, null); assert.equal(governance.globalConfig, null)
+})
+
+test('global configuration API and store persist defaults and report projection failures', async () => {
+  const calls: Array<{ path: string; init?: RequestInit }> = []
+  const updated = { enabled: true, mode: 'managed' as const, advisoryInjection: true }
+  globalThis.fetch = async (input, init) => {
+    const path = String(input)
+    calls.push({ path, init })
+    if (path === '/api/session') return json(human)
+    if (path === '/api/projects') return json([])
+    if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config' && init?.method === 'POST') return json({ config: updated, projectionFailures: ['project-a'] })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    throw new Error('unexpected')
+  }
+  api.invalidate(); setActivePinia(createPinia())
+  const governance = useGovernanceStore()
+  await api.session(); await governance.initialize()
+  const result = await governance.updateGlobalConfig(updated)
+  assert.deepEqual(result?.projectionFailures, ['project-a'])
+  assert.deepEqual(governance.globalConfig, updated)
+  const write = calls.find(call => call.path === '/api/config' && call.init?.method === 'POST')
+  assert.equal(write?.init?.body, JSON.stringify(updated))
+  assert.equal((write?.init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
+  governance.clear(); assert.equal(governance.globalConfig, null)
 })
 
 test('project switch fences delayed previous project responses and supports empty list', async () => {
@@ -83,6 +109,7 @@ test('project switch fences delayed previous project responses and supports empt
     const path = String(input)
     if (path === '/api/projects') return json([project('a'), project('b')])
     if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
     if (path.includes('/a/policy')) return new Promise<Response>(resolve => { release = resolve })
     if (path.endsWith('/policy')) return json(null)
     if (path.endsWith('/proposals') || path.endsWith('/versions')) return json([])

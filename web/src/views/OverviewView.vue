@@ -4,7 +4,8 @@ import { RouterLink } from 'vue-router'
 import { ShieldAlert, FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle, Timer, Activity } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import { Button } from '@/components/ui/button'
+import HarnessLoadReportCards from '@/components/governance/HarnessLoadReportCards.vue'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
@@ -70,20 +71,14 @@ const activationNote = computed(() => {
   return `显式包含 ${activation.includedRuleIds.length} 条`
 })
 
-const runtimeLabel = computed(() => {
-  switch (governance.runtime?.status) {
-    case 'loaded': return '已加载当前版本'
-    case 'stale': return '已加载旧版本'
-    case 'never': return '尚无受管会话加载'
-    case 'invalid': return '加载报告无效'
-    case 'unpublished': return '尚无已发布版本'
-    default: return '运行时状态不可用'
+const projectionView = computed(() => {
+  switch (governance.runtime?.projection?.status) {
+    case 'written': return { label: '当前配置投影已写入', tone: 'border-positive/30 bg-positive/5 text-positive', note: '宿主文件与当前生效配置匹配；仍需 Harness 后续加载。' }
+    case 'missing': return { label: '宿主投影缺失', tone: 'border-warning/30 bg-warning/5 text-warning', note: '未找到宿主配置投影，不能据此认定 Harness 已加载。' }
+    case 'stale': return { label: '旧配置投影', tone: 'border-warning/30 bg-warning/5 text-warning', note: '宿主文件与当前生效配置不匹配，请重新保存配置或发布。' }
+    case 'invalid': return { label: '宿主投影无效', tone: 'border-destructive/30 bg-destructive/5 text-destructive', note: '宿主配置投影无法校验，请检查工作区中的投影文件。' }
+    default: return { label: '投影状态不可用', tone: 'border-border bg-muted/60 text-muted-foreground', note: '运行状态不可用，无法确认宿主投影。' }
   }
-})
-const runtimeTone = computed(() => governance.runtime?.status === 'loaded' ? 'text-success' : governance.runtime?.status === 'stale' ? 'text-warning' : 'text-muted-foreground')
-const enforcedTools = computed(() => {
-  const tools = governance.runtime?.runtime?.capabilities?.enforcedTools
-  return Array.isArray(tools) ? tools.join('、') : '未知'
 })
 
 const activeTightenings = computed(() => governance.tightenings?.active ?? [])
@@ -100,19 +95,44 @@ function remainingTtl(expiresAt: number): string {
   return minutes > 0 ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`
 }
 
-async function setManagedEnabled(enabled: boolean): Promise<void> {
-  if (!governance.config || configSaving.value) return
+function booleanOverrideValue(value: boolean | null): string {
+  return value === null ? 'inherit' : value ? 'enabled' : 'disabled'
+}
+
+type HarnessOverridePatch = {
+  enabled?: boolean | null
+  mode?: 'log-only' | 'managed' | null
+  advisoryInjection?: boolean | null
+}
+
+async function saveHarnessOverride(patch: HarnessOverridePatch): Promise<void> {
+  if (!governance.config || !canEditConfig.value || configSaving.value) return
   configSaving.value = true
   configError.value = ''
   try {
     await governance.updateProjectConfig({
-      managed: { ...governance.config.managed, enabled },
+      harness: { ...governance.config.harness, ...patch },
     })
   } catch (error) {
-    configError.value = error instanceof Error ? error.message : '保存项目配置失败。'
+    configError.value = error instanceof Error ? error.message : '保存项目 Harness 配置失败。'
   } finally {
     configSaving.value = false
   }
+}
+
+function setHarnessEnabled(value: unknown): void {
+  const enabled = value === 'inherit' ? null : value === 'enabled' ? true : value === 'disabled' ? false : undefined
+  if (enabled !== undefined) void saveHarnessOverride({ enabled })
+}
+
+function setHarnessMode(value: unknown): void {
+  const mode = value === 'inherit' ? null : value === 'log-only' || value === 'managed' ? value : undefined
+  if (mode !== undefined) void saveHarnessOverride({ mode })
+}
+
+function setAdvisoryInjection(value: unknown): void {
+  const advisoryInjection = value === 'inherit' ? null : value === 'enabled' ? true : value === 'disabled' ? false : undefined
+  if (advisoryInjection !== undefined) void saveHarnessOverride({ advisoryInjection })
 }
 
 async function setTighteningEnabled(enabled: boolean): Promise<void> {
@@ -157,7 +177,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
     </PageHeader>
 
     <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      <strong class="text-foreground">运行边界：</strong>发布写入本地治理版本与 Harness 快照产物；受管 Pi 会话在启动时加载并校验该快照，只有显式启用 managed 的工具入口才标记为 enforced。旧插件默认仍是 log-only。同 UID 访问并非可信隔离，也不是 OS 沙箱。
+      <strong class="text-foreground">运行边界：</strong>全局默认与项目覆盖决定生效配置，宿主投影供后续 Harness 加载。保存或发布不等于已加载；请以 Pi/OpenCode 各自最新加载报告核验。Managed 仅覆盖已接管工具入口，不是 OS 沙箱。
     </div>
 
     <div v-if="governance.error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.initialize()">重试</button></div>
@@ -283,8 +303,8 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
       <section class="panel mt-4">
         <div class="panel-header">
           <div>
-            <h2 class="panel-title">本地配置与运行状态</h2>
-            <p class="panel-kicker">发布版本、快照产物与会话加载报告分别展示</p>
+            <h2 class="panel-title">配置投影与 Harness 加载</h2>
+            <p class="panel-kicker">本地发布、宿主投影和每个 Harness 的实际回报分层展示。</p>
           </div>
         </div>
         <div class="grid gap-4 p-4 text-xs lg:grid-cols-2">
@@ -297,21 +317,21 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
               <li>快照 digest：{{ governance.policy ? `${governance.policy.snapshot.digest.slice(0, 24)}…` : '—' }}</li>
             </ul>
           </div>
-          <div class="rounded-md border border-dashed border-border p-3">
-            <p class="font-semibold">运行时执行状态</p>
-            <div class="mt-2 space-y-1 text-muted-foreground">
-              <p :class="runtimeTone"><strong class="text-foreground">状态：</strong>{{ runtimeLabel }}</p>
-              <p v-if="governance.runtime?.runtime">
-                会话版本：{{ governance.runtime.runtime.policyVersion }} ·
-                加载时间：{{ new Date(governance.runtime.runtime.loadedAt).toLocaleString('zh-CN') }}
-                <template v-if="governance.runtime.runtime.lastToolAt"> · 最近工具调用：{{ new Date(governance.runtime.runtime.lastToolAt).toLocaleString('zh-CN') }}</template>
-              </p>
-              <p v-if="governance.runtime?.runtime" class="break-all font-mono text-[10px]">activation：{{ governance.runtime.runtime.activationDigest }}</p>
-              <p v-if="governance.runtime?.runtime">受管工具：{{ enforcedTools }}；未支持工具在执行前阻断。</p>
-              <p v-if="governance.runtime?.status === 'stale'">新发布版本只由后续会话加载；当前会话固定使用已加载快照。重新开始受管会话后再确认。</p>
-              <p v-if="governance.runtime?.status === 'never'">尚未有受管 Pi 会话加载当前发布版本。发布成功不代表宿主生效。</p>
+          <div class="rounded-md border border-border bg-surface p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="font-semibold">宿主配置投影</p>
+              <span class="rounded border px-2 py-0.5 text-[10px] font-medium" :class="projectionView.tone">{{ projectionView.label }}</span>
             </div>
+            <p class="mt-2 leading-relaxed text-muted-foreground">由生效配置生成的宿主文件，不是加载证明。{{ projectionView.note }}</p>
+            <p v-if="governance.runtime?.projection?.configDigest" class="mt-2 break-all font-mono text-[10px] text-muted-foreground">configDigest：{{ governance.runtime.projection.configDigest }}</p>
           </div>
+        </div>
+        <div class="border-t border-border p-4">
+          <div class="mb-3">
+            <h3 class="text-xs font-semibold">最新加载报告（实际回报）</h3>
+            <p class="mt-1 text-[11px] leading-relaxed text-muted-foreground">每个 Harness 仅展示最新一份报告，不代表所有会话或实时状态。只有报告显示 enforcing 且与当前配置匹配时，才标记“约束已加载”。</p>
+          </div>
+          <HarnessLoadReportCards :runtime="governance.runtime" />
         </div>
       </section>
 
@@ -327,20 +347,61 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
         <div v-if="!governance.config" class="p-4 text-xs text-muted-foreground">当前项目配置不可用。</div>
         <div v-else class="grid gap-4 p-4 text-xs lg:grid-cols-2">
           <div class="rounded-md border border-border p-3">
-            <p class="font-semibold">受管 Harness</p>
-            <p class="mt-1 text-muted-foreground">managed 显式启用后，已接管的工具入口先停后审；confirm 仍需要独立 reviewer 与一次性授权。</p>
-            <label class="mt-3 flex items-center justify-between gap-3">
-              <span>managed.enabled</span>
-              <input
-                type="checkbox"
-                class="size-4 accent-[hsl(var(--primary))]"
-                :checked="governance.config.managed.enabled"
-                :disabled="!canEditConfig || configSaving"
-                @change="setManagedEnabled(($event.target as HTMLInputElement).checked)"
-              >
-            </label>
-            <p class="mt-2 break-all font-mono text-[10px] text-muted-foreground">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
-            <p class="mt-1 break-all font-mono text-[10px] text-muted-foreground">reviewer: {{ governance.config.managed.reviewer ?? '未配置' }} · jevConfigPath: {{ governance.config.managed.jevConfigPath ?? '未配置' }}</p>
+            <div class="flex items-center justify-between gap-3">
+              <p class="font-semibold">Harness 项目覆盖</p>
+              <span v-if="!canEditConfig" class="text-[10px] text-muted-foreground">当前角色只读</span>
+            </div>
+            <p class="mt-1 leading-relaxed text-muted-foreground">每项都可跟随全局或单独覆盖；保存期望配置并尝试更新宿主投影，不代表已加载。</p>
+            <div class="mt-4 space-y-3">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div><span id="project-harness-enabled-label" class="font-medium">启用 Amos</span><p class="mt-0.5 text-[10px] text-muted-foreground">harness.enabled</p></div>
+                <Select :model-value="booleanOverrideValue(governance.config.harness.enabled)" :disabled="!canEditConfig || configSaving" @update:model-value="setHarnessEnabled">
+                  <SelectTrigger class="w-full sm:w-[164px] sm:shrink-0" size="sm" aria-labelledby="project-harness-enabled-label"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">跟随全局</SelectItem>
+                    <SelectItem value="enabled">项目覆盖：启用</SelectItem>
+                    <SelectItem value="disabled">项目覆盖：停用</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div><span id="project-harness-mode-label" class="font-medium">Harness 模式</span><p class="mt-0.5 text-[10px] text-muted-foreground">harness.mode</p></div>
+                <Select :model-value="governance.config.harness.mode ?? 'inherit'" :disabled="!canEditConfig || configSaving" @update:model-value="setHarnessMode">
+                  <SelectTrigger class="w-full sm:w-[164px] sm:shrink-0" size="sm" aria-labelledby="project-harness-mode-label"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">跟随全局</SelectItem>
+                    <SelectItem value="log-only">Log-only（仅观察）</SelectItem>
+                    <SelectItem value="managed">Managed（受管）</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div><span id="project-advisory-injection-label" class="font-medium">建议注入</span><p class="mt-0.5 text-[10px] text-muted-foreground">harness.advisoryInjection</p></div>
+                <Select :model-value="booleanOverrideValue(governance.config.harness.advisoryInjection)" :disabled="!canEditConfig || configSaving" @update:model-value="setAdvisoryInjection">
+                  <SelectTrigger class="w-full sm:w-[164px] sm:shrink-0" size="sm" aria-labelledby="project-advisory-injection-label"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">跟随全局</SelectItem>
+                    <SelectItem value="enabled">项目覆盖：允许</SelectItem>
+                    <SelectItem value="disabled">项目覆盖：抑制</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p class="mt-3 text-[10px] leading-relaxed text-muted-foreground">建议注入独立控制；关闭只抑制建议内容，不改变 Harness 开关、运行模式或 Workflow Gate。</p>
+            <div class="mt-4 rounded-md border border-info/25 bg-info/5 p-3">
+              <p class="font-semibold text-info">生效配置（非加载证明）</p>
+              <p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">由全局默认与项目覆盖合并得到，用于生成宿主投影。</p>
+              <dl class="mt-3 grid grid-cols-3 gap-2">
+                <div><dt class="text-[10px] text-muted-foreground">Amos</dt><dd class="mt-1 font-medium">{{ governance.config.effectiveHarness.enabled ? '启用' : '停用' }}</dd></div>
+                <div><dt class="text-[10px] text-muted-foreground">模式</dt><dd class="mt-1 font-medium">{{ governance.config.effectiveHarness.mode === 'managed' ? 'Managed' : 'Log-only' }}</dd></div>
+                <div><dt class="text-[10px] text-muted-foreground">建议注入</dt><dd class="mt-1 font-medium">{{ governance.config.effectiveHarness.advisoryInjection ? '允许' : '抑制' }}</dd></div>
+              </dl>
+            </div>
+            <div class="mt-3 border-t border-border pt-3 text-muted-foreground">
+              <p class="leading-relaxed">Managed 的 confirm 仍需独立 reviewer 与一次性授权；审查参数和 Workflow Gate 不随上述默认值自动启用。</p>
+              <p class="mt-2 break-all font-mono text-[10px]">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
+              <p class="mt-1 break-all font-mono text-[10px]">reviewer: {{ governance.config.managed.reviewer ?? '未配置' }} · jevConfigPath: {{ governance.config.managed.jevConfigPath ?? '未配置' }}</p>
+            </div>
           </div>
           <div class="rounded-md border border-border p-3">
             <p class="font-semibold">临时收紧</p>

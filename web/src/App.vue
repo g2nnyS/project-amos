@@ -108,7 +108,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
           <ChevronRight class="hidden size-3 text-muted-foreground sm:block" />
           <span class="truncate text-xs font-medium">{{ pageLabelForPath(route.path) }}</span>
           <span class="hidden rounded border border-border px-2 py-1 text-[10px] text-muted-foreground md:block">本地版本 {{ governance.policy ? `v${governance.policy.version}` : '未发布' }}</span>
-          <span class="ml-auto hidden items-center gap-1.5 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground sm:inline-flex"><ShieldAlert class="size-3" />Managed opt-in · 默认关闭</span>
+          <span class="ml-auto hidden items-center gap-1.5 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground sm:inline-flex"><ShieldAlert class="size-3" />Harness 全局默认 · 项目可覆盖</span>
           <button class="flex h-8 items-center gap-2 rounded-md border border-border bg-card px-2 text-xs text-muted-foreground hover:bg-accent" aria-label="搜索页面和治理记录" @click="commandOpen = true"><Search class="size-3.5" /><span class="hidden md:block">搜索</span><kbd class="kbd hidden md:inline-flex">⌘ K</kbd></button>
           <button class="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="退出登录" title="退出登录" @click="logout"><LogOut class="size-4" /></button>
         </header>
@@ -127,7 +127,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
             <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="flex h-9 items-center gap-2 rounded-md px-2 text-sm" :class="isActivePath(route.path, item.to) ? 'bg-accent text-foreground' : 'text-muted-foreground'" @click="mobileOpen = false"><component :is="item.icon" class="size-4" />{{ item.label }}</RouterLink>
           </template>
         </nav>
-        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">受管模式默认关闭；启用后 Pi 工具调用可被阻断。发布不等于宿主已加载。</p>
+        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">Harness 行为由全局默认与项目覆盖决定，Workflow Gate 独立配置。保存或发布不等于宿主已加载；Managed 仅覆盖已接管工具入口，不是 OS 沙箱。</p>
       </SheetContent></Sheet>
       <Dialog v-model:open="createOpen"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>新建项目</DialogTitle><DialogDescription>工作区路径用于策略绑定，创建后不可更改；不会授权网页读取目录。</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">项目名称</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">绝对工作区路径</span><input v-model="workspace" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">取消</Button><Button type="submit" :disabled="creating">{{ creating ? '创建中…' : '创建项目' }}</Button></div></form></DialogContent></Dialog>
       <Dialog v-model:open="commandOpen"><DialogContent class="max-w-xl gap-0 p-0">
