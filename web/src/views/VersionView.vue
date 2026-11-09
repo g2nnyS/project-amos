@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, RotateCcw } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import CandidateView from '@/components/governance/CandidateView.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -115,21 +116,21 @@ async function restore() {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader :title="`版本 ${route.params.version}`" description="不可变治理版本；导出和恢复不会直接改变运行时。">
       <template #actions>
         <RouterLink to="/versions" class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft class="size-3.5" />返回版本</RouterLink>
       </template>
     </PageHeader>
 
-    <div v-if="!store.activeProjectId" class="panel p-5">请先选择项目。</div>
-    <div v-else-if="loading" class="panel p-5" role="status">正在加载版本…</div>
-    <div v-else-if="!item" class="panel p-5 text-destructive" role="alert">{{ error || '无法加载版本。' }} <button class="ml-2 underline" @click="load">重试</button></div>
+    <EmptyState v-if="!store.activeProjectId" title="请选择项目" description="选择项目后查看版本。" />
+    <div v-else-if="loading" class="panel p-5 text-sm" role="status">正在加载版本…</div>
+    <div v-else-if="!item" class="panel p-5 text-sm text-destructive" role="alert">{{ error || '无法加载版本。' }} <button class="ml-2 underline" @click="load">重试</button></div>
 
     <template v-else>
-      <div v-if="error && !restoreOpen" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ error }}</div>
+      <div v-if="error && !restoreOpen" class="panel p-5 text-sm text-destructive" role="alert">{{ error }}</div>
 
-      <section class="panel mb-4">
+      <section class="panel">
         <div class="panel-header">
           <div>
             <h2 class="text-base font-semibold">版本 {{ item.version }}</h2>
@@ -153,7 +154,7 @@ async function restore() {
         </div>
       </section>
 
-      <section class="panel mb-4">
+      <section class="panel">
         <div class="panel-header">
           <div>
             <h2 class="panel-title">规则 Rollout 状态</h2>

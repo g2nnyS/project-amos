@@ -239,7 +239,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
         </div>
       </section>
 
-      <div v-if="error" role="alert" class="rounded-md border border-destructive/40 p-3 text-xs text-destructive">{{ error }}</div>
+      <div v-if="error" role="alert" class="panel p-5 text-sm text-destructive">{{ error }}</div>
 
       <section v-if="validation" class="panel p-4 text-xs" aria-live="polite">
         <p class="flex items-center gap-1.5 font-semibold" :class="validation.valid ? 'text-positive' : 'text-destructive'">
