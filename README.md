@@ -113,11 +113,21 @@ npm run typecheck
 npm test
 ```
 
-### 1. Run with OpenCode V2 or Pi
+### 1. Launch the Governance Console (Publish a Project Snapshot)
 
-The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md). Engineering gating, Jev configuration, and its honest harness limits are documented in [Workflow Gate](docs/workflow-gate.md).
+```bash
+npm run console
+# Or skip rebuilding if dist/ is already up to date: npm run console:serve
+```
 
-### 2. Generate a Human Review Worksheet
+Open the emitted `http://127.0.0.1:4310` URL (use `127.0.0.1` to preserve Host/Origin checks). Open `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` in a local editor and paste it into the login form—never paste tokens into chat, URLs, or logs. Create a project, import or edit rules, submit a proposal, and approve/publish it to write `<workspace>/.pi/activation.json`. See [Local Governance](docs/local-governance.md) and [Console README](web/README.md).
+
+### 2. Run with Pi or OpenCode V2
+
+- **Pi Managed Gate (explicit opt-in)**: Configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). Pi loads the snapshot, writes `.pi/runtime.json`, injects `<amos-guidance>`, and gates normalized tool calls before execution.
+- **Default Log-Only Adapters**: The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For default Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md); for the engineering workflow gate and Jev setup, see [Workflow Gate](docs/workflow-gate.md).
+
+### 3. Generate a Human Review Worksheet
 
 ```bash
 npm run audit:review -- \
@@ -135,11 +145,12 @@ npm run audit:review -- \
 - **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **Documentation Index**:
-- [Product Scope](docs/product-design.md) · [Implementation Status](docs/product-gap-plan.md)
+- [Product Scope](docs/product-design.md) · [Implementation Status](docs/product-gap-plan.md) · [MVP Delivery](docs/mvp-delivery.md)
+- [Local Governance](docs/local-governance.md) · [Console README](web/README.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
 - [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
 - [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
 - [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
-- [Delivery Status](docs/delivery-status.md) · [AC-01–22 Acceptance Matrix](docs/acceptance-one-shot.md) · [One-Shot Verification](docs/verification-one-shot.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
+- [Delivery Status](docs/delivery-status.md) · [AC-01–22 Acceptance Matrix](docs/acceptance-one-shot.md) · [One-Shot Verification](docs/verification-one-shot.md)
 - Safety ADRs: [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
 - [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
 
