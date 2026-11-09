@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, FileText, Zap, Bookmark, Code } from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CandidateActivation, RuleRecord } from '@/types'
@@ -13,6 +13,10 @@ const emit = defineEmits<{ close: [] }>()
 
 const activeTab = ref('semantics')
 const closeButton = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
+const desktop = ref(true)
+let media: MediaQueryList | undefined
+const updateMedia = (list: MediaQueryList | MediaQueryListEvent) => { desktop.value = list.matches }
 
 const included = computed(() => {
   const inc = props.activation.includedRuleIds
@@ -33,8 +37,26 @@ function json(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
-onMounted(() => closeButton.value?.focus())
+onMounted(() => {
+  closeButton.value?.focus()
+  try {
+    media = window.matchMedia('(min-width: 1024px)')
+    updateMedia(media)
+    media.addEventListener('change', updateMedia)
+  } catch { /* unavailable */ }
+})
+onBeforeUnmount(() => media?.removeEventListener('change', updateMedia))
 watch(() => props.rule.id, () => { activeTab.value = 'semantics' })
+
+function onKeydown(event: KeyboardEvent) {
+  if (desktop.value || event.key !== 'Tab' || !panel.value) return
+  const nodes = [...panel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(node => node.offsetParent !== null)
+  if (!nodes.length) return
+  const first = nodes[0]!
+  const last = nodes[nodes.length - 1]!
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
 
 const activationLabel = computed(() => {
   if (excluded.value) return { text: '本地已排除', tone: 'muted' as const }
@@ -44,10 +66,11 @@ const activationLabel = computed(() => {
 </script>
 
 <template>
-  <aside class="rule-inspector flex h-full flex-col border-l border-border bg-card" role="complementary" aria-label="规则上下文检查器">
+  <button v-if="!desktop" type="button" tabindex="-1" class="rule-inspector-backdrop" aria-label="关闭规则检查器" @click="emit('close')" />
+  <aside ref="panel" class="rule-inspector flex h-full flex-col border-l border-border bg-card" :role="desktop ? 'complementary' : 'dialog'" :aria-label="desktop ? '规则上下文检查器' : undefined" :aria-labelledby="desktop ? undefined : 'rule-inspector-title'" :aria-modal="desktop ? undefined : 'true'" @keydown="onKeydown">
     <div class="flex h-[60px] shrink-0 items-center justify-between border-b border-border px-4">
       <div class="min-w-0">
-        <h2 class="truncate text-sm font-semibold" :title="rule.id">{{ rule.id }}</h2>
+        <h2 id="rule-inspector-title" class="truncate text-sm font-semibold" :title="rule.id">{{ rule.id }}</h2>
         <p class="truncate text-[11px] text-muted-foreground">{{ rule.dimension }} · {{ rule.policy_class }}</p>
       </div>
       <button ref="closeButton" type="button" class="ml-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border hover:bg-accent" aria-label="关闭检查器" @click="emit('close')"><X class="size-4" /></button>
@@ -109,6 +132,7 @@ const activationLabel = computed(() => {
 </template>
 
 <style scoped>
+.rule-inspector-backdrop { position: fixed; inset: 0; z-index: 39; background: hsl(220 20% 10% / .45); }
 .rule-inspector { position: fixed; z-index: 40; right: 0; bottom: 0; width: min(100%, 420px); height: min(80dvh, 760px); border-top: 1px solid hsl(var(--border)); box-shadow: 0 0 30px hsl(220 20% 10% / .2); }
 @media (min-width: 1024px) {
   .rule-inspector { position: sticky; top: 0; width: 420px; height: calc(100dvh - 60px); box-shadow: none; }

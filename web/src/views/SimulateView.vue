@@ -59,10 +59,10 @@ async function simulate() {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="动作模拟" description="使用已发布策略进行假设评估；不会执行或授权动作。" />
 
-    <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
+    <div class="rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
       模拟使用发布快照的运行时规则投影，结果不是执行许可；它不启动 Harness，也不产生工具副作用。仅支持已发布版本。
     </div>
 
@@ -73,7 +73,7 @@ async function simulate() {
 
     <div v-else class="grid gap-4 lg:grid-cols-2">
       <section class="panel">
-        <div class="panel-header"><h2 class="panel-title">输入动作</h2></div>
+        <div class="panel-header"><div><h2 class="panel-title">输入动作</h2><p class="panel-kicker">工具 · 操作 · 目标 · 已发布版本</p></div></div>
         <form class="space-y-4 p-4" @submit.prevent="simulate">
           <label class="field">
             <span class="field-label">工具 tool</span>
@@ -100,7 +100,7 @@ async function simulate() {
       </section>
 
       <section class="panel">
-        <div class="panel-header"><h2 class="panel-title">假设结果</h2></div>
+        <div class="panel-header"><div><h2 class="panel-title">假设结果</h2><p class="panel-kicker">基于发布快照的假设裁决</p></div></div>
         <div v-if="result" class="space-y-3 p-4 text-sm">
           <div v-if="provenance" class="rounded-md border border-border bg-surface p-3 text-xs leading-relaxed">
             <p class="font-medium">评估来源 · 本地治理版本 {{ provenance.version }}</p>

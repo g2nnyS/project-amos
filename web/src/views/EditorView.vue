@@ -239,7 +239,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
         </div>
       </section>
 
-      <div v-if="error" role="alert" class="rounded-md border border-destructive/40 p-3 text-xs text-destructive">{{ error }}</div>
+      <div v-if="error" role="alert" class="panel p-5 text-sm text-destructive">{{ error }}</div>
 
       <section v-if="validation" class="panel p-4 text-xs" aria-live="polite">
         <p class="flex items-center gap-1.5 font-semibold" :class="validation.valid ? 'text-positive' : 'text-destructive'">
@@ -287,7 +287,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
             <div class="overflow-x-auto">
               <table class="data-table">
                 <thead>
-                  <tr><th>规则 ID</th><th v-if="draft.activation.includedRuleIds !== null">包含</th><th>排除</th></tr>
+                  <tr><th scope="col">规则 ID</th><th v-if="draft.activation.includedRuleIds !== null" scope="col">包含</th><th scope="col">排除</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="rule in draft.rules" :key="rule.id">

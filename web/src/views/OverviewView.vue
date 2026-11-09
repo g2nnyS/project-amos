@@ -192,21 +192,23 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
             </div>
             <RouterLink to="/audit" class="text-xs text-muted-foreground hover:text-foreground">查看全部 →</RouterLink>
           </div>
-          <p v-if="auditLoading" class="p-4 text-xs text-muted-foreground">加载中…</p>
-          <div v-else-if="auditError" class="p-4 text-xs text-destructive">{{ auditError }} <button class="underline" @click="loadAudit">重试</button></div>
+          <p v-if="auditLoading" role="status" class="p-4 text-xs text-muted-foreground">加载中…</p>
+          <div v-else-if="auditError" role="alert" class="p-4 text-xs text-destructive">{{ auditError }} <button class="underline" @click="loadAudit">重试</button></div>
           <p v-else-if="!audit.length" class="p-6 text-center text-xs text-muted-foreground">暂无审计记录。</p>
-          <table v-else class="data-table">
-            <thead>
-              <tr><th>事件</th><th>操作者</th><th>时间</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="event in audit" :key="event.id">
-                <td>{{ eventLabels[event.kind] ?? event.kind }}</td>
-                <td>{{ event.actor.id }} · {{ event.actor.role }}</td>
-                <td class="tabular">{{ new Date(event.createdAt).toLocaleString('zh-CN') }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="overflow-x-auto">
+            <table class="data-table min-w-[420px]">
+              <thead>
+                <tr><th>事件</th><th>操作者</th><th>时间</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="event in audit" :key="event.id">
+                  <td>{{ eventLabels[event.kind] ?? event.kind }}</td>
+                  <td>{{ event.actor.id }} · {{ event.actor.role }}</td>
+                  <td class="tabular">{{ new Date(event.createdAt).toLocaleString('zh-CN') }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <div class="space-y-4">
@@ -300,7 +302,7 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
           <div class="rounded-md border border-dashed border-border p-3">
             <p class="font-semibold">运行时执行状态</p>
             <div class="mt-2 space-y-1 text-muted-foreground">
-              <p :class="runtimeTone"><strong class="text-foreground">状态：</strong>{{ runtimeLabel }}</p>
+              <p role="status" :class="runtimeTone"><strong class="text-foreground">状态：</strong>{{ runtimeLabel }}</p>
               <p v-if="governance.runtime?.runtime">
                 会话版本：{{ governance.runtime.runtime.policyVersion }} ·
                 加载时间：{{ new Date(governance.runtime.runtime.loadedAt).toLocaleString('zh-CN') }}
