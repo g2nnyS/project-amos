@@ -12,7 +12,7 @@ const versions = computed(() => store.versions.slice().sort((a, b) => b.version 
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="版本历史" description="已批准的治理快照；发布不改变运行时配置，也不是工具调用授权。" />
     <EmptyState v-if="!store.activeProjectId" title="请选择项目" description="选择项目后查看版本历史。" />
     <div v-else-if="store.loading" class="panel p-5 text-sm" role="status">正在加载版本…</div>
@@ -20,6 +20,12 @@ const versions = computed(() => store.versions.slice().sort((a, b) => b.version 
       加载失败：{{ store.error }} <button class="ml-2 underline" @click="store.refreshProject()">重试</button>
     </div>
     <section v-else class="panel overflow-hidden">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">已发布版本</h2>
+          <p class="panel-kicker">共 {{ versions.length }} 个版本 · 当前本地版本 {{ store.policy?.version ?? '未发布' }}</p>
+        </div>
+      </div>
       <div v-if="!versions.length" class="p-8 text-center">
         <EmptyState title="尚无已发布版本" description="批准提案后将创建版本。" />
       </div>

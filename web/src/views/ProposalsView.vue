@@ -28,7 +28,7 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="提案" description="审阅不可变候选。治理发布不授权工具调用。">
       <template #actions>
         <RouterLink to="/editor">
@@ -43,6 +43,12 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
       加载失败：{{ store.error }} <button class="ml-2 underline" @click="store.refreshProject()">重试</button>
     </div>
     <section v-else class="panel overflow-hidden">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">提案列表</h2>
+          <p class="panel-kicker">共 {{ rows.length }} 条 · 本地版本 {{ store.policy?.version ?? 0 }}</p>
+        </div>
+      </div>
       <div class="filterbar">
         <label class="sr-only" for="proposal-search">搜索提案</label>
         <input id="proposal-search" v-model="search" placeholder="搜索标题、ID 或作者" class="h-8 w-full rounded-md border border-input bg-background px-3 text-xs sm:w-64">
@@ -51,7 +57,6 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
           <option value="all">全部状态</option>
           <option v-for="(label, key) in labels" :key="key" :value="key">{{ label }}</option>
         </select>
-        <span class="ml-auto text-xs text-muted-foreground">{{ rows.length }} 条</span>
       </div>
       <div v-if="!rows.length" class="p-8 text-center text-sm text-muted-foreground">
         <EmptyState :title="store.proposals.length ? '没有匹配的提案' : '尚无提案'" :description="store.proposals.length ? '请调整筛选条件' : '请在候选编辑器中创建。'" />
@@ -85,7 +90,7 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
           </tbody>
         </table>
       </div>
-      <div v-if="pages > 1" class="flex items-center justify-end gap-3 border-t border-border p-3 text-xs">
+      <div v-if="pages > 1" class="flex items-center justify-end gap-3 border-t border-hairline p-3 text-xs">
         <Button variant="outline" size="sm" :disabled="page === 1" @click="page--">上一页</Button>
         <span>{{ page }} / {{ pages }}</span>
         <Button variant="outline" size="sm" :disabled="page === pages" @click="page++">下一页</Button>
