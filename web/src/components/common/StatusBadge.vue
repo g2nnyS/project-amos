@@ -6,8 +6,11 @@ const labels: Record<string, string> = { pending: '待审批', approved: '已批
 
 type Tone = 'positive' | 'warning' | 'danger' | 'info' | 'neutral'
 
+const normalized = computed(() => props.status.trim().toLowerCase())
+const label = computed(() => labels[normalized.value] ?? props.status)
+
 const tone = computed<Tone>(() => {
-  const value = props.status.trim().toLowerCase()
+  const value = normalized.value
   if (['completed', 'complete', 'success', 'connected', 'live'].includes(value)) {
     return 'positive'
   }
@@ -52,6 +55,6 @@ const dotClass = computed(
     :class="toneClass"
   >
     <span class="size-1 rounded-full" :class="dotClass" aria-hidden="true" />
-    {{ labels[status] ?? status }}
+    {{ label }}
   </span>
 </template>
