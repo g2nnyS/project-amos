@@ -412,7 +412,7 @@ try {
 
   await check('mobile rule inspector is accessible and does not cause global overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
-    const inspector = '[role="complementary"][aria-label="规则上下文检查器"]'
+    const inspector = '[role="dialog"][aria-labelledby="rule-inspector-title"]'
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
