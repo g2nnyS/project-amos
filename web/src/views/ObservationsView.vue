@@ -28,27 +28,30 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="观察记录" description="只读查看启动时配置的脱敏观察日志；记录不是运行授权。">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="loading" @click="load"><RefreshCw class="mr-1 size-3.5" />刷新</Button>
       </template>
     </PageHeader>
 
-    <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
+    <div class="rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
       观察与队列来自历史 JSONL；覆盖缺口只提供可见性，不提供保护或完整中介。受管 Harness 的执行裁决以发布快照为准，本页不回放或重评。
     </div>
 
-    <p v-if="loading" class="p-4 text-sm text-muted-foreground" role="status">加载中…</p>
-    <div v-else-if="error" role="alert" class="panel p-4 text-sm text-destructive">
+    <div v-if="loading" class="panel p-5 text-sm" role="status">正在加载观察数据…</div>
+    <div v-else-if="error" role="alert" class="panel p-5 text-sm text-destructive">
       {{ error }} <button class="ml-2 underline" @click="load">重试</button>
     </div>
     <EmptyState v-else-if="report && !report.available" title="观察数据不可用" description="服务启动时未配置观察日志。网页不能指定服务器文件路径。" />
 
     <template v-else-if="report">
-      <section class="panel mb-4">
+      <section class="panel">
         <div class="panel-header">
-          <h2 class="panel-title">日志来源</h2>
+          <div>
+            <h2 class="panel-title">日志来源</h2>
+            <p class="panel-kicker">服务器启动配置 · 只读脱敏</p>
+          </div>
         </div>
         <ul class="divide-y divide-border">
           <li v-for="source in report.sources" :key="source.name" class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs">

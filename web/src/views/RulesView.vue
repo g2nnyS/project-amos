@@ -123,20 +123,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="规则库" description="查看当前项目已发布的规则与激活集合。发布是本地治理记录，不授予运行时执行授权。">
       <template #actions>
         <RouterLink to="/editor" class="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">编辑候选</RouterLink>
       </template>
     </PageHeader>
-    <EmptyState v-if="governance.loading" title="加载中" description="正在读取项目治理数据…" />
+    <div v-if="governance.loading" class="panel p-5 text-sm" role="status">正在读取项目治理数据…</div>
     <div v-else-if="governance.error" class="panel p-5 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.activeProjectId ? governance.refreshProject() : governance.initialize()">重试</button></div>
     <EmptyState v-else-if="!governance.activeProjectId" title="请选择项目" description="选择项目后查看其已发布规则。" />
     <EmptyState v-else-if="!governance.policy" title="尚无已发布策略" description="可从仓库种子创建候选并提交提案。" />
     <template v-else>
-      <div class="mb-4">
-        <RuleMatrix :rules="rules" @filter="applyMatrixFilter" />
-      </div>
+      <RuleMatrix :rules="rules" @filter="applyMatrixFilter" />
       <div class="grid gap-0 lg:grid-cols-[1fr_auto] lg:items-start">
         <section ref="tableContainer" class="panel min-w-0">
           <div class="panel-header">
