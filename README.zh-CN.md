@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  把 Agent 的行为约束从提示词移入确定性策略引擎，留下可溯源、可复核的裁决轨迹。
+  把 Agent 的硬性边界与工程规范从臃肿提示词迁入同源编译的确定性策略引擎与动态上下文注入器，留下可溯源、可复核的裁决轨迹。
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## 这是什么？
 
-把安全规矩写在 `AGENTS.md` 或系统提示词里，本质上是在赌模型的自觉。**Amos 的思路很简单：模型只管提议动作，确定性的策略引擎负责按规则算账，并留下一条干净的审计链。**
+把安全规矩和工程规范一股脑堆进 `AGENTS.md` 或系统提示词里，既是在赌模型的自觉，也会用大量无关上下文稀释真正关键的约束。**Amos 将同一个项目激活目录拆分为同源双投影：确定性策略引擎对结构化动作执行硬性裁决（`deny`/`confirm`/`allow`），而按会话固定的动态上下文注入器（`<amos-guidance>`）则根据代码区域、目标路径、任务标签与输入词元，按需投递当前任务相关的工程规范、架构不变量与设计偏好。**
 
 > **安全边界**：安全适配器默认 log-only。Pi `.pi/amos.json` 的 `managed.enabled` 是显式 opt-in 的 Harness 层 gate，可阻断归一化工具调用并审查 confirm；它**不是 OS 沙箱**，不覆盖所有入口/副作用，审计也不防篡改。独立工程工作流门仍是可选护栏。详见[安全模型](docs/security-model.md)、[Harness gate ADR](docs/adr-harness-gate.md)和[工作流硬门](docs/workflow-gate.md)。
 
@@ -63,6 +63,17 @@ Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动�
 ```
 
 在默认 `log-only` 模式下，唯一副作用是写审计日志与快照归档。当显式启用 Pi `managed.enabled` 时，归一化文件与检索工具调用会在执行前按已发布的 P1 快照做真实阻断与一次性授权审查。独立工程工作流硬门也可用于阻断危险 Shell 命令或暂缓工作。
+
+---
+
+## 动态上下文注入：工程规范与设计偏好
+
+Amos 把项目的工程规范、架构不变量与设计偏好视为一等公民的版本化规则（`policy_class: engineering` / `expressivity: advisory_only` 或硬规则配对的 `narrative`），与安全硬规则从同一个 P1 项目激活快照（`activation/` + `injector/`）同源编译：
+
+- **内置工程规范包与自定义设计偏好**：`guidance/packs.ts` 内置 7 个领域规范包（`typescript-base`、`engine-invariants`、`adapters`、`supervisor-core`、`decision-jev`、`dependencies-and-manifests`、`workflow-security`），覆盖严格 ESM/Node 26 规范、纯函数引擎边界、依赖极简主义（禁止引入未批准的 HTTP/ORM 框架）与适配器归一化职责。团队可在控制台或 YAML 中新增项目级 `advisory_only` 设计偏好、为确定性规则维护 `narrative` 说明，并配置项目默认基线（`injection.baselineRuleIds`）与任务/路径路由（`injection.routes`）。
+- **两阶段确定性选择与打分（`injector/select.ts`）**：先按 `languages` / `frameworks` 过滤适用规则，再按 `level` 升序及多维结构化信号（`areas`、`pathHints` glob、`taskTags` 与有界 prompt 关键词序列）确定性打分排序，并叠加路由的显式 `add` / `suppress`。若无信号命中或路由异常，自动回退至当前项目已激活的 narrative 集合（优先 `baselineRuleIds`），绝不越界回退到未激活的全局规则库。
+- **会话固定投递与字符预算（`injector/session.ts`、`injector/render.ts`）**：在严格字符与条数预算下（prompt `1,800` / fallback `1,200` / area `900` / 会话总计 `6,000` 字符，单块最多 `6` 条）渲染 XML 转义的 `<amos-guidance policy="..." digest="..." mode="advisory">` 块。用户轮次注入与当前任务匹配的工程规范；归一化写/改文件动作（`write`/`edit`/`file_write`）按目标路径推导代码区域并在工具结果或下一轮上下文追加区域规范。仅在宿主确认发出（`commit`）后才计入会话去重，超出预算被裁剪的规则通过 `omittedRefs` 与 `incomplete: true` 显式上报。
+- **裁决零干扰不变量**：提示词词元、任务标签与字符预算仅影响 advisory 文本的排序与截断，绝不裁剪硬性拦截规则、不授予执行权限，注入失败也绝不改变任何门禁裁决或审计结果。
 
 ---
 
@@ -139,13 +150,12 @@ npm run audit:review -- \
 - **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 **核心文档索引**：
-- [产品范围](docs/product-design.md) · [实现状态](docs/product-gap-plan.md) · [MVP 交付](docs/mvp-delivery.md)
-- [本地治理控制台](docs/local-governance.md) · [前端说明](web/README.md) · [配置迁移与受管启动](docs/configuration-one-shot.md)
+- [产品范围](docs/product-design.md) · [项目激活与双投影](docs/project-activation.md) · [实现状态](docs/product-gap-plan.md)
 - [安全模型与当前状态](docs/security-model.md) · [运行期状态](docs/go-no-go.md)
-- [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
+- [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门与动态注入](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
 - [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
-- [交付状态](docs/delivery-status.md) · [AC-01–22 验收矩阵](docs/acceptance-one-shot.md) · [One-shot 验证记录](docs/verification-one-shot.md)
-- 安全 ADR：[来源认证](docs/adr-source-authentication.md) · [受管宿主](docs/adr-managed-file-host.md) · [review 协议](docs/adr-review-protocol.md) · [治理库](docs/adr-governance-store.md) · [CheckBinding](docs/adr-check-binding.md) · [临时收紧](docs/adr-temporary-tightening.md)
+- [交付状态](docs/delivery-status.md) · [AC-01–22 验收矩阵](docs/acceptance-one-shot.md) · [One-shot 验证记录](docs/verification-one-shot.md) · [配置迁移与受管启动](docs/configuration-one-shot.md)
+- 安全与架构 ADR：[统一规则目录](docs/adr-unified-rule-catalog.md) · [来源认证](docs/adr-source-authentication.md) · [受管宿主](docs/adr-managed-file-host.md) · [review 协议](docs/adr-review-protocol.md) · [治理库](docs/adr-governance-store.md) · [CheckBinding](docs/adr-check-binding.md) · [临时收紧](docs/adr-temporary-tightening.md)
 - [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
 
 ---

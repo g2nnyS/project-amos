@@ -10,7 +10,7 @@ OpenCode completion feedback is advisory and is not a merge block.
 
 ## What it does
 
-- Selects advisory engineering rules from a session-pinned snapshot before and during a coding run. Current adapters compile a seed from `guidance/`; they do not use the P1 offline project catalog.
+- Selects advisory engineering rules and design preferences from a session-pinned snapshot before and during a coding run. By default, ordinary adapters compile the static seed in `guidance/packs.ts`; when `activation` or `managed.enabled` is configured, adapters consume the published P1 `amos-unified-rule-catalog` v2 advisory projection (`activation/runtime.ts`, `adapters/shared/activation-guidance.ts`).
 - Assesses bash commands through a strict, closed-subset lexer before execution.
   Known destructive, privilege, interpreter, meta-executor, network, and forced-VCS
   operations are denied or require confirmation. Unknown syntax and executables are
@@ -94,13 +94,23 @@ a later permission event that may not ask.
 
 ## Advisory injection pipeline
 
-The shared `injector/` module compiles the transitional guidance packs into an immutable advisory snapshot, selects only rules present in that active snapshot, and renders independent `<amos-guidance>` blocks with `policy`, `digest`, and `mode="advisory"` provenance. Selection is deterministic: normalized action areas, fixed glob path hints, structured task tags, and bounded prompt token matching can rank rules, but a prompt cannot introduce a rule that is absent from the snapshot. The seed baseline is snapshot data; the selector has no global base-pack fallback.
+The shared `injector/` and `activation/` modules compile engineering conventions, architectural invariants, and project design preferences into an immutable `AdvisorySnapshot`, select only rules present in that active snapshot, and render independent `<amos-guidance>` blocks with `policy`, `digest`, and `mode="advisory"` provenance:
 
-Injection state is scoped to a harness session. Rules and action areas are deduplicated, prompt/area/session character budgets apply, and a block is committed only after the host accepts its emission. Current state is process-local; reconstruction after a process restart and durable per-decision advisory-digest audit records are not implemented yet.
+1. **Snapshot Sources**:
+   - **Published P1 Project Snapshot (`activation` / `managed.enabled`)**: Compiled by the governance console or `activation/compiler.ts` into `.pi/activation.json` (`amos-unified-rule-catalog` v2). Combines activated global seeds (`guidance/packs.ts` + `constraints/rules.yaml`), custom project `advisory_only` design preferences, paired hard-rule narratives (`pairedRuleId`), project `baselineRuleIds` (default `ts-strict-esm`, `ts-rebuild`), and custom `routes`. If `activation` is configured but invalid, injection fails closed to an empty advisory session rather than falling back to the global seed.
+   - **Static Guidance Seed (default non-managed fallback)**: When no project activation snapshot is configured, `injector/seed.ts` compiles the 7 repository packs (`typescript-base`, `engine-invariants`, `adapters`, `supervisor-core`, `decision-jev`, `dependencies-and-manifests`, `workflow-security`).
+2. **Deterministic Selection & Scoring (`injector/select.ts`)**:
+   - **Applicability Filter**: Excludes rules already injected in the session or whose non-empty `languages` / `frameworks` sets do not intersect the caller's signals.
+   - **Signal & Route Ranking**: Orders candidates by `level` ascending first, then by structural matches (`areas`, `pathHints` segment/glob matching, `taskTags`, `languages`, `frameworks`), bounded prompt keyword token sequences, explicit route `add` (`specificity`) and `suppress`, rule `priority`/`specificity`, and bytewise `id`/`ruleVersion`. A prompt can rank active rules in the snapshot, but cannot introduce or activate an excluded rule.
+   - **Project-Scoped Fallback**: When no signal or route matches (`no_signal_match`) or routing throws (`routing_error`), selection falls back to the active snapshot's applicable rules with `baselineRuleIds` prioritized first—never to an unactivated global pack.
+3. **Session State, Channels & Budgets (`injector/session.ts`, `injector/render.ts`)**:
+   - Enforces strict character and rule-count caps: `1,800` chars for `prompt` (`1,200` on fallback), `900` chars for `area`, `6,000` chars across the session, and at most `6` rules per block.
+   - Renders XML-escaped `- [id] narrative (source)` items inside `<amos-guidance>`. Rules dropped by budget are tracked in `omittedRefs` with `incomplete: true`.
+   - Deduplicates rules and normalized write/edit target areas per session only after the host confirms emission via `commit(block)`. Current state is process-local; reconstruction after a process restart and durable per-decision advisory-digest audit records are not implemented yet.
 
 - Pi replaces only the `amos-workflow-guidance` system-prompt section on user turns. After a normalized write/edit action, it can append one independent text block through `tool_result` without changing existing result text or dropping `structuredContent`.
 - OpenCode V2 stores prompt guidance through the keyed instruction API when available, otherwise appends it at the next `session.context`. Because V2 has no after-tool hook here, area guidance is queued by `tool.execute.before` and emitted at the next context as an independent system part.
-- Selection, rendering, and channel failures are advisory-only: they do not allow, deny, or confirm an action and do not change the deterministic gate result. The current static seed remains inside the agent-writable repository and provides no authenticity or tamper-resistance guarantee.
+- Selection, rendering, and channel failures are advisory-only: they do not allow, deny, or confirm an action and do not change the deterministic gate result. Both the static seed and local `.pi/activation.json` remain inside the same-UID workspace and provide no cryptographic authenticity or tamper-resistance guarantee.
 
 ## Jev credential boundary
 

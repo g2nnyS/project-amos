@@ -37,15 +37,23 @@ activation:
   includedRuleIds: null      # null = 选中全局 + 项目规则；显式数组 = 只选这些
   excludedRuleIds: []
 injection:
-  baselineRuleIds: []
-  routes: []                 # 可选 task/path 路由
-rules:                       # 项目候选中的规则定义
+  baselineRuleIds:           # 无信号命中或回退时优先选中的激活规则 ID
+    - ts-strict-esm
+    - ts-rebuild
+  routes:                    # 可选：按 area/pathHint/taskTag/keyword 触发 add/suppress
+    - match:
+        area: engine
+        pathHint: engine/**
+      add: [engine-pure, engine-precedence]
+      suppress: []
+      specificity: 10
+rules:                       # 项目候选中的规则定义（含硬规则与纯工程规范/设计偏好）
   - id: ...
     dimension: ...
     level: 1
-    expressivity: deterministic
-    predicate: [...]
-    narrative: ...
+    expressivity: deterministic|advisory_only
+    predicate: [...]|null
+    narrative: ...           # 动态注入 <amos-guidance> 的工程规范/偏好或硬规则说明
     on_hit: deny|confirm|log
     scope: project|session
     ttl: null|ISO
@@ -72,6 +80,11 @@ rules:                       # 项目候选中的规则定义
   `target_outside_glob` 模式中，编译时展开为项目 workspace。
 - `level` 只影响 advisory 排序/审计优先级，不改变
   `deny > confirm > log > allow`。
+- 纯工程规范/设计偏好规则设置 `expressivity: advisory_only`、`predicate: null`、
+  `enforcement: advisory`、`policy_class: engineering`；编译时从 `dimension`
+  派生默认 `areas`/`keywords`（内置 7 个 guidance pack 则带显式 `taskTags`、
+  `languages`、`pathHints` 映射），也可通过 `injection.routes` 按 `area`、
+  `pathHint`、`taskTag`、`keyword` 精确路由或抑制已激活规则。
 
 ## 3. 控制台启动
 
