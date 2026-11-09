@@ -124,11 +124,21 @@ npm run typecheck
 npm test
 ```
 
-### 1. Run with OpenCode V2 or Pi
+### 1. Launch the Governance Console (Publish a Project Snapshot)
 
-The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md). Engineering gating, Jev configuration, and its honest harness limits are documented in [Workflow Gate](docs/workflow-gate.md).
+```bash
+npm run console
+# Or skip rebuilding if dist/ is already up to date: npm run console:serve
+```
 
-### 2. Generate a Human Review Worksheet
+Open the emitted `http://127.0.0.1:4310` URL (use `127.0.0.1` to preserve Host/Origin checks). Open `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` in a local editor and paste it into the login form—never paste tokens into chat, URLs, or logs. Create a project, import or edit rules, submit a proposal, and approve/publish it to write `<workspace>/.pi/activation.json`. See [Local Governance](docs/local-governance.md) and [Console README](web/README.md).
+
+### 2. Run with Pi or OpenCode V2
+
+- **Pi Managed Gate (explicit opt-in)**: Configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). Pi loads the snapshot, writes `.pi/runtime.json`, injects `<amos-guidance>`, and gates normalized tool calls before execution.
+- **Default Log-Only Adapters**: The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For default Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md); for the engineering workflow gate and Jev setup, see [Workflow Gate](docs/workflow-gate.md).
+
+### 3. Generate a Human Review Worksheet
 
 ```bash
 npm run audit:review -- \

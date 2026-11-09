@@ -118,11 +118,21 @@ npm run typecheck
 npm test
 ```
 
-### 1. 接入 OpenCode V2 / Pi
+### 1. 启动本地治理控制台（发布项目快照）
 
-根目录的 `opencode.jsonc` 已配置好插件。执行 `npm run build` 后，在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。Pi 的接入方式参见 [Pi 适配器说明](docs/pi-adapter.md)。工程硬门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
+```bash
+npm run console
+# 若已执行过构建，可直接运行：npm run console:serve
+```
 
-### 2. 生成人工审核工作表
+在浏览器打开服务输出的 `http://127.0.0.1:4310`（请使用 `127.0.0.1` 以保留 Host/Origin 校验）。在本机编辑器打开服务提示的 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` 粘贴登录（切勿将令牌发到聊天、URL 或日志）。创建项目、导入或编辑规则、提交提案并人工批准发布后，控制台会将 P1 快照原子写入 `<workspace>/.pi/activation.json`。完整参数与备份说明见 [本地治理控制台](docs/local-governance.md) 与 [前端说明](web/README.md)。
+
+### 2. 接入 Pi / OpenCode V2
+
+- **Pi 受管硬门路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照、写入 `.pi/runtime.json` 回执，并在工具执行前执行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
+- **默认 `log-only` 观察路径**：根目录 `opencode.jsonc` 已配置好插件，执行 `npm run build` 后在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程工作流门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
+
+### 3. 生成人工审核工作表
 
 ```bash
 npm run audit:review -- \
