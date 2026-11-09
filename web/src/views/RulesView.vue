@@ -49,14 +49,20 @@ function locallySelected(id: string) {
   return (activation.value.includedRuleIds === null || activation.value.includedRuleIds.includes(id)) && !activation.value.excludedRuleIds.includes(id)
 }
 
+function pickQuery<T extends string>(value: unknown, allowed: readonly T[]): T | '' {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? value as T : ''
+}
+
 function readQuery() {
-  search.value = String(route.query.search || '')
-  dimension.value = String(route.query.dimension || '')
-  policyClass.value = (route.query.policyClass as RulePolicyClass) || ''
-  onHit.value = (route.query.onHit as RuleOnHit) || ''
-  enforcement.value = (route.query.enforcement as RuleEnforcement) || ''
-  expressivity.value = (route.query.expressivity as RuleExpressivity) || ''
-  selected.value = String(route.query.id || '') || null
+  const q = route.query
+  search.value = typeof q.search === 'string' ? q.search : ''
+  dimension.value = pickQuery(q.dimension, dimensions.value)
+  policyClass.value = pickQuery(q.policyClass, policyClasses.map(c => c.value))
+  onHit.value = pickQuery(q.onHit, onHits.map(h => h.value))
+  enforcement.value = pickQuery(q.enforcement, enforcements.map(e => e.value))
+  expressivity.value = pickQuery(q.expressivity, expressivities.map(e => e.value))
+  const id = typeof q.id === 'string' ? q.id : ''
+  selected.value = id && (rules.value.length === 0 || rules.value.some(r => r.id === id)) ? id : null
 }
 
 function pushQuery() {
@@ -67,7 +73,7 @@ function pushQuery() {
   if (onHit.value) query.onHit = onHit.value
   if (enforcement.value) query.enforcement = enforcement.value
   if (expressivity.value) query.expressivity = expressivity.value
-  if (selected.value) query.id = selected.value
+  if (selected.value && detail.value) query.id = selected.value
   void router.replace({ path: route.path, query })
 }
 
@@ -99,7 +105,7 @@ function applyMatrixFilter(filters: { dimension?: string; onHit?: RuleOnHit; exp
   expressivity.value = filters.expressivity ?? ''
   selected.value = null
   pushQuery()
-  tableContainer.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  tableContainer.value?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
 function keydown(event: KeyboardEvent) {
