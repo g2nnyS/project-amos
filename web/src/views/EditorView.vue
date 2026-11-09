@@ -287,7 +287,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
             <div class="overflow-x-auto">
               <table class="data-table">
                 <thead>
-                  <tr><th>规则 ID</th><th v-if="draft.activation.includedRuleIds !== null">包含</th><th>排除</th></tr>
+                  <tr><th scope="col">规则 ID</th><th v-if="draft.activation.includedRuleIds !== null" scope="col">包含</th><th scope="col">排除</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="rule in draft.rules" :key="rule.id">

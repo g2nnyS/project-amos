@@ -60,13 +60,13 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
         <table class="data-table min-w-[760px]">
           <thead>
             <tr>
-              <th>标题</th>
-              <th>状态</th>
-              <th>作者</th>
-              <th>基准</th>
-              <th>提交时间</th>
-              <th>过期时间</th>
-              <th>发布版本</th>
+              <th scope="col">标题</th>
+              <th scope="col">状态</th>
+              <th scope="col">作者</th>
+              <th scope="col">基准</th>
+              <th scope="col">提交时间</th>
+              <th scope="col">过期时间</th>
+              <th scope="col">发布版本</th>
             </tr>
           </thead>
           <tbody>

@@ -27,13 +27,13 @@ const versions = computed(() => store.versions.slice().sort((a, b) => b.version 
         <table class="data-table min-w-[720px]">
           <thead>
             <tr>
-              <th>版本</th>
-              <th>提案</th>
-              <th>上一版本</th>
-              <th>发布时间</th>
-              <th>审批人</th>
-              <th class="num">规则数</th>
-              <th class="num">已激活</th>
+              <th scope="col">版本</th>
+              <th scope="col">提案</th>
+              <th scope="col">上一版本</th>
+              <th scope="col">发布时间</th>
+              <th scope="col">审批人</th>
+              <th scope="col" class="num">规则数</th>
+              <th scope="col" class="num">已激活</th>
             </tr>
           </thead>
           <tbody>

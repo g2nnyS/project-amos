@@ -74,12 +74,12 @@ onMounted(load)
           <table class="data-table min-w-[720px]">
             <thead>
               <tr>
-                <th>来源 / 行</th>
-                <th>时间</th>
-                <th>动作</th>
-                <th>假设裁决</th>
-                <th>命中规则</th>
-                <th>原因</th>
+                <th scope="col">来源 / 行</th>
+                <th scope="col">时间</th>
+                <th scope="col">动作</th>
+                <th scope="col">假设裁决</th>
+                <th scope="col">命中规则</th>
+                <th scope="col">原因</th>
               </tr>
             </thead>
             <tbody>

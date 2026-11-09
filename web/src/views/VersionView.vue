@@ -163,7 +163,7 @@ async function restore() {
         <div v-if="!rolloutRows.length" class="p-4 text-xs text-muted-foreground">尚无 rollout 状态。</div>
         <div v-else class="overflow-x-auto">
           <table class="data-table min-w-[420px]">
-            <thead><tr><th>规则</th><th>版本</th><th>状态</th><th>更新时间</th></tr></thead>
+            <thead><tr><th scope="col">规则</th><th scope="col">版本</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead>
             <tbody>
               <tr v-for="row in rolloutRows" :key="row.ruleId">
                 <td class="break-all font-mono text-xs">{{ row.ruleId }}</td>
