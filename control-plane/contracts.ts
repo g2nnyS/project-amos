@@ -526,6 +526,7 @@ export interface HarnessRuntimeReport {
 
 export type HarnessRuntimeState =
   | 'loaded'
+  | 'loaded-unverified'
   | 'stale'
   | 'never'
   | 'invalid'

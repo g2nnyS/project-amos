@@ -26,6 +26,16 @@ function modeLabel(report: HarnessRuntimeReport): string {
 function reportView(observation: HarnessRuntimeObservation | null): { label: string; tone: Tone; description: string } {
   if (!observation) return { label: '状态不可用', tone: 'neutral', description: '没有可读取的 Harness 状态。' }
   const report = observation.runtime
+  if (observation.status === 'loaded-unverified' && report) {
+    const lacksDigest = report.version === 1 || !report.configDigest
+    return {
+      label: '身份匹配 · 配置待核验',
+      tone: 'info',
+      description: lacksDigest
+        ? '旧协议 v1 回执缺少可比的配置摘要，无法核验当前宿主配置。重新加载支持 v2 的适配器可更新报告。'
+        : '回执包含配置摘要，但缺少期望摘要比对，无法核验当前宿主配置。重新加载支持 v2 的适配器可更新报告。',
+    }
+  }
   if (observation.status === 'loaded' && report) {
     if (report.mode === 'enforcing') return { label: '约束已加载', tone: 'positive', description: '最近报告为受管模式，且与当前配置匹配。' }
     if (report.mode === 'log-only') return { label: 'Log-only 已加载', tone: 'info', description: '最近报告为仅观察模式，且与当前配置匹配；不表示约束已加载。' }

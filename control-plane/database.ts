@@ -28,6 +28,15 @@ const KNOWN_TABLES = [
   'rule_rollouts',
 ] as const;
 
+export interface OpenedGovernanceDatabase {
+  readonly db: DatabaseSync;
+  /**
+   * Highest legacy schema version migrated by this open. `null` means the
+   * database already matched the current schema and no migration ran.
+   */
+  readonly migratedFrom: 1 | 2 | null;
+}
+
 /**
  * Open and migrate the governance database. Unknown schema versions, foreign
  * tables, corrupt files, and schema/compiler drift all fail closed; the opener
@@ -37,7 +46,7 @@ export function openGovernanceDatabase(
   databasePath: string,
   schemaDigest: string,
   nowMs: number,
-): DatabaseSync {
+): OpenedGovernanceDatabase {
   const createdByThisOperation = prepareDatabaseFile(databasePath);
   let db: DatabaseSync;
   try {
@@ -71,8 +80,13 @@ export function openGovernanceDatabase(
       throw new DomainError('database_corrupt');
     }
 
-    migrateOrVerify(db, schemaDigest, nowMs, createdByThisOperation || databasePath === ':memory:');
-    return db;
+    const migratedFrom = migrateOrVerify(
+      db,
+      schemaDigest,
+      nowMs,
+      createdByThisOperation || databasePath === ':memory:',
+    );
+    return { db, migratedFrom };
   } catch (error) {
     try {
       db.close();
@@ -172,8 +186,9 @@ function migrateOrVerify(
   schemaDigest: string,
   nowMs: number,
   allowBootstrap: boolean,
-): void {
+): 1 | 2 | null {
   db.exec('BEGIN IMMEDIATE');
+  let migratedFrom: 1 | 2 | null = null;
   try {
     const versionRow = db.prepare('PRAGMA user_version').get() as
       | { user_version?: unknown }
@@ -200,9 +215,11 @@ function migrateOrVerify(
       migrateV1ToV2(db, schemaDigest);
       migrateV2ToV3(db, schemaDigest, nowMs);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+      migratedFrom = 1;
     } else if (version === 2) {
       migrateV2ToV3(db, schemaDigest, nowMs);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+      migratedFrom = 2;
     } else if (version === DATABASE_SCHEMA_VERSION) {
       verifySchema(db, schemaDigest);
     } else {
@@ -210,6 +227,7 @@ function migrateOrVerify(
     }
 
     db.exec('COMMIT');
+    return migratedFrom;
   } catch (error) {
     try {
       db.exec('ROLLBACK');

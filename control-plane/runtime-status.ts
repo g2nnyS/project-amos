@@ -82,15 +82,7 @@ export function readRuntimeStatus(
     .map((observation) => observation.runtime)
     .filter((report): report is HarnessRuntimeReport => report !== null)
     .sort((a, b) => Date.parse(b.loadedAt) - Date.parse(a.loadedAt));
-  const status: HarnessRuntimeState = observations.some((observation) => observation.status === 'invalid')
-    ? 'invalid'
-    : effectiveExpectation === null
-      ? 'unpublished'
-      : observations.some((observation) => observation.status === 'stale')
-        ? 'stale'
-        : observations.some((observation) => observation.status === 'loaded')
-          ? 'loaded'
-          : 'never';
+  const status = aggregateStatus(observations, effectiveExpectation);
 
   return {
     status,
@@ -99,6 +91,26 @@ export function readRuntimeStatus(
     projection,
     harnesses,
   };
+}
+
+/**
+ * Aggregate per-harness observations by precedence, so that a harness which
+ * could not be fully verified is never reported as `loaded` on the strength of
+ * another harness that was. `loaded-unverified` outranks `loaded` for the same
+ * reason `stale` outranks both.
+ */
+function aggregateStatus(
+  observations: readonly HarnessRuntimeObservation[],
+  expected: RuntimeExpectation | null,
+): HarnessRuntimeState {
+  if (observations.some((observation) => observation.status === 'invalid')) return 'invalid';
+  if (expected === null) return 'unpublished';
+  if (observations.some((observation) => observation.status === 'stale')) return 'stale';
+  if (observations.some((observation) => observation.status === 'loaded-unverified')) {
+    return 'loaded-unverified';
+  }
+  if (observations.some((observation) => observation.status === 'loaded')) return 'loaded';
+  return 'never';
 }
 
 function readHarnessObservation(
@@ -124,9 +136,17 @@ function readHarnessObservation(
     runtime.projectId !== expected.projectId ||
     runtime.policyVersion !== expected.policyVersion ||
     runtime.epoch !== expected.epoch ||
-    runtime.activationDigest !== expected.activationDigest ||
-    (expected.configDigest !== undefined && runtime.configDigest !== expected.configDigest)
+    runtime.activationDigest !== expected.activationDigest
   ) {
+    return { status: 'stale', runtime };
+  }
+  // Identity matches. Configuration verification is only possible when both
+  // sides carry a v2 config digest; a v1 receipt (or a caller that did not
+  // supply an expected digest) is comparable on identity alone.
+  if (runtime.configDigest === undefined || expected.configDigest === undefined) {
+    return { status: 'loaded-unverified', runtime };
+  }
+  if (runtime.configDigest !== expected.configDigest) {
     return { status: 'stale', runtime };
   }
   return { status: 'loaded', runtime };

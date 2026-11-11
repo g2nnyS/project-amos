@@ -34,8 +34,8 @@ Jev 配置；字面密钥由控制面原子写入私有状态目录的
 `review: null`，宿主停止，由人单次 PATCH 原地迁移。项目配置由 human 通过
 `POST /api/projects/:id/config` 更新；Agent 仅可读取和触发已预授权动作。
 
-全局或项目配置更新会按当前有效激活身份重新生成宿主投影，不创建规则版本，
-也不触发 TTL 到期编译。全局更新逐项目继续执行并返回失败的 project id；未发布项目
+全局或项目配置更新会先持久化已到期的临时收紧，再按当前有效激活身份重新生成宿主投影；
+该过程不创建规则版本。全局更新逐项目继续执行并返回失败的 project id；未发布项目
 不写宿主文件。发布（以及临时收紧、过期或配置更新）会用同一份配置生成并原子写入：
 
 ```text
@@ -46,14 +46,20 @@ Jev 配置；字面密钥由控制面原子写入私有状态目录的
 两个文件分别原子替换；managed 投影先 rename，因此中途崩溃会留下可见的
 digest/epoch 不匹配，而不是静默接受旧快照。投影 v2 增加解析后的 `harness` 与
 `configDigest`，并校验其与 `managed.enabled` 一致；v1 只作为旧协议读取。
-适配器同时校验投影和激活 digest/epoch/policyVersion/configDigest，不匹配即 fail closed。
+`configDigest` 覆盖宿主消费的 Harness、managed 与 workflow gate 配置；收紧模板与
+rollout 状态由控制面使用，不参与该摘要。适配器校验投影结构与激活快照的身份绑定；
+控制台比对投影和加载报告的配置摘要。
+从旧数据库升级时，控制面逐项目重新生成已发布项目的投影；写入失败会在投影状态中
+显示为缺失或过期。已有 v2 投影若使用旧摘要范围，需重新保存配置或重新发布后加载
+新投影；已有回执会在下次加载时更新。
 有效 `enabled:false` 会停用适配器拥有的记录、注入和 Managed gate；独立工程工作流门不随之
 改变。`advisoryInjection:false` 只抑制提示注入，不影响要求捕获、裁决或结果审计。
 
 真实 Host 按 Harness 写 `.pi/runtime.pi.json` 或 `.pi/runtime.opencode.json`，报告实际
 `enforcing`/`log-only`/`disabled` 与 configDigest；旧 `.pi/runtime.json` 仅在没有对应新
 回执时作为 legacy fallback。控制台通过 `control-plane/runtime-status.ts` 分别显示
-`loaded` / `stale` / `never` / `invalid`，不把数据库发布或投影写入当作“宿主已生效”。
+`loaded` / `loaded-unverified` / `stale` / `never` / `invalid`；`loaded-unverified`
+表示报告身份匹配但配置摘要不可比，不把数据库发布或投影写入当作“宿主已生效”。
 回执描述最近加载报告，不代表所有并发会话；配置变化需要后续支持的加载/重载边界。
 
 Pi 与 OpenCode 都优先读取 `.pi/amos.managed.json`；缺少投影时保留原有

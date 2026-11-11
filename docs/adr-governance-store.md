@@ -42,8 +42,9 @@
 - 错 digest、错 project、未知 publication 的 receipt 拒绝。
 - 状态 API 必须分别显示 published/received/effective，并明确
   `unsupported`/`unmanaged`；没有回执不能显示“已生效”。
-- 本轮宿主回执由 Pi 写 `.pi/runtime.json`；控制台读取并显示
-  loaded/stale/never。它是 same-UID 本地观察，不是跨机器/防篡改回执。
+- Pi 的 v2 投影回执写入 `.pi/runtime.pi.json`，旧协议使用 `.pi/runtime.json`；
+  控制台区分摘要已匹配、身份匹配但摘要待核验、过期及尚无报告。它是 same-UID
+  本地观察，不是跨机器/防篡改回执。
 
 ## 4. 备份与恢复
 

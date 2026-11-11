@@ -89,7 +89,7 @@ Amos 把项目的工程规范、架构不变量与设计偏好视为一等公民
 - **P1 项目规则目录与发布**：把仓库 YAML 规则和 guidance seed 导入版本化目录，按项目编译执行与 advisory 投影，并由控制台发布 catalog-v2 产物；Pi managed 路径直接消费同一产物完成执行前拦截与动态注入。
 - **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；`deny` 在执行前阻断，`confirm` 先停住并交有界投影的 Jev 语义 reviewer 审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt 并在工具结果附加路径/任务级指导。已由 `managed/pi-harness.test.ts`（真实 Pi 会话 + 真实扩展 + 真实 write 工具 + loopback Jev 协议应答 + 真实文件副作用）与 `managed/harness-requirement.test.ts` 验证；2026-11-05 的 live probe 用的是已退役的本地 reviewer 服务。不是 OS 沙箱，默认仍 log-only。
 - **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；Jev reviewer（`review/jev-reviewer.ts`）只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成端到端闭环。Pi 与 OpenCode 的 managed 路径都接入该 review/grant 链路，普通适配器仍 log-only；OS 隔离不在本轮范围。
-- **Vue 治理控制台与 SQLite API**：提供登录、项目创建/切换、规则编辑与 YAML 导入导出、校验、不可变提案、人工审批/发布、版本列表、回滚新版本、审计与运行期状态观察。SQLite 单主存储，发布事务原子编译 catalog-v2 并写出 `.pi/activation.json`；真实 Chromium 端到端测试已覆盖登录→发布→YAML 导出/导入→runtime 状态→回滚全链路。宿主回执为同 UID 本地 `.pi/runtime.json` 报告，非跨机器远程证明。
+- **Vue 治理控制台与 SQLite API**：提供登录、项目创建/切换、规则编辑与 YAML 导入导出、校验、不可变提案、人工审批/发布、版本列表、回滚新版本、审计与运行期状态观察。SQLite 单主存储，发布事务原子编译 catalog-v2 并写出 `.pi/activation.json`；真实 Chromium 端到端测试已覆盖登录→发布→YAML 导出/导入→runtime 状态→回滚全链路。宿主 v2 回执为同 UID 本地 `.pi/runtime.pi.json` 或 `.pi/runtime.opencode.json` 报告；旧回执可从 `.pi/runtime.json` 读取。
 - **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
 - **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
 - **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
@@ -129,7 +129,7 @@ npm run console
 
 ### 2. 接入 Pi / OpenCode V2
 
-- **Pi 受管硬门路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照、写入 `.pi/runtime.json` 回执，并在工具执行前执行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
+- **Pi 受管硬门路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照并写入回执：v2 投影使用 `.pi/runtime.pi.json`，旧投影使用 `.pi/runtime.json`；工具执行前进行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
 - **默认 `log-only` 观察路径**：根目录 `opencode.jsonc` 已配置好插件，执行 `npm run build` 后在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程工作流门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
 
 ### 3. 生成人工审核工作表

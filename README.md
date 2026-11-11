@@ -135,7 +135,7 @@ Open the emitted `http://127.0.0.1:4310` URL (use `127.0.0.1` to preserve Host/O
 
 ### 2. Run with Pi or OpenCode V2
 
-- **Pi Managed Gate (explicit opt-in)**: Configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). Pi loads the snapshot, writes `.pi/runtime.json`, injects `<amos-guidance>`, and gates normalized tool calls before execution.
+- **Pi Managed Gate (explicit opt-in)**: Configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). Pi loads the snapshot, writes `.pi/runtime.pi.json` for a v2 projection (or the legacy `.pi/runtime.json`), injects `<amos-guidance>`, and gates normalized tool calls before execution.
 - **Default Log-Only Adapters**: The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For default Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md); for the engineering workflow gate and Jev setup, see [Workflow Gate](docs/workflow-gate.md).
 
 ### 3. Generate a Human Review Worksheet

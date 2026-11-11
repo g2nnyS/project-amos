@@ -663,9 +663,18 @@ function buildHostRuntimeConfig(input: HostRuntimeConfigInput): Record<string, u
   });
 }
 
-/** Digest only the resolved host-consumed configuration, not publication time. */
+/**
+ * Digest only the resolved configuration a harness consumes. Tightening and
+ * rollout metadata stay in the projection but are control-plane state: a
+ * rollout promotion must not invalidate an otherwise matching host receipt.
+ */
 export function hostRuntimeConfigDigest(input: HostRuntimeConfigInput): string {
-  const body = JSON.stringify(buildHostRuntimeConfig(input));
+  const runtimeConfig = buildHostRuntimeConfig(input);
+  const body = JSON.stringify({
+    harness: runtimeConfig.harness,
+    managed: runtimeConfig.managed,
+    workflowGate: runtimeConfig.workflowGate,
+  });
   return `sha256:${createHash('sha256').update(body).digest('hex')}`;
 }
 

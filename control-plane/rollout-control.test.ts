@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { writeHarnessRuntimeReport } from '../adapters/shared/runtime-report.ts';
 import {
   createPromotionThresholds,
   createProbeRun,
   type ProbeRun,
 } from '../rollout/contracts.ts';
+import { writeProjectArtifacts } from './cli.ts';
 import { createControlPlane } from './store.ts';
 import {
   agent,
@@ -396,6 +399,158 @@ test('hold and rejection keep rollout state unchanged and record fixed reasons',
   assert.equal(cp.listRuleRollouts(project.id)[0]?.state, 'log_only');
   const audit = cp.listAudit({ projectId: project.id, limit: 50 });
   assert.equal(audit.items.some((event) => event.kind === 'rollout_promotion_held'), true);
+});
+
+test('rollout promotion keeps the written v2 projection and loaded v2 receipts', (t) => {
+  const dir = makeTempDir(t);
+  const workspace = join(dir, 'workspace');
+  mkdirSync(workspace, { recursive: true });
+  const auditDir = join(dir, 'audit');
+  mkdirSync(auditDir, { recursive: true });
+  const clock = createTestClock(START);
+  const cp = createControlPlane({
+    databasePath: join(dir, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+    writeArtifacts: writeProjectArtifacts,
+  });
+  t.after(() => cp.close());
+  const project = createProject(cp, workspace);
+  const proposal = cp.createProposal(
+    project.id,
+    {
+      title: 'Publish rule',
+      rationale: 'Rollout digest fixture',
+      baseVersion: 0,
+      expiresAt: futureIso(clock),
+      candidate: makeCandidate([makeRule('rule-1')]),
+    },
+    human(),
+  );
+  cp.decideProposal(
+    proposal.id,
+    { decision: 'approve', note: 'approved', expectedDigest: proposal.digest },
+    human(),
+  );
+  const published = cp.getVersion(project.id, 1);
+  const activationDigest = published.snapshot.activationDigest;
+
+  interface Projection {
+    readonly version: number;
+    readonly activationDigest: string;
+    readonly epoch: number;
+    readonly policyVersion: string;
+    readonly configDigest: string;
+    readonly tightening: Record<string, unknown>;
+    readonly rollout: Record<string, unknown>;
+  }
+  const readProjection = (): Projection =>
+    JSON.parse(
+      readFileSync(join(workspace, '.pi', 'amos.managed.json'), 'utf8'),
+    ) as Projection;
+
+  const initial = readProjection();
+  assert.equal(initial.version, 2);
+  assert.equal(typeof initial.configDigest, 'string');
+  assert.equal(typeof initial.tightening, 'object');
+  assert.equal(typeof initial.rollout, 'object');
+
+  assert.equal(
+    writeHarnessRuntimeReport({
+      directory: workspace,
+      projectId: project.id,
+      activationDigest: initial.activationDigest,
+      epoch: initial.epoch,
+      policyVersion: initial.policyVersion,
+      loadedAt: new Date(clock.now()).toISOString(),
+      harness: 'pi',
+      mode: 'log-only',
+      configDigest: initial.configDigest,
+      capabilities: {},
+    }),
+    true,
+  );
+  assert.equal(
+    writeHarnessRuntimeReport({
+      directory: workspace,
+      projectId: project.id,
+      activationDigest: initial.activationDigest,
+      epoch: initial.epoch,
+      policyVersion: initial.policyVersion,
+      loadedAt: new Date(clock.now()).toISOString(),
+      harness: 'opencode',
+      mode: 'log-only',
+      configDigest: initial.configDigest,
+      capabilities: {},
+    }),
+    true,
+  );
+
+  const before = cp.getRuntimeStatus(project.id);
+  assert.equal(before.projection.status, 'written');
+  assert.equal(before.projection.configDigest, initial.configDigest);
+  assert.equal(before.harnesses.pi.status, 'loaded');
+  assert.equal(before.harnesses.opencode.status, 'loaded');
+  assert.equal(before.runtime?.version, 2);
+
+  // Rollout and tightening are control-plane metadata: re-emitting the
+  // projection for them keeps the host-consumed digest stable.
+  const draftThreshold = threshold(clock.now(), 'draft', 'log_only');
+  cp.updateProjectConfig(
+    project.id,
+    { rollout: { thresholds: draftThreshold } },
+    human(),
+  );
+  assert.equal(readProjection().configDigest, initial.configDigest);
+  cp.updateProjectConfig(project.id, { tightening: { enabled: true } }, human());
+  assert.equal(readProjection().configDigest, initial.configDigest);
+
+  const run = probe(activationDigest, clock.now());
+  cp.recordProbeRun(project.id, { probe: run }, agent());
+  const promoted = cp.evaluateRulePromotion(
+    project.id,
+    'rule-1',
+    {
+      evidence: [run],
+      current: {
+        activationDigest,
+        host: run.host,
+        check: run.check,
+        environment: run.environment,
+      },
+    },
+    agent(),
+  );
+  assert.equal(promoted.decision, 'promote');
+  assert.equal(promoted.toStage, 'log_only');
+
+  const after = cp.getRuntimeStatus(project.id);
+  assert.equal(after.projection.status, 'written');
+  assert.equal(after.projection.configDigest, initial.configDigest);
+  assert.equal(after.harnesses.pi.status, 'loaded');
+  assert.equal(after.harnesses.opencode.status, 'loaded');
+  assert.equal(after.runtime?.version, 2);
+
+  // Host-consumed configuration changes still alter the digest.
+  cp.updateProjectConfig(project.id, { managed: { grantTtlMs: 30_000 } }, human());
+  const withManaged = readProjection().configDigest;
+  assert.notEqual(withManaged, initial.configDigest);
+
+  cp.updateProjectConfig(
+    project.id,
+    { workflowGate: { enabled: true, jevConfigPath: 'jev.json' } },
+    human(),
+  );
+  const withWorkflowGate = readProjection().configDigest;
+  assert.notEqual(withWorkflowGate, withManaged);
+
+  cp.updateProjectConfig(
+    project.id,
+    { harness: { enabled: true, mode: 'managed' } },
+    human(),
+  );
+  assert.notEqual(readProjection().configDigest, withWorkflowGate);
 });
 
 test('unrecorded or unbound evidence never promotes', (t) => {

@@ -21,7 +21,7 @@ export interface RuntimeStatus {
   trustBoundary: false
   projectCount?: number
 }
-export type HarnessRuntimeState = 'loaded' | 'stale' | 'never' | 'invalid' | 'unpublished'
+export type HarnessRuntimeState = 'loaded' | 'loaded-unverified' | 'stale' | 'never' | 'invalid' | 'unpublished'
 export type HarnessId = 'pi' | 'opencode'
 export interface HarnessRuntimeReport {
   format: 'amos-harness-runtime'
