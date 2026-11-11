@@ -1,0 +1,42 @@
+appId: dev.amos.console
+productName: Amos Console
+copyright: Copyright © 2026 Amos maintainers
+
+# The desktop shell starts the compiled control plane as a child process with
+# Electron's bundled Node. Keeping the archive off disk lets that process read
+# dist/, constraints/ and guidance/ directly.
+asar: false
+npmRebuild: false
+
+directories:
+  output: release
+
+files:
+  - electron/**/*
+  - dist/**/*
+  - constraints/**/*
+  - guidance/**/*
+  - package.json
+
+artifactName: amos-console-${version}-${os}-${arch}.${ext}
+
+linux:
+  target:
+    - AppImage
+  category: Development
+  executableName: amos-console
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  identity: null

@@ -4,13 +4,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
-const nodeBinary = process.env.AMOS_NODE_PATH ?? process.env.npm_node_execpath ?? 'node'
+const packaged = app.isPackaged
+const nodeBinary = process.env.AMOS_NODE_PATH ?? (packaged ? process.execPath : process.env.npm_node_execpath ?? 'node')
 let service
 let consoleUrl
 
 function startService() {
   service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve', '--port', '0'], {
     cwd: root,
+    env: packaged ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })

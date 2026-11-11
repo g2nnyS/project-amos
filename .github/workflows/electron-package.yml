@@ -1,0 +1,73 @@
+name: Electron package
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: --linux AppImage
+            artifacts: release/*.AppImage
+          - os: windows-latest
+            platform: windows
+            target: --win nsis
+            artifacts: release/*.exe
+          - os: macos-latest
+            platform: macos
+            target: --mac dmg
+            artifacts: release/*.dmg
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend and console
+        run: npm run build
+
+      - name: Package installers
+        run: npm run dist:electron -- ${{ matrix.target }}
+        env:
+          # Build unsigned installers; signing credentials are not available to CI.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: amos-console-${{ matrix.platform }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14

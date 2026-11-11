@@ -1,7 +1,12 @@
 {
   "name": "amos-g0-spike",
+  "version": "0.1.0",
   "private": true,
+  "description": "Agent Mandate & Oversight System local governance console",
+  "author": "Amos maintainers",
+  "license": "UNLICENSED",
   "type": "module",
+  "main": "electron/main.mjs",
   "workspaces": [
     "web"
   ],
@@ -14,6 +19,8 @@
     "console:init": "npm run build && node dist/control-plane/cli.js init",
     "console:serve": "node dist/control-plane/cli.js serve",
     "electron": "npm run build && electron electron/main.mjs",
+    "dist:electron": "electron-builder --publish never",
+    "dist:electron:dir": "electron-builder --dir --publish never",
     "e2e:smoke": "npm run build && node web/e2e/smoke.mjs",
     "probe:live": "node dist/managed/live-probe.js",
     "check:gate": "npm run build && node dist/check/cli.js"
@@ -30,6 +37,7 @@
     "@types/node": "^26.6.5",
     "@types/picomatch": "^4.0.3",
     "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "typescript": "^7.0.2"
   },
   "overrides": {
