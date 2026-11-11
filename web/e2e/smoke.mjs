@@ -20,15 +20,16 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const cliModule = path.join(repoRoot, 'dist', 'control-plane', 'cli.js')
 const staticDir = path.join(repoRoot, 'dist', 'console')
+const runtimeReportModule = path.join(repoRoot, 'dist', 'adapters', 'shared', 'runtime-report.js')
 const chromePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium'
 const root = process.env.E2E_TMP_ROOT || '/tmp/opencode'
 
-if (!existsSync(cliModule) || !existsSync(path.join(staticDir, 'asset-manifest.json'))) {
+if (!existsSync(cliModule) || !existsSync(path.join(staticDir, 'asset-manifest.json')) || !existsSync(runtimeReportModule)) {
   console.error('SKIP: build output is missing; run `npm run build` from the repository root first.')
   process.exit(0)
 }
@@ -94,6 +95,8 @@ try {
   const providerUrl = `http://127.0.0.1:${providerAddress.port}`
 
   const { startServe } = await import(cliModule)
+  const { writeHarnessRuntimeReport, PI_MANAGED_CAPABILITIES } =
+    await import(pathToFileURL(runtimeReportModule).href)
   const synthetic = {
     human: 'e2e-human-synthetic-token-0123456789abcdef',
     agent: 'e2e-agent-synthetic-token-0123456789abcdef',
@@ -288,6 +291,74 @@ try {
   const workspace = path.join(runDir, 'amos-e2e-workspace')
   let exportedYaml = ''
 
+  const harnesses = ['pi', 'opencode']
+  const activationPath = path.join(workspace, '.pi', 'activation.json')
+  const projectionPath = path.join(workspace, '.pi', 'amos.managed.json')
+  const legacyReportPath = path.join(workspace, '.pi', 'runtime.json')
+  const harnessReportPath = (harness) => path.join(workspace, '.pi', `runtime.${harness}.json`)
+
+  /** Read the real published projection and cross-check it with the activation artifact. */
+  async function readProjection() {
+    const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
+    const projection = JSON.parse(await readFile(projectionPath, 'utf8'))
+    assert.equal(artifact.format, 'amos-unified-rule-catalog')
+    assert.equal(artifact.project.workspace, workspace)
+    assert.equal(projection.format, 'amos-managed-host-projection')
+    assert.equal(projection.version, 2)
+    assert.equal(projection.workspace, workspace)
+    assert.equal(projection.projectId, artifact.project.projectId)
+    assert.equal(projection.activationDigest, artifact.activationDigest)
+    assert.equal(projection.epoch, artifact.project.epoch)
+    assert.equal(projection.policyVersion, artifact.project.projectConfigVersion)
+    assert.match(projection.configDigest, /^sha256:[a-f0-9]{64}$/)
+    return projection
+  }
+
+  /** The report mode a host actually loads from this projection. */
+  function projectionReportMode(projection) {
+    if (projection.managed?.enabled === true) return 'enforcing'
+    return projection.harness?.enabled === true ? 'log-only' : 'disabled'
+  }
+
+  function loadedCardLabel(mode) {
+    return mode === 'enforcing' ? '约束已加载' : mode === 'log-only' ? 'Log-only 已加载' : 'Disabled 已加载'
+  }
+
+  /**
+   * Write protocol-shaped reports through the production writer. These are
+   * receipts for the published projection, not a real Agent/harness run.
+   */
+  async function writeHarnessReports() {
+    const projection = await readProjection()
+    const mode = projectionReportMode(projection)
+    for (const harness of harnesses) {
+      const written = writeHarnessRuntimeReport({
+        directory: workspace,
+        projectId: projection.projectId,
+        activationDigest: projection.activationDigest,
+        epoch: projection.epoch,
+        policyVersion: projection.policyVersion,
+        loadedAt: new Date().toISOString(),
+        harness,
+        mode,
+        configDigest: projection.configDigest,
+      })
+      assert.equal(written, true, `runtime report write failed for ${harness}`)
+    }
+    return { projection, mode }
+  }
+
+  async function clearHarnessReports() {
+    await rm(legacyReportPath, { force: true })
+    for (const harness of harnesses) await rm(harnessReportPath(harness), { force: true })
+  }
+
+  const runtimeStatusApi = (projectId) =>
+    evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/runtime`)}).then(r => r.json())`)
+
+  const harnessCardText = (name) =>
+    `(Array.from(document.querySelectorAll('article')).find(e => e.querySelector('h3')?.textContent.trim() === ${q(name)})?.innerText ?? '')`
+
   await check('login with human token reaches the governance shell', async () => {
     await evaluate(`(() => {
       const el = document.querySelector('input[type=password]');
@@ -354,11 +425,23 @@ try {
     await waitFor(`document.body.innerText.includes('待审批')`)
   })
 
+  await check('new proposal is immediately visible in the shared proposal list', async () => {
+    await click('a', '返回提案')
+    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
+    await click('a', 'E2E smoke proposal')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
+  })
+
   await check('approve and publish the proposal', async () => {
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
     await click('[role="alertdialog"] button', '确认')
     await waitFor(`document.body.innerText.includes('已批准')`)
+  })
+
+  await check('overview reflects the newly published current version', async () => {
+    await nav('项目边界')
+    await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
   await check('matrix filters update URL and search survives navigation back', async () => {
@@ -416,7 +499,12 @@ try {
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
-      while (await evaluate(visible('[aria-label^="关闭提示"]'))) await click('[aria-label^="关闭提示"]')
+      while (await evaluate(`(() => {
+        const button = Array.from(document.querySelectorAll('[aria-label^="关闭提示"]')).find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none')
+        if (!button) return false
+        button.click()
+        return true
+      })()`)) await sleep(50)
       await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
       await waitFor(visible(inspector))
       const layout = await evaluate(`(() => { const e = document.querySelector(${q(inspector)}), r = e.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, client:document.documentElement.clientWidth, focused:document.activeElement?.getAttribute('aria-label') }; })()`)
@@ -459,40 +547,98 @@ try {
     assert.ok(exportedYaml.includes('format: amos-project-policy'), 'YAML export is not the versioned policy document')
   })
 
-  await check('published snapshot artifact exists and runtime status is honest', async () => {
-    const artifactPath = path.join(workspace, '.pi', 'activation.json')
-    assert.ok(existsSync(artifactPath), 'publish did not write the harness activation artifact')
-    const artifact = JSON.parse(await readFile(artifactPath, 'utf8'))
+  await check('published projection is v2 and agrees with the activation artifact', async () => {
+    assert.ok(existsSync(activationPath), 'publish did not write the harness activation artifact')
+    const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
     assert.equal(artifact.format, 'amos-unified-rule-catalog')
     assert.equal(artifact.project.workspace, workspace)
-    const projectId = artifact.project.projectId
-    let status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
+    const projection = await readProjection()
+    assert.equal(typeof projection.harness?.enabled, 'boolean')
+    assert.ok(projection.harness?.mode === 'log-only' || projection.harness?.mode === 'managed')
+    assert.equal(projection.managed?.enabled, projection.harness.enabled && projection.harness.mode === 'managed')
+
+    const status = await runtimeStatusApi(projection.projectId)
     assert.equal(status.status, 'never', `unexpected initial runtime status ${status.status}`)
-    // The Pi integration test and live probe prove the producer. This check
-    // exercises the console's real file/status UI contract with a report in the
-    // exact harness format, not a mocked API response.
-    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
+    assert.equal(status.projection.status, 'written')
+    assert.equal(status.runtime, null)
+  })
+
+  await check('v2 harness reports update the runtime API and per-harness cards', async () => {
+    const { projection, mode } = await writeHarnessReports()
+    for (const harness of harnesses) {
+      const report = JSON.parse(await readFile(harnessReportPath(harness), 'utf8'))
+      assert.equal(report.format, 'amos-harness-runtime')
+      assert.equal(report.version, 2)
+      assert.equal(report.harness, harness)
+      assert.equal(report.mode, mode)
+      assert.equal(report.projectId, projection.projectId)
+      assert.equal(report.activationDigest, projection.activationDigest)
+      assert.equal(report.epoch, projection.epoch)
+      assert.equal(report.policyVersion, projection.policyVersion)
+      assert.equal(report.configDigest, projection.configDigest)
+    }
+
+    const status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.status, 'loaded')
+    assert.equal(status.projection.status, 'written')
+    assert.equal(status.harnesses.pi.status, 'loaded')
+    assert.equal(status.harnesses.opencode.status, 'loaded')
+    assert.equal(status.harnesses.pi.runtime?.version, 2)
+    assert.equal(status.harnesses.opencode.runtime?.version, 2)
+    assert.equal(status.harnesses.pi.runtime?.configDigest, projection.configDigest)
+
+    await nav('项目边界')
+    const label = loadedCardLabel(mode)
+    await waitFor(`document.body.innerText.includes('当前配置投影已写入') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+    await waitFor(`document.body.innerText.includes(${q(projection.configDigest)})`)
+    await screenshot('desktop-runtime-loaded')
+  })
+
+  await check('legacy v1 fallback is identity-matched but unverified, and mismatched identity is stale', async () => {
+    const projection = await readProjection()
+    const legacyReport = (activationDigest) => ({
       format: 'amos-harness-runtime',
       version: 1,
-      projectId,
-      activationDigest: artifact.activationDigest,
-      epoch: artifact.project.epoch,
-      policyVersion: artifact.project.projectConfigVersion,
+      projectId: projection.projectId,
+      activationDigest,
+      epoch: projection.epoch,
+      policyVersion: projection.policyVersion,
       loadedAt: new Date().toISOString(),
       harness: 'pi',
       mode: 'enforcing',
-      capabilities: {
-        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
-        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
-        preCallStop: true,
-        injection: 'system-prompt-and-tool-result',
-        singleUseReview: true,
-      },
-    }))
+      capabilities: PI_MANAGED_CAPABILITIES,
+    })
+
+    await clearHarnessReports()
+    await writeFile(legacyReportPath, JSON.stringify(legacyReport(projection.activationDigest)))
+    // A v1 receipt has no comparable config digest. Matching identity is
+    // explicitly unverified, never fully loaded under a v2 expectation.
+    let status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.runtime?.version, 1, 'legacy v1 report was not readable')
+    assert.equal(status.harnesses.pi.runtime?.version, 1)
+    assert.equal(status.harnesses.pi.runtime?.configDigest, undefined)
+    assert.equal(status.harnesses.pi.status, 'loaded-unverified')
+    assert.equal(status.harnesses.opencode.status, 'never')
+    assert.equal(status.status, 'loaded-unverified')
+
+    await nav('版本')
     await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
-    status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
-    assert.equal(status.status, 'loaded')
+    await waitFor(`${harnessCardText('Pi')}.includes('身份匹配 · 配置待核验')`)
+
+    // Identity mismatch is still stale; the v1 fallback cannot mask a different policy.
+    await writeFile(legacyReportPath, JSON.stringify(legacyReport(`sha256:${'0'.repeat(64)}`)))
+    status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.harnesses.pi.status, 'stale')
+    assert.equal(status.harnesses.opencode.status, 'never')
+    assert.equal(status.status, 'stale')
+
+    await clearHarnessReports()
+    await writeHarnessReports()
+    const restored = await runtimeStatusApi(projection.projectId)
+    assert.equal(restored.status, 'loaded')
+    assert.equal(restored.harnesses.pi.status, 'loaded')
+    assert.equal(restored.harnesses.opencode.status, 'loaded')
+    assert.equal(restored.harnesses.pi.runtime?.mode, projectionReportMode(projection))
   })
 
   await check('imports the exported YAML through the same validation pipeline', async () => {
@@ -515,7 +661,7 @@ try {
     await waitFor(`document.body.innerText.includes('服务端校验通过')`)
   })
 
-  await check('rollback creates a new proposal and publishes a new version', async () => {
+  await check('rollback marks the previous v2 reports stale until the latest projection is loaded', async () => {
     await nav('版本')
     await click('a', '版本 1')
     await waitFor(`document.body.innerText.includes('版本 1')`)
@@ -531,29 +677,37 @@ try {
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 2')`)
     await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载旧版本')`)
-    const artifact = JSON.parse(await readFile(path.join(workspace, '.pi', 'activation.json'), 'utf8'))
-    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
-      format: 'amos-harness-runtime',
-      version: 1,
-      projectId: artifact.project.projectId,
-      activationDigest: artifact.activationDigest,
-      epoch: artifact.project.epoch,
-      policyVersion: artifact.project.projectConfigVersion,
-      loadedAt: new Date().toISOString(),
-      harness: 'pi',
-      mode: 'enforcing',
-      capabilities: {
-        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
-        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
-        preCallStop: true,
-        injection: 'system-prompt-and-tool-result',
-        singleUseReview: true,
-      },
-    }))
+
+    const previous = JSON.parse(await readFile(harnessReportPath('pi'), 'utf8'))
+    const projection = await readProjection()
+    assert.ok(
+      previous.activationDigest !== projection.activationDigest ||
+      previous.epoch !== projection.epoch ||
+      previous.configDigest !== projection.configDigest,
+      'rollback did not change the projection the previous reports must match',
+    )
+    let status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.harnesses.pi.status, 'stale')
+    assert.equal(status.harnesses.opencode.status, 'stale')
+    assert.equal(status.status, 'stale')
+    await waitFor(`${harnessCardText('Pi')}.includes('旧配置报告') && ${harnessCardText('OpenCode')}.includes('旧配置报告')`)
+
+    const { projection: latest, mode } = await writeHarnessReports()
     await nav('版本')
     await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
+    status = await runtimeStatusApi(latest.projectId)
+    assert.equal(status.status, 'loaded')
+    assert.equal(status.harnesses.pi.status, 'loaded')
+    assert.equal(status.harnesses.opencode.status, 'loaded')
+    const label = loadedCardLabel(mode)
+    await waitFor(`document.body.innerText.includes('当前配置投影已写入') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+  })
+
+  await check('history editing binds the proposal to the current published base', async () => {
+    await evaluate(`location.hash = '#/editor?baseVersion=1'`)
+    await waitFor(`location.hash === '#/editor?baseVersion=1' && ${visible('button')}`)
+    await click('button', '加载历史版本 1')
+    await waitFor(`document.body.innerText.includes('规则字段') && Array.from(document.querySelectorAll('.panel-kicker')).some(e => e.textContent.includes('基准版本 2'))`)
   })
 
   await check('simulation binds historical version provenance and clears changed input', async () => {
@@ -584,6 +738,10 @@ try {
     await waitFor(`document.body.innerText.includes('尚无已发布版本')`)
     await nav('提案')
     await waitFor(`document.body.innerText.includes('尚无提案')`)
+    const secondId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(secondId, 'second project id missing')
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('nav[aria-label="主导航"]')} && document.querySelector('#project-select')?.value === ${q(secondId)}`)
     const firstId = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o=>o.textContent.includes(${q(projectOne)}))?.value`)
     assert.ok(firstId, 'first project option missing')
     await setBySelector('#project-select', firstId)

@@ -197,6 +197,7 @@ export interface PublishedVersion {
 }
 
 export type GovernanceEventKind =
+  | 'global_config_updated'
   | 'project_created'
   | 'project_config_updated'
   | 'proposal_created'
@@ -294,6 +295,27 @@ export interface PublishArtifactInput {
   readonly managedProjection?: unknown;
 }
 
+export type HarnessMode = 'log-only' | 'managed';
+
+/** Local defaults. They are desired configuration, not host-load evidence. */
+export interface GlobalHarnessConfig {
+  readonly enabled: boolean;
+  readonly mode: HarnessMode;
+  readonly advisoryInjection: boolean;
+}
+
+export interface GlobalConfigUpdateResult {
+  readonly config: GlobalHarnessConfig;
+  readonly projectionFailures: readonly string[];
+}
+
+/** Null inherits the global default; omission during an edit means unchanged. */
+export interface ProjectHarnessOverrides {
+  readonly enabled: boolean | null;
+  readonly mode: HarnessMode | null;
+  readonly advisoryInjection: boolean | null;
+}
+
 export interface ProjectWorkflowGateConfig {
   readonly enabled: boolean;
   readonly guidance: boolean;
@@ -362,13 +384,20 @@ export interface JevSettingsTestResult {
 
 /** Full non-secret project configuration owned by the governance service. */
 export interface ProjectConfig {
+  readonly harness: ProjectHarnessOverrides;
   readonly workflowGate: ProjectWorkflowGateConfig;
   readonly managed: ProjectManagedConfig;
   readonly tightening: ProjectTighteningConfig;
   readonly rollout: ProjectRolloutConfig;
 }
 
+/** Stored overrides plus their current resolution for API consumers. */
+export interface ProjectConfigView extends ProjectConfig {
+  readonly effectiveHarness: GlobalHarnessConfig;
+}
+
 export interface UpdateProjectConfigInput {
+  readonly harness?: unknown;
   readonly workflowGate?: unknown;
   readonly managed?: unknown;
   readonly tightening?: unknown;
@@ -477,22 +506,27 @@ export interface PublishArtifactWrite {
   readonly managedArtifact: string;
 }
 
+export type HarnessId = 'pi' | 'opencode';
+export type HarnessRuntimeMode = 'enforcing' | 'log-only' | 'disabled';
+
 export interface HarnessRuntimeReport {
   readonly format: 'amos-harness-runtime';
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly projectId: string;
   readonly activationDigest: string;
   readonly epoch: number;
   readonly policyVersion: string;
   readonly loadedAt: string;
   readonly lastToolAt?: string;
-  readonly harness: 'pi' | 'opencode';
-  readonly mode: 'enforcing';
+  readonly harness: HarnessId;
+  readonly mode: HarnessRuntimeMode;
+  readonly configDigest?: string;
   readonly capabilities: Readonly<Record<string, unknown>>;
 }
 
 export type HarnessRuntimeState =
   | 'loaded'
+  | 'loaded-unverified'
   | 'stale'
   | 'never'
   | 'invalid'
@@ -510,6 +544,12 @@ export interface ManagedProjectionStatus {
   readonly activationDigest: string | null;
   readonly epoch: number | null;
   readonly policyVersion: string | null;
+  readonly configDigest: string | null;
+}
+
+export interface HarnessRuntimeObservation {
+  readonly status: HarnessRuntimeState;
+  readonly runtime: HarnessRuntimeReport | null;
 }
 
 export interface RuntimeStatus {
@@ -521,6 +561,8 @@ export interface RuntimeStatus {
     readonly policyVersion?: string;
   } | null;
   readonly projection: ManagedProjectionStatus;
+  /** Latest load report per harness, not a list of all running sessions. */
+  readonly harnesses: Readonly<Record<HarnessId, HarnessRuntimeObservation>>;
 }
 
 export interface CreateControlPlaneOptions {
@@ -582,20 +624,22 @@ export interface ControlPlane {
   ): Proposal;
   listAudit(query?: AuditQuery): AuditPage;
   simulate(projectId: string, input: SimulateInput): PolicyDecision;
-  getProjectConfig(projectId: string): ProjectConfig;
+  getGlobalConfig(): GlobalHarnessConfig;
+  updateGlobalConfig(input: unknown, actor: Actor): GlobalConfigUpdateResult;
+  getProjectConfig(projectId: string): ProjectConfigView;
   /** Compatibility alias for `getProjectConfig`. */
-  getConfig(projectId: string): ProjectConfig;
+  getConfig(projectId: string): ProjectConfigView;
   updateProjectConfig(
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig;
+  ): ProjectConfigView;
   /** Compatibility alias for `updateProjectConfig`. */
   updateConfig(
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig;
+  ): ProjectConfigView;
   getRuntimeStatus(projectId: string): RuntimeStatus;
   applyTemporaryTightening(
     projectId: string,

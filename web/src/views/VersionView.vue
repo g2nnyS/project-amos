@@ -11,7 +11,7 @@ import { api } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { useGovernanceStore } from '@/stores/governance'
 import { useToast } from '@/composables/useToast'
-import type { PublishedVersion } from '@/types'
+import type { Proposal, PublishedVersion } from '@/types'
 
 const store = useGovernanceStore()
 const route = useRoute()
@@ -92,26 +92,29 @@ async function restore() {
   if (store.loading || store.error) { error.value = '当前项目状态不可用，请刷新后重试。'; return }
   busy.value = true
   error.value = ''
+  let proposal: Proposal
   try {
-    const proposal = await api.restore(project, version, {
+    proposal = await api.restore(project, version, {
       title: title.value.trim(),
       rationale: rationale.value.trim(),
       baseVersion: store.policy?.version ?? 0,
       expiresAt: expiry.toISOString()
     })
-    if (ticket !== generation || project !== store.activeProjectId) return
-    restoreOpen.value = false
-    toast('回滚提案已创建', '需经审批才会创建新的递增版本。', 'success')
-    await store.refreshProject()
-    if (ticket === generation && project === store.activeProjectId) await router.push(`/proposals/${encodeURIComponent(proposal.id)}`)
   } catch (e) {
     if (ticket === generation) {
       error.value = e instanceof Error ? e.message : '创建回滚提案失败。'
       toast('创建失败', error.value, 'error')
     }
+    return
   } finally {
     if (ticket === generation) busy.value = false
   }
+  if (ticket !== generation || project !== store.activeProjectId) return
+  restoreOpen.value = false
+  toast('回滚提案已创建', '需经审批才会创建新的递增版本。', 'success')
+  try { await store.refreshProject() }
+  catch { if (ticket === generation) toast('操作已完成，但刷新失败', '请手动刷新以查看最新提案列表。', 'error') }
+  if (ticket === generation && project === store.activeProjectId) await router.push(`/proposals/${encodeURIComponent(proposal.id)}`)
 }
 </script>
 

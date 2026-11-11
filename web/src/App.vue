@@ -10,7 +10,7 @@ import LoginView from '@/views/LoginView.vue'
 import { navSections, isActivePath, pageLabelForPath } from '@/components/layout/navigation'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAuthStore } from '@/stores/auth'
-import { useGovernanceStore } from '@/stores/governance'
+import { shouldClearForAuthState, useGovernanceStore } from '@/stores/governance'
 
 const preferences = usePreferencesStore()
 const auth = useAuthStore()
@@ -45,7 +45,7 @@ watch(selected, async index => {
 watch(() => route.path, () => { mobileOpen.value = false; if (mainRef.value) mainRef.value.scrollTop = 0 })
 watch(() => auth.authenticated, async value => {
   if (value) await governance.initialize().catch(() => {})
-  else { governance.clear(); mobileOpen.value = false; commandOpen.value = false; createOpen.value = false }
+  else if (shouldClearForAuthState(value, auth.ready)) { governance.clear(); mobileOpen.value = false; commandOpen.value = false; createOpen.value = false }
 }, { immediate: true })
 watch(() => preferences.resolvedTheme, value => {
   document.documentElement.classList.toggle('dark', value === 'dark')
@@ -139,7 +139,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
           </div>
           <div class="topbar-actions">
             <span class="topbar-pill topbar-pill-version">本地版本 {{ governance.policy ? `v${governance.policy.version}` : '未发布' }}</span>
-            <span class="topbar-pill topbar-pill-managed"><ShieldAlert class="size-3" aria-hidden="true" />Managed opt-in · 默认关闭</span>
+            <span class="topbar-pill topbar-pill-managed"><ShieldAlert class="size-3" aria-hidden="true" />Harness 全局默认 · 项目可覆盖</span>
             <button type="button" class="topbar-search" aria-label="搜索页面和治理记录" @click="commandOpen = true">
               <Search class="size-3.5" aria-hidden="true" /><span>搜索</span><kbd class="kbd">⌘K</kbd>
             </button>
@@ -165,7 +165,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
             <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="flex h-9 items-center gap-2 rounded-md px-2 text-sm" :class="isActivePath(route.path, item.to) ? 'bg-accent text-foreground' : 'text-muted-foreground'" @click="mobileOpen = false"><component :is="item.icon" class="size-4" />{{ item.label }}</RouterLink>
           </template>
         </nav>
-        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">受管模式默认关闭；启用后 Pi 工具调用可被阻断。发布不等于宿主已加载。</p>
+        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">Harness 行为由全局默认与项目覆盖决定，Workflow Gate 独立配置。保存或发布不等于宿主已加载；Managed 仅覆盖已接管工具入口，不是 OS 沙箱。</p>
       </SheetContent></Sheet>
 
       <Dialog v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>新建项目</DialogTitle><DialogDescription>工作区路径用于策略绑定，创建后不可更改；不会授权网页读取目录。</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">项目名称</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">绝对工作区路径</span><input v-model="workspace" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">取消</Button><Button type="submit" :disabled="creating">{{ creating ? '创建中…' : '创建项目' }}</Button></div></form></DialogContent></Dialog>

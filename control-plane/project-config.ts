@@ -7,6 +7,7 @@
  * execution authority by itself.
  */
 
+import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import {
@@ -29,7 +30,10 @@ import {
   type WorkflowGateConfig,
 } from '../workflow/config.ts';
 import type {
+  GlobalHarnessConfig,
+  HarnessMode,
   ProjectConfig,
+  ProjectHarnessOverrides,
   ProjectManagedConfig,
   ProjectRolloutConfig,
   ProjectTighteningConfig,
@@ -39,7 +43,13 @@ import type {
 import { DomainError } from './errors.ts';
 
 export const MANAGED_HOST_PROJECTION_FORMAT = 'amos-managed-host-projection';
-export const MANAGED_HOST_PROJECTION_VERSION = 1;
+export const MANAGED_HOST_PROJECTION_VERSION = 2;
+
+export const DEFAULT_GLOBAL_CONFIG: GlobalHarnessConfig = deepFreeze({
+  enabled: true,
+  mode: 'log-only',
+  advisoryInjection: false,
+});
 
 const DEFAULT_GRANT_TTL_MS = 20_000;
 const MAX_GRANT_TTL_MS = 60_000;
@@ -47,6 +57,9 @@ const MAX_TIGHTENING_TEMPLATES = 64;
 const MAX_JEV_CONFIG_PATH = 4_096;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
+
+const HARNESS_KEYS = ['enabled', 'mode', 'advisoryInjection'] as const;
+const GLOBAL_CONFIG_KEYS = ['enabled', 'mode', 'advisoryInjection'] as const;
 
 const MANAGED_FIELDS = [
   'enabled',
@@ -78,6 +91,11 @@ const ROLLOUT_KEYS = ['thresholds', 'thresholdsByRule', 'ruleStates'] as const;
 const MAX_ROLLOUT_MAP = 256;
 
 export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
+  harness: {
+    enabled: null,
+    mode: null,
+    advisoryInjection: null,
+  },
   workflowGate: {
     enabled: false,
     guidance: false,
@@ -112,6 +130,48 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
   },
 } satisfies ProjectConfig);
 
+export function normalizeGlobalConfig(
+  input: unknown,
+  existing: GlobalHarnessConfig = DEFAULT_GLOBAL_CONFIG,
+): GlobalHarnessConfig {
+  if (!isPlainRecord(input)) throw new DomainError('invalid_request');
+  for (const key of Object.keys(input)) {
+    if (!(GLOBAL_CONFIG_KEYS as readonly string[]).includes(key)) {
+      throw new DomainError('invalid_request');
+    }
+  }
+  const merged = { ...existing, ...input };
+  if (
+    typeof merged.enabled !== 'boolean' ||
+    (merged.mode !== 'log-only' && merged.mode !== 'managed') ||
+    typeof merged.advisoryInjection !== 'boolean'
+  ) {
+    throw new DomainError('invalid_request');
+  }
+  return deepFreeze({
+    enabled: merged.enabled,
+    mode: merged.mode,
+    advisoryInjection: merged.advisoryInjection,
+  });
+}
+
+export function resolveHarnessConfig(
+  config: ProjectConfig,
+  globalConfig: GlobalHarnessConfig,
+): GlobalHarnessConfig {
+  // Hand-built pre-v3 configurations retain their historical behavior.
+  const overrides = config.harness ?? {
+    enabled: true,
+    mode: config.managed.enabled ? 'managed' : 'log-only',
+    advisoryInjection: true,
+  };
+  return deepFreeze({
+    enabled: overrides.enabled ?? globalConfig.enabled,
+    mode: overrides.mode ?? globalConfig.mode,
+    advisoryInjection: overrides.advisoryInjection ?? globalConfig.advisoryInjection,
+  });
+}
+
 export interface NormalizeProjectConfigOptions {
   readonly workspace: string;
   readonly existing?: ProjectConfig;
@@ -132,7 +192,7 @@ export function normalizeProjectConfig(
     throw new DomainError('invalid_request');
   }
   const raw = input as Record<string, unknown>;
-  const allowed = new Set(['workflowGate', 'managed', 'tightening', 'rollout']);
+  const allowed = new Set(['harness', 'workflowGate', 'managed', 'tightening', 'rollout']);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) throw new DomainError('invalid_request');
   }
@@ -141,7 +201,26 @@ export function normalizeProjectConfig(
   if (!isAbsolute(workspace) || workspace.includes('\0')) {
     throw new DomainError('invalid_workspace');
   }
+  const legacyStored = options.stored === true && raw.harness === undefined;
+  let harness = normalizeHarness(raw.harness, existing.harness, {
+    legacy: legacyStored,
+    legacyManagedEnabled: existing.managed.enabled,
+  });
+  // Existing clients writing managed.enabled intentionally set an explicit
+  // project mode override; the generated projection still has one resolver.
+  if (
+    isPlainRecord(raw.managed) &&
+    Object.hasOwn(raw.managed, 'enabled') &&
+    (!isPlainRecord(raw.harness) || !Object.hasOwn(raw.harness, 'mode'))
+  ) {
+    if (typeof raw.managed.enabled !== 'boolean') throw new DomainError('invalid_request');
+    harness = deepFreeze({
+      ...harness,
+      mode: raw.managed.enabled ? 'managed' : 'log-only',
+    });
+  }
   return deepFreeze({
+    harness,
     workflowGate: normalizeWorkflowGate(raw.workflowGate, workspace, existing.workflowGate),
     managed: normalizeManaged(raw.managed, existing.managed, options.stored === true),
     tightening: normalizeTightening(raw.tightening, existing.tightening),
@@ -153,6 +232,41 @@ export function normalizeProjectConfig(
 export function readProjectConfig(value: unknown, workspace: string): ProjectConfig {
   const config = normalizeProjectConfig(value, { workspace, stored: true });
   return config;
+}
+
+function normalizeHarness(
+  value: unknown,
+  existing: ProjectHarnessOverrides,
+  legacy: { readonly legacy: boolean; readonly legacyManagedEnabled: boolean },
+): ProjectHarnessOverrides {
+  if (value === undefined) {
+    return legacy.legacy
+      ? deepFreeze({
+          enabled: true,
+          mode: legacy.legacyManagedEnabled ? 'managed' : 'log-only',
+          advisoryInjection: true,
+        })
+      : existing;
+  }
+  if (!isPlainRecord(value)) throw new DomainError('invalid_request');
+  for (const key of Object.keys(value)) {
+    if (!(HARNESS_KEYS as readonly string[]).includes(key)) {
+      throw new DomainError('invalid_request');
+    }
+  }
+  const merged = { ...existing, ...value };
+  if (
+    (merged.enabled !== null && typeof merged.enabled !== 'boolean') ||
+    (merged.mode !== null && merged.mode !== 'log-only' && merged.mode !== 'managed') ||
+    (merged.advisoryInjection !== null && typeof merged.advisoryInjection !== 'boolean')
+  ) {
+    throw new DomainError('invalid_request');
+  }
+  return deepFreeze({
+    enabled: merged.enabled,
+    mode: merged.mode as HarnessMode | null,
+    advisoryInjection: merged.advisoryInjection,
+  });
 }
 
 function normalizeWorkflowGate(
@@ -391,6 +505,10 @@ function normalizeRollout(
   return deepFreeze({ thresholds, thresholdsByRule, ruleStates });
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function optionalText(value: unknown, max: number): string | null {
   if (value === undefined || value === null || value === '') return null;
   if (
@@ -491,25 +609,28 @@ function isValidRuleKey(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 }
 
-export interface ManagedProjectionInput {
+export interface HostRuntimeConfigInput {
+  readonly config: ProjectConfig;
+  readonly globalConfig?: GlobalHarnessConfig;
+  readonly auditPath: string;
+}
+
+export interface ManagedProjectionInput extends HostRuntimeConfigInput {
   readonly projectId: string;
   readonly workspace: string;
   readonly version: number;
   readonly kind: 'publish' | 'tightening';
   readonly snapshot: ProjectActivationSnapshot;
-  readonly config: ProjectConfig;
-  readonly auditPath: string;
   readonly publishedAt: string;
 }
 
-/**
- * Generate the non-secret harness projection. Every field is derived from the
- * SQLite configuration or the exact activation snapshot; callers cannot inject
- * an authority-bearing value here.
- */
-export function buildManagedProjection(input: ManagedProjectionInput): unknown {
+function buildHostRuntimeConfig(input: HostRuntimeConfigInput): Record<string, unknown> {
   const config = input.config;
   const managed = config.managed;
+  const harness = resolveHarnessConfig(
+    config,
+    input.globalConfig ?? DEFAULT_GLOBAL_CONFIG,
+  );
   const review =
     managed.reviewer === 'jev' &&
     managed.jevConfigPath !== null &&
@@ -526,21 +647,9 @@ export function buildManagedProjection(input: ManagedProjectionInput): unknown {
         }
       : null;
   return deepFreeze({
-    format: MANAGED_HOST_PROJECTION_FORMAT,
-    version: MANAGED_HOST_PROJECTION_VERSION,
-    projectId: input.projectId,
-    workspace: input.workspace,
-    policyVersion: input.snapshot.project.projectConfigVersion,
-    activationDigest: input.snapshot.activationDigest,
-    epoch: input.snapshot.epoch,
-    publishedAt: input.publishedAt,
-    kind: input.kind,
-    activation: {
-      snapshotPath: '.pi/activation.json',
-      projectId: input.projectId,
-    },
+    harness,
     managed: {
-      enabled: managed.enabled,
+      enabled: harness.enabled && harness.mode === 'managed',
       auditPath: input.auditPath,
       requirementEgress: managed.requirementEgress,
       grantTtlMs: managed.grantTtlMs,
@@ -551,6 +660,47 @@ export function buildManagedProjection(input: ManagedProjectionInput): unknown {
     workflowGate: config.workflowGate,
     tightening: config.tightening,
     rollout: config.rollout,
+  });
+}
+
+/**
+ * Digest only the resolved configuration a harness consumes. Tightening and
+ * rollout metadata stay in the projection but are control-plane state: a
+ * rollout promotion must not invalidate an otherwise matching host receipt.
+ */
+export function hostRuntimeConfigDigest(input: HostRuntimeConfigInput): string {
+  const runtimeConfig = buildHostRuntimeConfig(input);
+  const body = JSON.stringify({
+    harness: runtimeConfig.harness,
+    managed: runtimeConfig.managed,
+    workflowGate: runtimeConfig.workflowGate,
+  });
+  return `sha256:${createHash('sha256').update(body).digest('hex')}`;
+}
+
+/**
+ * Generate the non-secret harness projection. Every field is derived from the
+ * SQLite configuration or the exact activation snapshot; callers cannot inject
+ * an authority-bearing value here.
+ */
+export function buildManagedProjection(input: ManagedProjectionInput): unknown {
+  const runtimeConfig = buildHostRuntimeConfig(input);
+  return deepFreeze({
+    format: MANAGED_HOST_PROJECTION_FORMAT,
+    version: MANAGED_HOST_PROJECTION_VERSION,
+    projectId: input.projectId,
+    workspace: input.workspace,
+    policyVersion: input.snapshot.project.projectConfigVersion,
+    activationDigest: input.snapshot.activationDigest,
+    epoch: input.snapshot.epoch,
+    publishedAt: input.publishedAt,
+    kind: input.kind,
+    configDigest: hostRuntimeConfigDigest(input),
+    activation: {
+      snapshotPath: '.pi/activation.json',
+      projectId: input.projectId,
+    },
+    ...runtimeConfig,
   });
 }
 
