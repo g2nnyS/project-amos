@@ -40,8 +40,11 @@ import type {
   DecideProposalInput,
   GovernanceEventKind,
   GovernanceMetadataValue,
+  GlobalConfigUpdateResult,
+  GlobalHarnessConfig,
   Project,
   ProjectConfig,
+  ProjectConfigView,
   ProbeRunRecord,
   Proposal,
   ProposalDecision,
@@ -84,11 +87,15 @@ import {
   type VersionRow,
 } from './rows.ts';
 import {
+  DEFAULT_GLOBAL_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   buildManagedProjection,
+  hostRuntimeConfigDigest,
   managedAuditPath,
+  normalizeGlobalConfig,
   normalizeProjectConfig,
   readProjectConfig,
+  resolveHarnessConfig,
 } from './project-config.ts';
 import {
   expectationFromPublished,
@@ -157,11 +164,12 @@ export function createControlPlane(
     ...(options.guidancePacks === undefined ? {} : { guidancePacks: options.guidancePacks }),
   });
   const now = options.now ?? Date.now;
-  const database = openGovernanceDatabase(
+  const opened = openGovernanceDatabase(
     options.databasePath,
     validator.schemaDigest,
     safeClockValue(now),
   );
+  const database = opened.db;
   const managedAuditDir =
     options.managedAuditDir ??
     (options.databasePath === ':memory:'
@@ -169,7 +177,7 @@ export function createControlPlane(
       : join(dirname(resolve(options.databasePath)), 'managed-audit'));
 
   try {
-    return new GovernanceControlPlane(
+    const controlPlane = new GovernanceControlPlane(
       database,
       validator,
       now,
@@ -178,6 +186,10 @@ export function createControlPlane(
       options.publishArtifact,
       options.writeArtifacts,
     );
+    if (opened.migratedFrom !== null) {
+      controlPlane.reemitMigratedProjections();
+    }
+    return controlPlane;
   } catch (error) {
     database.close();
     if (isDomainError(error)) {
@@ -210,6 +222,51 @@ class GovernanceControlPlane implements ControlPlane {
     }
     this.closed = true;
     this.db.close();
+  }
+
+  /**
+   * After a real v1/v2 migration, settle due TTLs per project in its own
+   * transaction and then re-emit the persisted projection outside it. A
+   * backward clock or failed settlement skips only that project; the
+   * migration itself stays committed.
+   */
+  reemitMigratedProjections(): void {
+    if (this.writeArtifacts === undefined && this.publishArtifact === undefined) return;
+    const actor: Actor = { id: 'system', role: 'human' };
+    for (const project of this.listProjects()) {
+      if (project.currentVersion === null) continue;
+      try {
+        const nowMs = this.nowMs();
+        const nowIso = new Date(nowMs).toISOString();
+        const row = this.requireProjectRow(project.id);
+        const projection = this.transaction(() => {
+          const base = this.requirePublishedVersion(row);
+          if (base === null) return null;
+          this.settleExpiredTightenings(
+            row,
+            this.readProjectConfigFor(row),
+            nowMs,
+            nowIso,
+            actor,
+          );
+          const effective = this.loadStoredActivation(row, base);
+          return { base, effective };
+        });
+        if (projection === null) continue;
+        this.emitProjectArtifacts(
+          row.id,
+          row.workspace,
+          projection.base.version,
+          projection.effective.tightened ? 'tightening' : 'publish',
+          projection.base.snapshot,
+          projection.effective.snapshot,
+        );
+      } catch {
+        // Migration is committed. A failed re-projection is not a host load;
+        // runtime status continues to report missing/stale until the next
+        // publication or configuration change rewrites it.
+      }
+    }
   }
 
   listProjects(): Project[] {
@@ -832,14 +889,89 @@ class GovernanceControlPlane implements ControlPlane {
     });
   }
 
-  getProjectConfig(projectId: string): ProjectConfig {
+  getGlobalConfig(): GlobalHarnessConfig {
+    return this.guard(() => this.readGlobalConfigFor());
+  }
+
+  updateGlobalConfig(input: unknown, actor: Actor): GlobalConfigUpdateResult {
     return this.guard(() => {
-      const project = this.requireProjectRow(projectId);
-      return this.readProjectConfigFor(project);
+      assertHuman(actor);
+      const nowMs = this.nowMs();
+      const nowIso = new Date(nowMs).toISOString();
+      const config = this.transaction(() => {
+        const next = normalizeGlobalConfig(input, this.readGlobalConfigFor());
+        this.db.prepare(
+          'UPDATE global_config SET config_json = ?, updated_at = ?, updated_by_json = ? WHERE id = 1',
+        ).run(JSON.stringify(next), nowIso, JSON.stringify(actor));
+        this.appendEvent({
+          projectId: null,
+          proposalId: null,
+          version: null,
+          kind: 'global_config_updated',
+          actor,
+          createdAt: nowIso,
+          metadata: {
+            enabled: next.enabled,
+            mode: next.mode,
+            advisoryInjection: next.advisoryInjection,
+          },
+        });
+        return next;
+      });
+
+      const projectionFailures: string[] = [];
+      for (const project of this.listProjects()) {
+        if (project.currentVersion === null) continue;
+        try {
+          const row = this.requireProjectRow(project.id);
+          // Fanout uses one transaction per project. It settles TTLs that are
+          // already due against the project's existing templates before the
+          // persisted snapshot is projected, so a later read-time expiry can
+          // no longer be written out under an older epoch.
+          const projection = this.transaction(() => {
+            const base = this.requirePublishedVersion(row);
+            if (base === null) return null;
+            this.settleExpiredTightenings(
+              row,
+              this.readProjectConfigFor(row),
+              nowMs,
+              nowIso,
+              actor,
+            );
+            const effective = this.loadStoredActivation(row, base);
+            return { base, effective };
+          });
+          if (projection === null) continue;
+          if (!this.emitProjectArtifacts(
+            row.id,
+            row.workspace,
+            projection.base.version,
+            projection.effective.tightened ? 'tightening' : 'publish',
+            projection.base.snapshot,
+            projection.effective.snapshot,
+          )) {
+            projectionFailures.push(row.id);
+          }
+        } catch {
+          projectionFailures.push(project.id);
+        }
+      }
+      return deepFreeze({ config, projectionFailures });
     });
   }
 
-  getConfig(projectId: string): ProjectConfig {
+  getProjectConfig(projectId: string): ProjectConfigView {
+    return this.guard(() => {
+      const project = this.requireProjectRow(projectId);
+      const config = this.readProjectConfigFor(project);
+      return deepFreeze({
+        ...config,
+        effectiveHarness: resolveHarnessConfig(config, this.readGlobalConfigFor()),
+      });
+    });
+  }
+
+  getConfig(projectId: string): ProjectConfigView {
     return this.getProjectConfig(projectId);
   }
 
@@ -847,7 +979,7 @@ class GovernanceControlPlane implements ControlPlane {
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig {
+  ): ProjectConfigView {
     return this.updateProjectConfig(projectId, input, actor);
   }
 
@@ -855,7 +987,7 @@ class GovernanceControlPlane implements ControlPlane {
     projectId: string,
     input: UpdateProjectConfigInput,
     actor: Actor,
-  ): ProjectConfig {
+  ): ProjectConfigView {
     return this.guard(() => {
       assertHuman(actor);
       const nowMs = this.nowMs();
@@ -864,12 +996,19 @@ class GovernanceControlPlane implements ControlPlane {
         const project = this.requireProjectRow(projectId);
         const existing = this.readProjectConfigFor(project);
         if (!isPlainRecord(input)) throw new DomainError('invalid_request');
+        // Expire against the configuration that authorized the active
+        // templates, in the same transaction as the configuration write. A
+        // settlement failure rolls back the whole save and surfaces the fixed
+        // error to the caller.
+        this.settleExpiredTightenings(project, existing, nowMs, nowIso, actor);
         const config = normalizeProjectConfig(input, {
           workspace: project.workspace,
           existing,
         });
         this.writeProjectConfigRow(projectId, config, actor, nowIso);
         this.syncConfiguredRolloutStates(project, config, actor, nowIso, input);
+        const globalConfig = this.readGlobalConfigFor();
+        const effectiveHarness = resolveHarnessConfig(config, globalConfig);
         this.appendEvent({
           projectId,
           proposalId: null,
@@ -878,22 +1017,25 @@ class GovernanceControlPlane implements ControlPlane {
           actor,
           createdAt: nowIso,
           metadata: {
+            harnessEnabled: effectiveHarness.enabled,
+            harnessMode: effectiveHarness.mode,
+            advisoryInjection: effectiveHarness.advisoryInjection,
             workflowGateEnabled: config.workflowGate.enabled,
-            managedEnabled: config.managed.enabled,
+            managedEnabled: effectiveHarness.enabled && effectiveHarness.mode === 'managed',
             tighteningEnabled: config.tightening.enabled,
             tighteningTemplateCount: config.tightening.templates.length,
             rolloutThresholdCount: Object.keys(config.rollout.thresholdsByRule).length,
             rolloutRuleStateCount: Object.keys(config.rollout.ruleStates).length,
           },
         });
-        return { project, config };
+        return { project, config, effectiveHarness };
       });
       if (outcome.project.current_version !== null) {
         try {
           const base = versionFromRow(
             this.requireVersionRow(outcome.project.id, outcome.project.current_version),
           );
-          const effective = this.loadEffectiveActivation(outcome.project, base);
+          const effective = this.loadStoredActivation(outcome.project, base);
           this.emitProjectArtifacts(
             outcome.project.id,
             outcome.project.workspace,
@@ -903,11 +1045,13 @@ class GovernanceControlPlane implements ControlPlane {
             effective.snapshot,
           );
         } catch {
-          // Configuration is committed. A clock/artifact failure is surfaced
-          // by the runtime status endpoint rather than as a false write error.
+          // Configuration is committed. Artifact failures surface as stale/missing.
         }
       }
-      return outcome.config;
+      return deepFreeze({
+        ...outcome.config,
+        effectiveHarness: outcome.effectiveHarness,
+      });
     });
   }
 
@@ -920,12 +1064,19 @@ class GovernanceControlPlane implements ControlPlane {
       }
       const effective = this.loadEffectiveActivation(project, base);
       const expected = expectationFromPublished(base);
+      const config = this.readProjectConfigFor(project);
+      const configDigest = hostRuntimeConfigDigest({
+        config,
+        globalConfig: this.readGlobalConfigFor(),
+        auditPath: managedAuditPath(this.managedAuditDir, project.workspace, project.id),
+      });
       const effectiveExpectation: RuntimeExpectation = {
         projectId: project.id,
         version: base.version,
         activationDigest: effective.snapshot.activationDigest,
         policyVersion: effective.snapshot.project.projectConfigVersion,
         epoch: effective.snapshot.epoch,
+        configDigest,
       };
       return readRuntimeStatus(project.workspace, expected, effectiveExpectation);
     });
@@ -1709,14 +1860,34 @@ class GovernanceControlPlane implements ControlPlane {
     return projectConfigFromRow(this.requireProjectConfigRow(project.id), project.workspace);
   }
 
+  private readGlobalConfigFor(): GlobalHarnessConfig {
+    const row = this.db
+      .prepare('SELECT config_json FROM global_config WHERE id = 1')
+      .get() as unknown as { config_json?: unknown } | undefined;
+    if (typeof row?.config_json !== 'string') throw new DomainError('database_corrupt');
+    try {
+      return normalizeGlobalConfig(parseStoredJson(row.config_json), DEFAULT_GLOBAL_CONFIG);
+    } catch {
+      throw new DomainError('database_corrupt');
+    }
+  }
+
   private requirePublishedVersion(project: ProjectRow): PublishedVersion | null {
     if (project.current_version === null) return null;
     return versionFromRow(this.requireVersionRow(project.id, project.current_version));
   }
 
+  private loadStoredActivation(
+    project: ProjectRow,
+    base: PublishedVersion,
+  ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
+    return this.loadEffectiveActivation(project, base, false);
+  }
+
   private loadEffectiveActivation(
     project: ProjectRow,
     base: PublishedVersion,
+    applyExpiry = true,
   ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
     const row = this.db
       .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
@@ -1738,6 +1909,8 @@ class GovernanceControlPlane implements ControlPlane {
     ) {
       throw new DomainError('database_corrupt');
     }
+
+    if (!applyExpiry) return { snapshot, tightened: true };
 
     // TTL expiry does not depend on a cleaner running. Reads and decisions
     // compute the post-expiry projection without writing governance state; an
@@ -1973,6 +2146,57 @@ class GovernanceControlPlane implements ControlPlane {
     } satisfies TemporaryTighteningStatus);
   }
 
+  /**
+   * Persist exactly one epoch transition for every application whose TTL is
+   * already due, using the templates that were valid before the caller's
+   * configuration change. Must run inside a database transaction; callers
+   * write artifacts only after it commits.
+   */
+  private settleExpiredTightenings(
+    project: ProjectRow,
+    config: ProjectConfig,
+    nowMs: number,
+    nowIso: string,
+    actor: Actor,
+  ): void {
+    const state = this.db
+      .prepare('SELECT last_observed_at FROM tightening_state WHERE project_id = ?')
+      .get(project.id) as unknown as { last_observed_at: number } | undefined;
+    if (state === undefined) return;
+    // A backward clock must not be treated as "nothing due" and then written
+    // out as an active tightening with an extended TTL.
+    if (state.last_observed_at > nowMs) {
+      throw new DomainError('clock_regression');
+    }
+    const due = this.db
+      .prepare(
+        'SELECT 1 AS due FROM temporary_tightenings WHERE project_id = ? AND retired_at IS NULL AND expires_at <= ? LIMIT 1',
+      )
+      .get(project.id, nowMs);
+    if (due === undefined) return;
+    const base = this.requirePublishedVersion(project);
+    if (base === null) return;
+    const context = this.createTighteningContext(project, base, config, nowMs);
+    const expired = context.publisher.expire();
+    if (expired.expired.length === 0) return;
+    this.retireDueTightenings(project.id, nowMs, nowIso);
+    this.writeTighteningState(project.id, expired.snapshot, nowMs, nowIso);
+    this.appendEvent({
+      projectId: project.id,
+      proposalId: null,
+      version: base.version,
+      kind: 'temporary_tightening_expired',
+      actor,
+      createdAt: nowIso,
+      metadata: {
+        reason: 'ttl_elapsed',
+        expiredCount: expired.expired.length,
+        epoch: expired.snapshot.epoch,
+        activationDigest: expired.snapshot.activationDigest,
+      },
+    });
+  }
+
   private retireDueTightenings(projectId: string, nowMs: number, nowIso: string): void {
     void nowIso;
     this.db
@@ -2044,10 +2268,11 @@ class GovernanceControlPlane implements ControlPlane {
     kind: 'publish' | 'tightening',
     baseSnapshot: PublishedVersion['snapshot'],
     activationSnapshot: ProjectActivationSnapshot,
-  ): void {
+  ): boolean {
     try {
       const project = this.requireProjectRow(projectId);
       const config = this.readProjectConfigFor(project);
+      const globalConfig = this.readGlobalConfigFor();
       const auditPath = managedAuditPath(this.managedAuditDir, workspace, projectId);
       try {
         mkdirSync(dirname(auditPath), { recursive: true, mode: 0o700 });
@@ -2062,6 +2287,7 @@ class GovernanceControlPlane implements ControlPlane {
         kind,
         snapshot: activationSnapshot,
         config,
+        globalConfig,
         auditPath,
         publishedAt,
       });
@@ -2093,6 +2319,7 @@ class GovernanceControlPlane implements ControlPlane {
       }
       // A projection write is not a host receipt. Read the runtime report only
       // to make the status endpoint honest; never promote it to "effective".
+      const configDigest = hostRuntimeConfigDigest({ config, globalConfig, auditPath });
       readRuntimeStatus(
         workspace,
         {
@@ -2101,6 +2328,7 @@ class GovernanceControlPlane implements ControlPlane {
           activationDigest: activationSnapshot.activationDigest,
           policyVersion: activationSnapshot.project.projectConfigVersion,
           epoch: activationSnapshot.epoch,
+          configDigest,
         },
         {
           projectId,
@@ -2108,11 +2336,14 @@ class GovernanceControlPlane implements ControlPlane {
           activationDigest: activationSnapshot.activationDigest,
           policyVersion: activationSnapshot.project.projectConfigVersion,
           epoch: activationSnapshot.epoch,
+          configDigest,
         },
       );
+      return true;
     } catch {
       // The database state is authoritative. Missing/stale artifacts surface
       // through getRuntimeStatus() and are never reported as a host load.
+      return false;
     }
   }
 

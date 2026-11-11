@@ -100,8 +100,10 @@ npm run console:serve     # 127.0.0.1:4310；可用 --data-dir/--workspace/--por
 - 项目 workspace 必须是已存在的绝对路径；发布时写入
   `<workspace>/.pi/activation.json`。写入失败不会回滚数据库版本，控制台
   runtime 状态会显示 `never`/`stale`，不会伪装成已生效。
-- `GET /api/projects/:id/runtime` 读取 `<workspace>/.pi/runtime.json`；
-  状态：`loaded`/`stale`/`never`/`invalid`/`unpublished`。
+- `GET /api/projects/:id/runtime` 分别读取 `<workspace>/.pi/runtime.pi.json` 与
+  `.pi/runtime.opencode.json`；专属回执缺失时按 Harness 回退到旧版 `.pi/runtime.json`。
+  状态：`loaded`/`loaded-unverified`/`stale`/`never`/`invalid`/`unpublished`；
+  `loaded-unverified` 表示身份匹配、配置摘要尚待核验。
 
 ## 4. Pi managed 配置
 
@@ -147,8 +149,9 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
 - `auditPath` 必须在工作区外；否则配置错误、阻断。
 - 受管工具：`read`/`write`/`edit`/`ls`/`find`/`grep`；bash/powershell/
   自定义工具在 managed 模式阻断（覆盖缺口），不静默放行。
-- 会话启动/首次工具调用加载快照并写 `.pi/runtime.json`；执行与注入使用
-  同一个 `ActivationRuntime`。新发布只由后续会话加载，不热切换。
+- 会话启动/首次工具调用加载快照并写回执：v2 投影使用 `.pi/runtime.pi.json`，
+  旧投影使用 `.pi/runtime.json`；执行与注入使用同一个 `ActivationRuntime`。
+  新发布只由后续会话加载，不热切换。
 
 ## 5. 真实探针
 

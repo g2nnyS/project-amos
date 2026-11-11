@@ -1,4 +1,4 @@
-import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfig, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
+import type { AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status?: number) { super(message); this.name = 'ApiError' }
@@ -71,6 +71,8 @@ export class ApiClient {
     return operation
   }
   status(): Promise<RuntimeStatus> { return this.json('/api/status') }
+  globalConfig(): Promise<GlobalHarnessConfig> { return this.json('/api/config') }
+  updateGlobalConfig(input: GlobalHarnessConfig): Promise<GlobalConfigUpdateResult> { return this.json('/api/config', 'POST', input) }
   projects(): Promise<Project[]> { return this.json('/api/projects') }
   createProject(input: CreateProjectInput): Promise<Project> { return this.json('/api/projects', 'POST', input) }
   policy(id: string): Promise<PublishedVersion | null> { return this.json(`/api/projects/${pathId(id)}/policy`) }
@@ -79,8 +81,8 @@ export class ApiClient {
   validate(id: string, candidate: Candidate): Promise<ValidationResult> { return this.json(`/api/projects/${pathId(id)}/validate`, 'POST', { candidate }) }
   importYaml(id: string, yaml: string): Promise<{ valid: boolean; issues: ValidationResult['issues']; candidate: Candidate }> { return this.json(`/api/projects/${pathId(id)}/import`, 'POST', { yaml }) }
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
-  config(id: string): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`) }
-  updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfig> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
+  config(id: string): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`) }
+  updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
   jevSettings(id: string): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`) }
   saveJevSettings(id: string, input: JevSettingsInput): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`, 'POST', input) }
   testJevSettings(id: string): Promise<{ ok: true; model: string }> { return this.json(`/api/projects/${pathId(id)}/jev/test`, 'POST', {}) }

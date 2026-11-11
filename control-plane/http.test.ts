@@ -3,6 +3,7 @@ import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { MAX_CANDIDATE_BYTES } from './compiler.ts';
 import type { Candidate, Project, Proposal } from './contracts.ts';
 import { ObservationLogs } from './observations.ts';
 import {
@@ -44,6 +45,44 @@ async function seedCandidate(
   });
   assert.equal(response.status, 200);
   return response.body as Candidate;
+}
+
+function largeValidCandidate(
+  seed: Candidate,
+  fillerLength: number,
+): Candidate {
+  const first = seed.rules[0];
+  assert.ok(first);
+  return {
+    rules: [
+      {
+        ...first,
+        narrative: `${first.narrative}${'x'.repeat(fillerLength)}`,
+      },
+      ...seed.rules.slice(1),
+    ],
+    activation: seed.activation,
+  };
+}
+
+function rawJsonPostRequest(
+  harness: HttpHarness,
+  auth: BrowserAuth,
+  path: string,
+  contentLength: number,
+): string {
+  return [
+    `POST ${path} HTTP/1.1`,
+    `Host: 127.0.0.1:${harness.port}`,
+    `Cookie: ${auth.cookie}`,
+    `Origin: ${harness.url}`,
+    'Content-Type: application/json',
+    `X-CSRF-Token: ${auth.csrfToken}`,
+    `Content-Length: ${contentLength}`,
+    'Connection: close',
+    '',
+    '',
+  ].join('\r\n');
 }
 
 async function createSeedProposal(
@@ -547,6 +586,78 @@ test('bounded JSON bodies and fixed static assets reject traversal', async () =>
     );
     assert.equal(encodedTraversal.status, 404);
     assert.doesNotMatch(encodedTraversal.text, /\$schema/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('default candidate routes accept compiler-scale bodies while ordinary routes stay at 64 KiB', async () => {
+  const harness = await createHarness();
+  try {
+    const auth = await loginHuman(harness);
+    const project = await createProject(harness, auth);
+    const seed = await seedCandidate(harness, auth);
+    const candidate = largeValidCandidate(seed, 80 * 1024);
+    const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+    assert.ok(candidateBytes > 64 * 1024);
+    assert.ok(candidateBytes < MAX_CANDIDATE_BYTES);
+
+    const validation = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/validate`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({ candidate }),
+      },
+    );
+    assert.equal(validation.status, 200, JSON.stringify(validation.body));
+    assert.equal(
+      (validation.body as { valid: boolean }).valid,
+      true,
+      JSON.stringify(validation.body),
+    );
+
+    const proposal = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/proposals`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({
+          title: '大候选回归',
+          rationale: '',
+          baseVersion: null,
+          expiresAt: null,
+          candidate,
+        }),
+      },
+    );
+    assert.equal(proposal.status, 201, JSON.stringify(proposal.body));
+    assert.ok((proposal.body as Proposal).id);
+
+    // The candidate ceiling is enforced from Content-Length alone, so the
+    // test rejects oversized bodies without allocating or sending megabytes.
+    const oversizedLength = MAX_CANDIDATE_BYTES + 256 * 1024;
+    for (const path of [
+      `/api/projects/${project.id}/validate`,
+      `/api/projects/${project.id}/proposals`,
+    ]) {
+      const oversized = await rawRequest(
+        harness.port,
+        rawJsonPostRequest(harness, auth, path, oversizedLength),
+      );
+      assert.equal(oversized.status, 413);
+      assert.match(oversized.text, /body_too_large/);
+    }
+
+    // Non-candidate routes retain the original 64 KiB default.
+    const ordinary = await rawRequest(
+      harness.port,
+      rawJsonPostRequest(harness, auth, '/api/projects', 64 * 1024 + 1),
+    );
+    assert.equal(ordinary.status, 413);
+    assert.match(ordinary.text, /body_too_large/);
   } finally {
     await harness.close();
   }
