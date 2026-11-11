@@ -65,7 +65,7 @@ function previous() {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="治理审计" description="实际治理状态变化的元数据，不包含规则正文、命令或审批自由文本。">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="loading" @click="load"><ScrollText class="mr-1 size-3.5" />刷新</Button>
@@ -73,6 +73,12 @@ function previous() {
     </PageHeader>
 
     <section class="panel overflow-hidden">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">治理事件</h2>
+          <p class="panel-kicker">元数据时间线 · 不含规则正文</p>
+        </div>
+      </div>
       <div class="filterbar">
         <label for="audit-scope" class="text-xs text-muted-foreground">范围</label>
         <select id="audit-scope" v-model="scope" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
@@ -110,7 +116,7 @@ function previous() {
           </dl>
         </article>
       </div>
-      <div v-if="result" class="flex items-center justify-between border-t border-border p-3 text-xs text-muted-foreground">
+      <div v-if="result" class="flex items-center justify-between border-t border-hairline p-3 text-xs text-muted-foreground">
         <span>第 {{ index + 1 }} 页 · {{ result.items.length }} 条</span>
         <div class="flex gap-2">
           <Button variant="outline" size="sm" :disabled="index === 0 || loading" @click="previous">上一页</Button>

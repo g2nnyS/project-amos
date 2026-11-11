@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { ArrowLeft, ShieldAlert } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import CandidateView from '@/components/governance/CandidateView.vue'
 import ConfirmAction from '@/components/governance/ConfirmAction.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -94,21 +95,21 @@ async function submit() {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="提案详情" description="审批绑定候选摘要和基准版本；发布不是工具执行授权。">
       <template #actions>
         <RouterLink to="/proposals" class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft class="size-3.5" />返回提案</RouterLink>
       </template>
     </PageHeader>
 
-    <div v-if="!store.activeProjectId" class="panel p-5 text-sm">请先选择项目。</div>
+    <EmptyState v-if="!store.activeProjectId" title="请选择项目" description="选择项目后查看提案。" />
     <div v-else-if="loading" class="panel p-5 text-sm" role="status">正在加载提案…</div>
     <div v-else-if="!proposal" class="panel p-5 text-sm text-destructive" role="alert">{{ error || '无法加载提案。' }} <button class="ml-2 underline" @click="load">重试</button></div>
 
     <template v-else>
-      <div v-if="error" role="alert" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive">{{ error }}</div>
+      <div v-if="error" role="alert" class="panel p-5 text-sm text-destructive">{{ error }}</div>
 
-      <section class="panel mb-4">
+      <section class="panel">
         <div class="panel-header">
           <div>
             <h2 class="text-base font-semibold">{{ proposal.title }}</h2>
@@ -135,18 +136,18 @@ async function submit() {
         </div>
       </section>
 
-      <div v-if="stale && proposal.status === 'pending'" class="mb-4 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
+      <div v-if="stale && proposal.status === 'pending'" class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
         <ShieldAlert class="mt-0.5 size-4" />
         <span>基准版本已变化，不能批准。请基于当前策略创建新提案。</span>
       </div>
 
-      <div v-if="store.loading" class="panel mb-4 p-4 text-sm" role="status">正在加载当前策略以比较…</div>
-      <div v-else-if="store.error" class="panel mb-4 p-4 text-sm text-destructive" role="alert">
+      <div v-if="store.loading" class="panel p-5 text-sm" role="status">正在加载当前策略以比较…</div>
+      <div v-else-if="store.error" class="panel p-5 text-sm text-destructive" role="alert">
         当前策略加载失败，无法安全比较或批准。<button class="ml-2 underline" @click="store.refreshProject()">重试</button>
       </div>
       <CandidateView v-else :candidate="proposal.candidate" :before="baseline" />
 
-      <section v-if="pending" class="panel mt-4">
+      <section v-if="pending" class="panel">
         <div class="panel-header">
           <div>
             <h2 class="panel-title">审批操作</h2>
@@ -166,7 +167,7 @@ async function submit() {
         </div>
       </section>
 
-      <ConfirmAction :open="action !== null" :busy="busy" :title="action === 'approve' ? '批准并发布？' : action === 'reject' ? '拒绝提案？' : '撤回提案？'" :description="action === 'approve' ? '将以此摘要绑定的候选创建新的治理版本，不授权工具执行。' : action === 'reject' ? '拒绝后提案不可修改或恢复。' : '撤回后提案不可恢复。'" @update:open="value => { if (!value && !busy) action = null }" @confirm="submit" />
+      <ConfirmAction :open="action !== null" :busy="busy" :variant="action === 'approve' ? 'default' : 'destructive'" :title="action === 'approve' ? '批准并发布？' : action === 'reject' ? '拒绝提案？' : '撤回提案？'" :description="action === 'approve' ? '将以此摘要绑定的候选创建新的治理版本，不授权工具执行。' : action === 'reject' ? '拒绝后提案不可修改或恢复。' : '撤回后提案不可恢复。'" @update:open="value => { if (!value && !busy) action = null }" @confirm="submit" />
     </template>
   </div>
 </template>

@@ -49,14 +49,20 @@ function locallySelected(id: string) {
   return (activation.value.includedRuleIds === null || activation.value.includedRuleIds.includes(id)) && !activation.value.excludedRuleIds.includes(id)
 }
 
+function pickQuery<T extends string>(value: unknown, allowed: readonly T[]): T | '' {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? value as T : ''
+}
+
 function readQuery() {
-  search.value = String(route.query.search || '')
-  dimension.value = String(route.query.dimension || '')
-  policyClass.value = (route.query.policyClass as RulePolicyClass) || ''
-  onHit.value = (route.query.onHit as RuleOnHit) || ''
-  enforcement.value = (route.query.enforcement as RuleEnforcement) || ''
-  expressivity.value = (route.query.expressivity as RuleExpressivity) || ''
-  selected.value = String(route.query.id || '') || null
+  const q = route.query
+  search.value = typeof q.search === 'string' ? q.search : ''
+  dimension.value = pickQuery(q.dimension, dimensions.value)
+  policyClass.value = pickQuery(q.policyClass, policyClasses.map(c => c.value))
+  onHit.value = pickQuery(q.onHit, onHits.map(h => h.value))
+  enforcement.value = pickQuery(q.enforcement, enforcements.map(e => e.value))
+  expressivity.value = pickQuery(q.expressivity, expressivities.map(e => e.value))
+  const id = typeof q.id === 'string' ? q.id : ''
+  selected.value = id && (rules.value.length === 0 || rules.value.some(r => r.id === id)) ? id : null
 }
 
 function pushQuery() {
@@ -67,7 +73,7 @@ function pushQuery() {
   if (onHit.value) query.onHit = onHit.value
   if (enforcement.value) query.enforcement = enforcement.value
   if (expressivity.value) query.expressivity = expressivity.value
-  if (selected.value) query.id = selected.value
+  if (selected.value && detail.value) query.id = selected.value
   void router.replace({ path: route.path, query })
 }
 
@@ -99,7 +105,7 @@ function applyMatrixFilter(filters: { dimension?: string; onHit?: RuleOnHit; exp
   expressivity.value = filters.expressivity ?? ''
   selected.value = null
   pushQuery()
-  tableContainer.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  tableContainer.value?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
 function keydown(event: KeyboardEvent) {
@@ -117,20 +123,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 </script>
 
 <template>
-  <div class="page">
+  <div class="page space-y-4">
     <PageHeader title="规则库" description="查看当前项目已发布的规则与激活集合。发布是本地治理记录，不授予运行时执行授权。">
       <template #actions>
         <RouterLink to="/editor" class="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">编辑候选</RouterLink>
       </template>
     </PageHeader>
-    <EmptyState v-if="governance.loading" title="加载中" description="正在读取项目治理数据…" />
+    <div v-if="governance.loading" class="panel p-5 text-sm" role="status">正在读取项目治理数据…</div>
     <div v-else-if="governance.error" class="panel p-5 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.activeProjectId ? governance.refreshProject() : governance.initialize()">重试</button></div>
     <EmptyState v-else-if="!governance.activeProjectId" title="请选择项目" description="选择项目后查看其已发布规则。" />
     <EmptyState v-else-if="!governance.policy" title="尚无已发布策略" description="可从仓库种子创建候选并提交提案。" />
     <template v-else>
-      <div class="mb-4">
-        <RuleMatrix :rules="rules" @filter="applyMatrixFilter" />
-      </div>
+      <RuleMatrix :rules="rules" @filter="applyMatrixFilter" />
       <div class="grid gap-0 lg:grid-cols-[1fr_auto] lg:items-start">
         <section ref="tableContainer" class="panel min-w-0">
           <div class="panel-header">

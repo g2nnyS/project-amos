@@ -14,7 +14,7 @@ async function submit() {
 </script>
 
 <template>
-  <main class="m-auto w-full max-w-[420px] px-5">
+  <main id="main-content" class="m-auto w-full max-w-[420px] px-5">
     <div class="mb-8 flex items-center gap-3">
       <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card text-xl font-bold">A</span>
       <div>

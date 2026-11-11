@@ -77,3 +77,31 @@ jobs:
           echo "Example: feat/security-boundary-hardening"
           echo "Bot branches (dependabot/, renovate/) are intentionally not exempt; see CONTRIBUTING.md."
           exit 1
+
+  pr-title:
+    name: Pull request title convention
+    # Pull requests only; the title becomes the squash-merge commit subject.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate pull request title
+        env:
+          # Untrusted input is passed through the environment, never interpolated
+          # directly into the shell script.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pattern='^(feat|fix|docs|chore|refactor|test|ci)(\([a-z0-9][a-z0-9._/-]*\))?!?: .+[^.]$'
+          if [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "Pull request title is valid: $PR_TITLE"
+            exit 0
+          fi
+
+          echo "::error::Pull request title does not follow Conventional Commits."
+          echo "Allowed types: feat, fix, docs, chore, refactor, test, ci"
+          echo "Example: fix(pi): prevent logging file contents on read failures"
+          echo "The summary must be non-empty and must not end with a period."
+          exit 1

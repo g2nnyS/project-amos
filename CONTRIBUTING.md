@@ -117,6 +117,12 @@ Required CI jobs:
 
 - `Typecheck and test (Node 26)`
 - `Branch name convention` (pull requests only)
+- `Pull request title convention` (pull requests only)
+- `Analyze JavaScript/TypeScript`
+- `Dependency review` (pull requests only)
+- `Package (linux)`, `Package (windows)`, `Package (macos)`
+
+`Package` builds unsigned Electron installers and uploads them as workflow artifacts. Signing and notarization credentials are supplied only by the release process.
 
 ## Security and review policy
 

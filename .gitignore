@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release/
 # Local observation output; keep raw logs and derived evidence out of Git.
 spike/logs/
 spike/examples/

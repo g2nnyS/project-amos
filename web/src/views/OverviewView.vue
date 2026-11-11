@@ -212,21 +212,23 @@ const eventLabels: Record<string, string> = { project_created: '创建项目', p
             </div>
             <RouterLink to="/audit" class="text-xs text-muted-foreground hover:text-foreground">查看全部 →</RouterLink>
           </div>
-          <p v-if="auditLoading" class="p-4 text-xs text-muted-foreground">加载中…</p>
-          <div v-else-if="auditError" class="p-4 text-xs text-destructive">{{ auditError }} <button class="underline" @click="loadAudit">重试</button></div>
+          <p v-if="auditLoading" role="status" class="p-4 text-xs text-muted-foreground">加载中…</p>
+          <div v-else-if="auditError" role="alert" class="p-4 text-xs text-destructive">{{ auditError }} <button class="underline" @click="loadAudit">重试</button></div>
           <p v-else-if="!audit.length" class="p-6 text-center text-xs text-muted-foreground">暂无审计记录。</p>
-          <table v-else class="data-table">
-            <thead>
-              <tr><th>事件</th><th>操作者</th><th>时间</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="event in audit" :key="event.id">
-                <td>{{ eventLabels[event.kind] ?? event.kind }}</td>
-                <td>{{ event.actor.id }} · {{ event.actor.role }}</td>
-                <td class="tabular">{{ new Date(event.createdAt).toLocaleString('zh-CN') }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="overflow-x-auto">
+            <table class="data-table min-w-[420px]">
+              <thead>
+                <tr><th>事件</th><th>操作者</th><th>时间</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="event in audit" :key="event.id">
+                  <td>{{ eventLabels[event.kind] ?? event.kind }}</td>
+                  <td>{{ event.actor.id }} · {{ event.actor.role }}</td>
+                  <td class="tabular">{{ new Date(event.createdAt).toLocaleString('zh-CN') }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <div class="space-y-4">

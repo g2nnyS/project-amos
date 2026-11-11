@@ -495,7 +495,7 @@ try {
 
   await check('mobile rule inspector is accessible and does not cause global overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
-    const inspector = '[role="complementary"][aria-label="规则上下文检查器"]'
+    const inspector = '[role="dialog"][aria-labelledby="rule-inspector-title"]'
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
@@ -763,7 +763,7 @@ try {
     await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
   })
 
-  await check('desktop shell and dark/light preferences', async () => {
+  await check('desktop shell, theme and density persist across reload', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
     await sleep(400)
     assert.equal(await evaluate(`${visible('aside')}`), true, 'desktop sidebar hidden')
@@ -771,15 +771,34 @@ try {
     await nav('设置')
     await click('button', '深色')
     await waitFor(`document.documentElement.classList.contains('dark')`)
+    await screenshot('desktop-dark')
+    await click('#pref-compact')
+    await waitFor(`document.querySelector('.app-shell')?.dataset.density === 'compact' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'true'`)
+    await screenshot('desktop-dark-compact')
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`document.documentElement.classList.contains('dark') && document.querySelector('.app-shell')?.dataset.density === 'compact' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'true'`)
     await click('button', '浅色')
     await waitFor(`document.documentElement.classList.contains('light')`)
+    await click('#pref-compact')
+    await waitFor(`document.querySelector('.app-shell')?.dataset.density === 'comfortable' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'false'`)
+    await screenshot('desktop-light')
   })
 
-  await check('390px mobile navigation has no global horizontal overflow', async () => {
+  await check('390px mobile navigation, themes and density have no overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     await sleep(500)
     assert.equal(await evaluate(`${visible('aside')}`), false, 'desktop sidebar visible at 390px')
     assert.equal(await evaluate(`${visible('[aria-label="打开导航"]')}`), true, 'mobile navigation trigger missing')
+    await screenshot('mobile-light')
+    await click('button', '深色')
+    await click('#pref-compact')
+    await waitFor(`document.documentElement.classList.contains('dark') && document.querySelector('.app-shell')?.dataset.density === 'compact'`)
+    await screenshot('mobile-dark-compact')
+    const compactWidth = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
+    assert.ok(compactWidth.scroll <= compactWidth.client, `mobile dark compact overflow: ${JSON.stringify(compactWidth)}`)
+    await click('button', '浅色')
+    await click('#pref-compact')
+    await waitFor(`document.documentElement.classList.contains('light') && document.querySelector('.app-shell')?.dataset.density === 'comfortable'`)
     await click('[aria-label="打开导航"]')
     await waitFor(visible('[role="dialog"]'))
     const widths = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
