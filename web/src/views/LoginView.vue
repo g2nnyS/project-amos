@@ -37,7 +37,7 @@ async function submit() {
     </section>
     <div class="mt-5 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs leading-relaxed text-warning">
       <ShieldAlert class="mb-1 inline size-4" />
-      默认插件仍为观察模式；受管拦截需在项目中显式启用 managed，且不是 OS 沙箱。同 UID 访问不构成可信隔离。
+      全局默认与项目覆盖决定 Harness 期望配置；实际模式须以各 Harness 最新加载报告为准。Workflow Gate 独立配置，Managed 不是 OS 沙箱。同 UID 访问不构成可信隔离。
     </div>
   </main>
 </template>

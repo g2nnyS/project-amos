@@ -134,7 +134,140 @@ test('project configuration defaults are stored and only humans can change them'
     human(),
   );
   assert.equal(updated.managed.enabled, true);
+  assert.equal(updated.harness.mode, 'managed');
+  assert.equal(updated.effectiveHarness.mode, 'managed');
   assert.equal(fixture.cp.getProjectConfig(project.id).managed.enabled, true);
+});
+
+test('global defaults resolve project inheritance and re-emit only host configuration', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const inherited = createProject(fixture.cp, join(fixture.workspace, 'inherited'));
+  const { base } = publishFixture(fixture, project.id);
+
+  assert.deepEqual(fixture.cp.getGlobalConfig(), {
+    enabled: true,
+    mode: 'log-only',
+    advisoryInjection: false,
+  });
+  assert.deepEqual(fixture.cp.getProjectConfig(project.id).harness, {
+    enabled: null,
+    mode: null,
+    advisoryInjection: null,
+  });
+  expectDomainError(
+    () => fixture.cp.updateGlobalConfig({ mode: 'managed' }, agent()),
+    'forbidden',
+  );
+
+  const first = fixture.cp.updateGlobalConfig(
+    { mode: 'managed', advisoryInjection: true },
+    human(),
+  );
+  assert.deepEqual(first.projectionFailures, []);
+  let config = fixture.cp.getProjectConfig(project.id);
+  assert.equal(config.effectiveHarness.mode, 'managed');
+  assert.equal(config.effectiveHarness.advisoryInjection, true);
+  let projection = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as {
+    version: number;
+    activationDigest: string;
+    epoch: number;
+    configDigest: string;
+    harness: { enabled: boolean; mode: string; advisoryInjection: boolean };
+    managed: { enabled: boolean };
+  };
+  assert.equal(projection.version, 2);
+  assert.equal(projection.activationDigest, base.snapshot.activationDigest);
+  assert.equal(projection.epoch, base.snapshot.activationSnapshot.epoch);
+  assert.equal(projection.managed.enabled, true);
+  assert.deepEqual(projection.harness, {
+    enabled: true,
+    mode: 'managed',
+    advisoryInjection: true,
+  });
+
+  fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { enabled: true, mode: 'log-only', advisoryInjection: null } },
+    human(),
+  );
+  const second = fixture.cp.updateGlobalConfig(
+    { enabled: false, mode: 'managed', advisoryInjection: false },
+    human(),
+  );
+  assert.deepEqual(second.projectionFailures, []);
+  config = fixture.cp.getProjectConfig(project.id);
+  assert.deepEqual(config.effectiveHarness, {
+    enabled: true,
+    mode: 'log-only',
+    advisoryInjection: false,
+  });
+  assert.equal(fixture.cp.getProjectConfig(inherited.id).effectiveHarness.enabled, false);
+  assert.equal(existsSync(join(inherited.workspace, '.pi', 'amos.managed.json')), false);
+  projection = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as typeof projection;
+  assert.equal(projection.activationDigest, base.snapshot.activationDigest);
+  assert.equal(projection.epoch, base.snapshot.activationSnapshot.epoch);
+  assert.equal(projection.managed.enabled, false);
+
+  for (const harness of ['pi', 'opencode'] as const) {
+    assert.equal(writeHarnessRuntimeReport({
+      directory: fixture.workspace,
+      projectId: project.id,
+      activationDigest: projection.activationDigest,
+      epoch: projection.epoch,
+      policyVersion: base.snapshot.activationSnapshot.project.projectConfigVersion,
+      loadedAt: new Date(clock.now()).toISOString(),
+      harness,
+      mode: 'log-only',
+      configDigest: projection.configDigest,
+      capabilities: {},
+    }), true);
+  }
+  const runtime = fixture.cp.getRuntimeStatus(project.id);
+  assert.equal(runtime.harnesses.pi.status, 'loaded');
+  assert.equal(runtime.harnesses.opencode.status, 'loaded');
+  assert.equal(runtime.harnesses.pi.runtime?.mode, 'log-only');
+  assert.equal(runtime.projection.status, 'written');
+  assert.equal(fixture.cp.listAudit({}).items.some((event) => event.kind === 'global_config_updated'), true);
+});
+
+test('global fanout reports independent projection write failures', (t) => {
+  const clock = createTestClock(START);
+  const root = makeTempDir(t);
+  const auditDir = join(root, 'audit');
+  mkdirSync(auditDir, { recursive: true });
+  const firstWorkspace = join(root, 'first');
+  const secondWorkspace = join(root, 'second');
+  mkdirSync(firstWorkspace, { recursive: true });
+  mkdirSync(secondWorkspace, { recursive: true });
+  let failingProject = '';
+  const cp = createControlPlane({
+    databasePath: join(root, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+    writeArtifacts(input) {
+      if (input.projectId === failingProject) throw new Error('fixture write failure');
+      writeProjectArtifacts(input);
+    },
+  });
+  t.after(() => cp.close());
+  const first = createProject(cp, firstWorkspace);
+  const second = createProject(cp, secondWorkspace);
+  failingProject = first.id;
+  publishFixture({ cp, databasePath: '', workspace: firstWorkspace, auditDir, clock }, first.id);
+  publishFixture({ cp, databasePath: '', workspace: secondWorkspace, auditDir, clock }, second.id);
+
+  const result = cp.updateGlobalConfig({ advisoryInjection: true }, human());
+  assert.deepEqual(result.projectionFailures, [first.id]);
+  assert.equal(existsSync(join(secondWorkspace, '.pi', 'amos.managed.json')), true);
+  assert.equal(cp.getRuntimeStatus(first.id).projection.status, 'missing');
 });
 
 test('publish atomically writes the activation snapshot and managed host projection', (t) => {
@@ -217,6 +350,9 @@ test('preauthorized tightening applies, persists, re-emits, expires, and survive
       activationDigest: applied.activationDigest ?? '',
       epoch: applied.epoch,
       policyVersion: applied.policyVersion ?? '',
+      configDigest: (JSON.parse(
+        readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+      ) as { configDigest: string }).configDigest,
       loadedAt: new Date(clock.now()).toISOString(),
     }),
     true,

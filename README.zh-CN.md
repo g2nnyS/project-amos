@@ -44,7 +44,7 @@ Amos 当前提供限定范围的 Harness 层 MVP：真实 Vue 控制台发布 P1
 Vue 治理控制台 / SQLite ── 发布 P1 catalog-v2 ──► .pi/activation.json
    │
    ▼
-Pi 会话加载快照（写 .pi/runtime.json 回执）+ 将 <amos-guidance> 动态注入系统提示词
+Pi 会话加载快照（写 .pi/runtime.pi.json 回执）+ 将 <amos-guidance> 动态注入系统提示词
    │
    ▼
 工具调用事件 (read/write/edit/ls/find/grep)

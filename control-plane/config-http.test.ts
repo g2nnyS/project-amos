@@ -25,6 +25,32 @@ test('HTTP exposes config, tightening, probe, and rollout lifecycle routes', asy
   mkdirSync(workspace, { recursive: true });
   const auth = await loginHuman(harness);
 
+  const globalPath = '/api/config';
+  const globalInitial = await fetchJson(harness, globalPath, {
+    headers: humanHeaders(auth, harness.url),
+  });
+  assert.equal(globalInitial.status, 200);
+  assert.equal((globalInitial.body as { mode: string }).mode, 'log-only');
+  const agentDenied = await fetchJson(harness, globalPath, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TEST_AGENT_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(agentDenied.status, 403);
+  const globalUpdated = await fetchJson(harness, globalPath, {
+    method: 'POST',
+    headers: humanHeaders(auth, harness.url),
+    body: JSON.stringify({ mode: 'managed', advisoryInjection: true }),
+  });
+  assert.equal(globalUpdated.status, 200);
+  assert.deepEqual((globalUpdated.body as { config: object; projectionFailures: string[] }).projectionFailures, []);
+  assert.equal((globalUpdated.body as { config: { mode: string } }).config.mode, 'managed');
+  await fetchJson(harness, globalPath, {
+    method: 'POST',
+    headers: humanHeaders(auth, harness.url),
+    body: JSON.stringify({ mode: 'log-only', advisoryInjection: false }),
+  });
+
   const active = makeRule('active-read', {
     predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
   });

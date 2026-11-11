@@ -50,7 +50,7 @@ See [MVP delivery](docs/mvp-delivery.md), [Product Scope](docs/product-design.md
 Vue Console / SQLite ── publish P1 catalog-v2 ──► .pi/activation.json
    │
    ▼
-Pi session loads snapshot (writes .pi/runtime.json) + injects <amos-guidance> into system prompt
+Pi session loads snapshot (writes .pi/runtime.pi.json) + injects <amos-guidance> into system prompt
    │
    ▼
 Tool call (read/write/edit/ls/find/grep)

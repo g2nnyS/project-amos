@@ -124,6 +124,7 @@ function projection(fixture: Fixture): Record<string, unknown> {
 async function setup(
   t: any,
   options: Record<string, unknown>,
+  failAuditRegistration = false,
 ): Promise<{
   readonly call: (name: string, event: Record<string, unknown>) => Promise<unknown>;
   readonly cleanup: () => Promise<void>;
@@ -135,7 +136,14 @@ async function setup(
     options,
     tool: {
       hook: async (name: string, callback: (event: any) => unknown) => {
+        if (failAuditRegistration && name === 'execute.before') throw new Error('fixture registration failure');
         hooks.set(name, callback);
+        return { dispose: async () => undefined };
+      },
+    },
+    session: {
+      hook: async (name: string, callback: (event: any) => unknown) => {
+        hooks.set(`session.${name}`, callback);
         return { dispose: async () => undefined };
       },
     },
@@ -266,6 +274,152 @@ test('a generated managed projection overrides hand-written options', async (t) 
     (error: unknown) => String(error).includes('amos_managed_denied'),
   );
   assert.equal(existsSync(join(fixture.workspace, 'src', 'deny.ts')), false);
+});
+
+test('projection v2 reports disabled without observer or managed side effects', async (t) => {
+  const fixture = createFixture([rule('deny-write', 'deny', 'src/deny.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const projected = projection(fixture);
+  projected.version = 2;
+  projected.configDigest = `sha256:${'a'.repeat(64)}`;
+  projected.harness = { enabled: false, mode: 'managed', advisoryInjection: true };
+  projected.managed = {
+    ...(projected.managed as Record<string, unknown>),
+    enabled: false,
+  };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(projected),
+  );
+  const plugin = await setup(t, {
+    mode: 'log-only',
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath: join(fixture.auditDir, 'shadow.jsonl'),
+    workspace: fixture.workspace,
+  });
+  await plugin.call('execute.before', writeEvent(fixture, 'deny.ts', 'call-disabled'));
+  assert.equal(existsSync(join(fixture.auditDir, 'shadow.jsonl')), false);
+  assert.equal(existsSync(fixture.managedAudit), false);
+  const report = JSON.parse(readFileSync(
+    join(fixture.workspace, '.pi', 'runtime.opencode.json'),
+    'utf8',
+  )) as Record<string, unknown>;
+  assert.equal(report.mode, 'disabled');
+  assert.equal(report.configDigest, projected.configDigest);
+});
+
+test('projection v2 log-only loads the observer without enforcing', async (t) => {
+  const fixture = createFixture([rule('deny-write', 'deny', 'src/deny.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const projected = projection(fixture);
+  projected.version = 2;
+  projected.configDigest = `sha256:${'b'.repeat(64)}`;
+  projected.harness = { enabled: true, mode: 'log-only', advisoryInjection: false };
+  projected.managed = {
+    ...(projected.managed as Record<string, unknown>),
+    enabled: false,
+  };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(projected),
+  );
+  const plugin = await setup(t, {
+    mode: 'log-only',
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath: join(fixture.auditDir, 'shadow.jsonl'),
+    workspace: fixture.workspace,
+  });
+  await plugin.call('execute.before', writeEvent(fixture, 'deny.ts', 'call-log-only'));
+  assert.equal(journal(join(fixture.auditDir, 'shadow.jsonl')).length, 1);
+  assert.equal(existsSync(fixture.managedAudit), false);
+  const report = JSON.parse(readFileSync(
+    join(fixture.workspace, '.pi', 'runtime.opencode.json'),
+    'utf8',
+  )) as Record<string, unknown>;
+  assert.equal(report.mode, 'log-only');
+  assert.equal(report.configDigest, projected.configDigest);
+});
+
+test('log-only receipts require successful observer hook registration', async (t) => {
+  const fixture = createFixture([rule('deny-write', 'deny', 'src/deny.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const projected = projection(fixture);
+  projected.version = 2;
+  projected.configDigest = `sha256:${'f'.repeat(64)}`;
+  projected.harness = { enabled: true, mode: 'log-only', advisoryInjection: false };
+  projected.managed = {
+    ...(projected.managed as Record<string, unknown>),
+    enabled: false,
+  };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(projected),
+  );
+  await setup(t, {
+    mode: 'log-only',
+    rulesPath: RULES,
+    schemaPath: SCHEMA,
+    logPath: join(fixture.auditDir, 'shadow.jsonl'),
+    workspace: fixture.workspace,
+  }, true);
+  assert.equal(existsSync(join(fixture.workspace, '.pi', 'runtime.opencode.json')), false);
+});
+
+test('projection v2 rejects contradictory managed and harness modes', async (t) => {
+  const fixture = createFixture([rule('deny-write', 'deny', 'src/deny.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const projected = projection(fixture);
+  projected.version = 2;
+  projected.configDigest = `sha256:${'c'.repeat(64)}`;
+  projected.harness = { enabled: true, mode: 'log-only', advisoryInjection: false };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(projected),
+  );
+  const plugin = await setup(t, {
+    ...managedOptions(fixture),
+    workspace: fixture.workspace,
+  });
+  await assert.rejects(
+    plugin.call('execute.before', writeEvent(fixture, 'deny.ts', 'call-contradictory')),
+    (error: unknown) => String(error).includes('amos_managed_config_error'),
+  );
+});
+
+test('projection v2 advisory suppression never disables managed denial', async (t) => {
+  const fixture = createFixture([rule('deny-write', 'deny', 'src/deny.ts')]);
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const projected = projection(fixture);
+  projected.version = 2;
+  projected.configDigest = `sha256:${'e'.repeat(64)}`;
+  projected.harness = { enabled: true, mode: 'managed', advisoryInjection: false };
+  writeFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    JSON.stringify(projected),
+  );
+  const plugin = await setup(t, {
+    ...managedOptions(fixture),
+    workspace: fixture.workspace,
+  });
+  // Prompt capture remains available for Managed requirements; advisory context
+  // emission is not registered when no independent completion review needs it.
+  assert.equal(plugin.hooks.has('session.prompt'), true);
+  assert.equal(plugin.hooks.has('session.context'), false);
+  await assert.rejects(
+    plugin.call('execute.before', writeEvent(fixture, 'deny.ts', 'call-no-advisory')),
+    (error: unknown) => String(error).includes('amos_managed_denied'),
+  );
+  const entries = journal(fixture.managedAudit);
+  assert.equal(entries[0]?.decision, 'deny');
+  assert.equal(entries[1]?.status, 'stopped');
+  const report = JSON.parse(readFileSync(
+    join(fixture.workspace, '.pi', 'runtime.opencode.json'),
+    'utf8',
+  )) as Record<string, unknown>;
+  assert.equal(report.mode, 'enforcing');
+  assert.equal(report.configDigest, projected.configDigest);
 });
 
 test('an invalid managed projection fails closed', async (t) => {

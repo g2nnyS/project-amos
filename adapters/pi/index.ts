@@ -73,7 +73,10 @@ import {
   loadActivationGuidance,
   loadActivationRuntime,
 } from '../shared/activation-guidance.ts';
-import { readHostProjection } from '../shared/host-projection.ts';
+import {
+  readHostProjection,
+  type HostProjectionLoad,
+} from '../shared/host-projection.ts';
 import {
   PI_MANAGED_CAPABILITIES,
   writeHarnessRuntimeReport,
@@ -210,11 +213,12 @@ type PiActivationGuidanceState =
  */
 function readPiActivationGuidanceConfig(
   directory: string,
+  hostLoad: HostProjectionLoad = readHostProjection(directory),
 ): PiActivationGuidanceState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
   }
-  const projection = readHostProjection(directory);
+  const projection = hostLoad;
   if (projection.status === 'error') return { status: 'error' };
   if (projection.status === 'ready') {
     return {
@@ -293,11 +297,14 @@ type PiManagedState =
  * the existing Stage A log-only behavior; a malformed/enabled-but-invalid
  * field fails closed in the adapter (all tool calls blocked).
  */
-function readPiManagedState(directory: string): PiManagedState {
+function readPiManagedState(
+  directory: string,
+  hostLoad: HostProjectionLoad = readHostProjection(directory),
+): PiManagedState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent' };
   }
-  const projection = readHostProjection(directory);
+  const projection = hostLoad;
   if (projection.status === 'error') {
     return {
       status: 'error',
@@ -488,12 +495,13 @@ export interface PiWorkflowGateState {
  */
 export function readPiWorkflowGateState(
   directory: string,
+  hostLoad: HostProjectionLoad = readHostProjection(directory),
 ): PiWorkflowGateState {
   if (!isNonBlankString(directory) || !isAbsolute(directory)) {
     return { status: 'absent', config: null };
   }
 
-  const projection = readHostProjection(directory);
+  const projection = hostLoad;
   if (projection.status === 'error') return { status: 'error', config: null };
   if (projection.status === 'ready') {
     const config = projection.projection.workflowGate as WorkflowGateConfig;
@@ -550,7 +558,7 @@ export interface PiWorkflowDependencies {
    * Production uses the legacy seed unless `.pi/amos.json` configures an
    * activation snapshot.
    */
-  createSession(directory: string): InjectorSession;
+  createSession(directory: string, key?: string): InjectorSession;
   assessShellCommand(
     command: string,
     options: AssessShellOptions,
@@ -578,10 +586,13 @@ function block(code: string): GateDecision {
   return { action: 'block', code };
 }
 
-function createDefaultDependencies(pi: ExtensionAPI): PiWorkflowDependencies {
+function createDefaultDependencies(
+  pi: ExtensionAPI,
+  projection: (directory: string, key: string) => HostProjectionLoad = readHostProjection,
+): PiWorkflowDependencies {
   return {
-    createSession(directory: string): InjectorSession {
-      const activation = readPiActivationGuidanceConfig(directory);
+    createSession(directory: string, key = directory): InjectorSession {
+      const activation = readPiActivationGuidanceConfig(directory, projection(directory, key));
       if (activation.status === 'enabled') {
         return loadActivationGuidance({
           snapshotPath: activation.config.snapshotPath,
@@ -644,23 +655,39 @@ export default function amosPiLogOnly(
   overrides?: PiWorkflowOverrides,
 ): void {
   const dependencies: PiWorkflowDependencies = {
-    ...createDefaultDependencies(pi),
+    ...createDefaultDependencies(pi, projectionFor),
     ...(overrides ?? {}),
   };
 
   const recorders = new Map<string, LogOnlyRecorder>();
+  const hostProjections = new Map<string, HostProjectionLoad>();
+
+  function projectionFor(directory: string, key: string): HostProjectionLoad {
+    const cacheKey = `${directory.length}:${directory}${key}`;
+    const existing = hostProjections.get(cacheKey);
+    if (existing !== undefined) return existing;
+    const loaded = readHostProjection(directory);
+    hostProjections.set(cacheKey, loaded);
+    return loaded;
+  }
+
+  function managedStateFor(directory: string, key: string): PiManagedState {
+    return readPiManagedState(directory, projectionFor(directory, key));
+  }
 
   function requirementContext(
     directory: string,
+    key: string,
   ): { readonly projectId: string; readonly epoch: number } | null {
-    const cached = requirementContexts.get(directory);
+    const contextKey = `${directory.length}:${directory}${key}`;
+    const cached = requirementContexts.get(contextKey);
     if (cached !== undefined) {
       return cached;
     }
     let context: { readonly projectId: string; readonly epoch: number } | null =
       null;
     try {
-      const activation = readPiActivationGuidanceConfig(directory);
+      const activation = readPiActivationGuidanceConfig(directory, projectionFor(directory, key));
       if (activation.status === 'enabled') {
         const loaded = loadActivationRuntime({
           snapshotPath: activation.config.snapshotPath,
@@ -677,7 +704,7 @@ export default function amosPiLogOnly(
     } catch {
       context = null;
     }
-    requirementContexts.set(directory, context);
+    requirementContexts.set(contextKey, context);
     return context;
   }
 
@@ -687,8 +714,9 @@ export default function amosPiLogOnly(
 
   function requirementRegistry(
     directory: string,
+    key: string,
   ): { readonly registry: RequirementRegistry; readonly epoch: number } | null {
-    const context = requirementContext(directory);
+    const context = requirementContext(directory, key);
     const uid = ownerUid();
     if (context === null || uid === null) {
       return null;
@@ -718,7 +746,7 @@ export default function amosPiLogOnly(
     text: string,
     egress: 'allowed' | 'denied',
   ): void {
-    const store = requirementRegistry(directory);
+    const store = requirementRegistry(directory, key);
     if (store === null) {
       return;
     }
@@ -739,7 +767,7 @@ export default function amosPiLogOnly(
   }
 
   function revokeRequirement(directory: string, key: string): void {
-    const store = requirementRegistry(directory);
+    const store = requirementRegistry(directory, key);
     if (store === null) {
       return;
     }
@@ -761,7 +789,7 @@ export default function amosPiLogOnly(
       version: null,
       digest: null,
     };
-    const store = requirementRegistry(directory);
+    const store = requirementRegistry(directory, key);
     if (store === null) {
       return unavailable;
     }
@@ -847,7 +875,15 @@ export default function amosPiLogOnly(
     }
   }
 
-  function ensureRecorder(directory: string): LogOnlyRecorder | null {
+  function ensureRecorder(directory: string, key: string): LogOnlyRecorder | null {
+    const projection = projectionFor(directory, key);
+    if (
+      projection.status === 'ready' &&
+      projection.projection.version === 2 &&
+      (!projection.projection.harness.enabled || projection.projection.harness.mode === 'managed')
+    ) {
+      return null;
+    }
     // Do not cache configuration failures: a user may repair .pi/amos.json
     // during the session. The diagnostic is still emitted once per process.
     const existing = recorders.get(directory);
@@ -859,7 +895,7 @@ export default function amosPiLogOnly(
     if (config === null) {
       // A generated managed projection is a complete enforcement input; the
       // legacy Stage A shadow recorder is not required in that mode.
-      if (readPiManagedState(directory).status === 'enabled') {
+      if (managedStateFor(directory, key).status === 'enabled') {
         return null;
       }
       reportConfigErrorOnce();
@@ -894,7 +930,7 @@ export default function amosPiLogOnly(
       return existing;
     }
 
-    const managed = readPiManagedState(directory);
+    const managed = managedStateFor(directory, key);
     if (managed.status === 'absent') {
       const state: ManagedGateState = { status: 'absent' };
       managedGates.set(cacheKey, state);
@@ -906,7 +942,7 @@ export default function amosPiLogOnly(
       return state;
     }
 
-    const activation = readPiActivationGuidanceConfig(directory);
+    const activation = readPiActivationGuidanceConfig(directory, projectionFor(directory, key));
     if (activation.status !== 'enabled') {
       const state: ManagedGateState = { status: 'error' };
       managedGates.set(cacheKey, state);
@@ -977,6 +1013,7 @@ export default function amosPiLogOnly(
         loadedAt,
       };
       managedGates.set(cacheKey, state);
+      const projection = projectionFor(directory, key);
       writeHarnessRuntimeReport({
         directory,
         projectId: loaded.runtime.projectId,
@@ -984,6 +1021,11 @@ export default function amosPiLogOnly(
         epoch: loaded.runtime.epoch,
         policyVersion: loaded.runtime.snapshot.project.projectConfigVersion,
         loadedAt,
+        harness: 'pi',
+        mode: 'enforcing',
+        ...(projection.status === 'ready' && projection.projection.version === 2
+          ? { configDigest: projection.projection.configDigest! }
+          : {}),
         capabilities: PI_MANAGED_CAPABILITIES,
       });
       while (managedGates.size > MAX_GUIDANCE_SESSIONS) {
@@ -1052,6 +1094,7 @@ export default function amosPiLogOnly(
       const cacheKey = `${ctx.cwd.length}:${ctx.cwd}${key}`;
       if (!runtimeUsed.has(cacheKey)) {
         runtimeUsed.add(cacheKey);
+        const projection = projectionFor(ctx.cwd, sessionKey(ctx));
         writeHarnessRuntimeReport({
           directory: ctx.cwd,
           projectId: state.runtime.projectId,
@@ -1060,6 +1103,11 @@ export default function amosPiLogOnly(
           policyVersion: state.runtime.snapshot.project.projectConfigVersion,
           loadedAt: state.loadedAt,
           lastToolAt: new Date().toISOString(),
+          harness: 'pi',
+          mode: 'enforcing',
+          ...(projection.status === 'ready' && projection.projection.version === 2
+            ? { configDigest: projection.projection.configDigest! }
+            : {}),
           capabilities: PI_MANAGED_CAPABILITIES,
         });
       }
@@ -1115,9 +1163,9 @@ export default function amosPiLogOnly(
    */
   function createSessionFor(directory: string, key: string): InjectorSession {
     if (overrides?.createSession !== undefined) {
-      return dependencies.createSession(directory);
+      return dependencies.createSession(directory, key);
     }
-    const managed = readPiManagedState(directory);
+    const managed = managedStateFor(directory, key);
     if (managed.status === 'enabled') {
       const state = ensureManagedGate(directory, key);
       return state.status === 'ready'
@@ -1127,7 +1175,7 @@ export default function amosPiLogOnly(
     if (managed.status === 'error') {
       return createEmptyAdvisorySession();
     }
-    return dependencies.createSession(directory);
+    return dependencies.createSession(directory, key);
   }
 
   /** One advisory injector session per real session key. */
@@ -1169,12 +1217,20 @@ export default function amosPiLogOnly(
   }
 
   function guidanceIsEnabled(ctx: ExtensionContext): boolean {
+    const projection = projectionFor(ctx.cwd, sessionKey(ctx));
+    if (
+      projection.status === 'ready' &&
+      projection.projection.version === 2 &&
+      (!projection.projection.harness.enabled || !projection.projection.harness.advisoryInjection)
+    ) {
+      return false;
+    }
     // Managed mode uses the activation advisory projection independently of
     // the optional engineering workflow gate.
-    if (readPiManagedState(ctx.cwd).status === 'enabled') {
+    if (managedStateFor(ctx.cwd, sessionKey(ctx)).status === 'enabled') {
       return true;
     }
-    const state = readPiWorkflowGateState(ctx.cwd);
+    const state = readPiWorkflowGateState(ctx.cwd, projectionFor(ctx.cwd, sessionKey(ctx)));
     if (state.status === 'error') {
       reportWorkflowConfigErrorOnce();
       return false;
@@ -1201,7 +1257,7 @@ export default function amosPiLogOnly(
       }
       const { tool, operation, target } = normalized.action;
       const normalizedTool = tool.toLowerCase();
-      const managedMode = readPiManagedState(ctx.cwd).status === 'enabled';
+      const managedMode = managedStateFor(ctx.cwd, sessionKey(ctx)).status === 'enabled';
       if (
         !operation.startsWith('file_') ||
         !['read', 'write', 'edit', 'grep', 'find', 'ls'].includes(normalizedTool) ||
@@ -1244,7 +1300,7 @@ export default function amosPiLogOnly(
       },
     };
     try {
-      const recorder = ensureRecorder(ctx.cwd);
+      const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
       if (recorder !== null) {
         recorder.record(normalized ?? fallback, now, started);
       }
@@ -1252,7 +1308,7 @@ export default function amosPiLogOnly(
       try {
         // Unexpected normalization/recording failures still leave an audit
         // trail. Configuration failures have no recorder and stay silent.
-        const recorder = ensureRecorder(ctx.cwd);
+        const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
         if (recorder !== null) {
           recorder.record(fallback, now, started);
         }
@@ -1266,13 +1322,13 @@ export default function amosPiLogOnly(
     const now = Date.now();
     const started = performance.now();
     try {
-      const recorder = ensureRecorder(ctx.cwd);
+      const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
       if (recorder !== null) {
         recorder.record(normalizePiUserBash(event, ctx.cwd), now, started);
       }
     } catch {
       try {
-        const recorder = ensureRecorder(ctx.cwd);
+        const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
         if (recorder !== null) {
           recorder.record(
             {
@@ -1355,7 +1411,7 @@ export default function amosPiLogOnly(
     dialect: ShellDialect,
     ctx: ExtensionContext,
   ): Promise<ShellGateEvaluation> {
-    const state = readPiWorkflowGateState(ctx.cwd);
+    const state = readPiWorkflowGateState(ctx.cwd, projectionFor(ctx.cwd, sessionKey(ctx)));
     if (state.status === 'absent') {
       return { outcome: 'allow' };
     }
@@ -1491,7 +1547,7 @@ export default function amosPiLogOnly(
     assessmentRequired?: boolean,
   ): void {
     try {
-      const recorder = ensureRecorder(ctx.cwd);
+      const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
       if (recorder === null) {
         return;
       }
@@ -1653,7 +1709,7 @@ export default function amosPiLogOnly(
   async function evaluateCompletion(
     ctx: ExtensionContext,
   ): Promise<AgentBeforeSettleEventResult | undefined> {
-    const state = readPiWorkflowGateState(ctx.cwd);
+    const state = readPiWorkflowGateState(ctx.cwd, projectionFor(ctx.cwd, sessionKey(ctx)));
     if (state.status === 'absent') {
       return undefined;
     }
@@ -1762,9 +1818,53 @@ export default function amosPiLogOnly(
     }
   }
 
+  function reportProjectionConfiguration(directory: string, key: string): void {
+    const projection = projectionFor(directory, key);
+    if (projection.status === 'ready' && projection.projection.version === 2) {
+      const current = projection.projection;
+      if (!current.harness.enabled) {
+        writeHarnessRuntimeReport({
+          directory,
+          projectId: current.projectId,
+          activationDigest: current.activationDigest,
+          epoch: current.epoch,
+          policyVersion: current.policyVersion,
+          loadedAt: new Date().toISOString(),
+          harness: 'pi',
+          mode: 'disabled',
+          configDigest: current.configDigest!,
+          capabilities: {},
+        });
+        return;
+      }
+      if (current.harness.mode === 'log-only') {
+        if (ensureRecorder(directory, key) === null) return;
+        writeHarnessRuntimeReport({
+          directory,
+          projectId: current.projectId,
+          activationDigest: current.activationDigest,
+          epoch: current.epoch,
+          policyVersion: current.policyVersion,
+          loadedAt: new Date().toISOString(),
+          harness: 'pi',
+          mode: 'log-only',
+          configDigest: current.configDigest!,
+          capabilities: {},
+        });
+        return;
+      }
+      ensureManagedGate(directory, key);
+      return;
+    }
+    ensureRecorder(directory, key);
+    if (managedStateFor(directory, key).status === 'enabled') {
+      ensureManagedGate(directory, key);
+    }
+  }
+
   pi.on('session_start', (event, ctx) => {
     try {
-      ensureRecorder(ctx.cwd);
+      reportProjectionConfiguration(ctx.cwd, sessionKey(ctx));
     } catch {
       // Initialization is best-effort; tool hooks retry ensure if needed.
     }
@@ -1781,15 +1881,6 @@ export default function amosPiLogOnly(
       requirementStore.clear(key);
     } catch {
       // A failed reset leaves the previous advisory state in place.
-    }
-    try {
-      // Load and report the session-pinned snapshot before the first prompt.
-      // A load failure stays fail-closed on the first tool call.
-      if (readPiManagedState(ctx.cwd).status === 'enabled') {
-        ensureManagedGate(ctx.cwd, sessionKey(ctx));
-      }
-    } catch {
-      // The runtime report is an observation; it never changes a verdict.
     }
   });
 
@@ -1808,7 +1899,7 @@ export default function amosPiLogOnly(
         }
       };
 
-      const state = readPiWorkflowGateState(ctx.cwd);
+      const state = readPiWorkflowGateState(ctx.cwd, projectionFor(ctx.cwd, sessionKey(ctx)));
       if (state.status === 'error') {
         reportWorkflowConfigErrorOnce();
       }
@@ -1823,9 +1914,9 @@ export default function amosPiLogOnly(
         state.config.actionAssessment
           ? state.config
           : null;
-      const managedState = readPiManagedState(ctx.cwd);
-      const managedGuidance = managedState.status === 'enabled';
-      if (managedGuidance && managedState.status === 'enabled') {
+      const managedState = managedStateFor(ctx.cwd, sessionKey(ctx));
+      const managedActive = managedState.status === 'enabled';
+      if (managedActive && managedState.status === 'enabled') {
         // Managed mode captures the direct user turn for the independent
         // reviewer. The default egress is denied; only an explicit
         // requirementEgress: "allowed" sends the text.
@@ -1865,12 +1956,7 @@ export default function amosPiLogOnly(
           revokeRequirement(ctx.cwd, key);
         }
       }
-      if (
-        !managedGuidance &&
-        (state.status !== 'enabled' ||
-          state.config === null ||
-          !state.config.guidance)
-      ) {
+      if (!guidanceIsEnabled(ctx)) {
         removeSection();
         return undefined;
       }
@@ -2065,7 +2151,7 @@ export default function amosPiLogOnly(
     if (grant !== null) {
       const finalVerdict = applyUserLiteralGrant(grant, assessment, key);
       try {
-        const recorder = ensureRecorder(ctx.cwd);
+        const recorder = ensureRecorder(ctx.cwd, sessionKey(ctx));
         if (recorder !== null) {
           recorder.recordAssessment(
             { tool: 'user_bash', operation: 'shell_input', target: 'unknown' },

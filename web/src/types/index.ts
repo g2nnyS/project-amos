@@ -22,17 +22,19 @@ export interface RuntimeStatus {
   projectCount?: number
 }
 export type HarnessRuntimeState = 'loaded' | 'stale' | 'never' | 'invalid' | 'unpublished'
+export type HarnessId = 'pi' | 'opencode'
 export interface HarnessRuntimeReport {
   format: 'amos-harness-runtime'
-  version: 1
+  version: 1 | 2
   projectId: string
   activationDigest: string
   epoch: number
   policyVersion: string
   loadedAt: string
   lastToolAt?: string
-  harness: 'pi' | 'opencode'
-  mode: 'enforcing'
+  harness: HarnessId
+  mode: 'enforcing' | 'log-only' | 'disabled'
+  configDigest?: string
   capabilities: Record<string, unknown>
 }
 export interface ManagedProjectionStatus {
@@ -41,12 +43,19 @@ export interface ManagedProjectionStatus {
   activationDigest: string | null
   epoch: number | null
   policyVersion: string | null
+  configDigest: string | null
+}
+export interface HarnessRuntimeObservation {
+  status: HarnessRuntimeState
+  runtime: HarnessRuntimeReport | null
 }
 export interface HarnessRuntimeStatus {
   status: HarnessRuntimeState
   runtime: HarnessRuntimeReport | null
   published: { version: number; activationDigest: string; policyVersion?: string } | null
-  projection?: ManagedProjectionStatus
+  projection: ManagedProjectionStatus
+  /** Latest load report per harness, not every running session. */
+  harnesses: Record<HarnessId, HarnessRuntimeObservation>
 }
 export type ToastVariant = 'success' | 'error' | 'info'
 export interface ToastItem { id: string; title: string; description?: string; variant: ToastVariant }

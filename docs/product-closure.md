@@ -12,11 +12,16 @@
 
 ## 1. G10：SQLite 配置单主与宿主投影
 
-`control-plane/` 现在按项目保存完整非秘密配置：
+`control-plane/` 现在保存全局默认与项目完整非秘密配置：
 
+- 全局 `enabled`、`mode`（`log-only`/`managed`）与 `advisoryInjection` 由 human 通过
+  `GET/POST /api/config` 读取和更新；内建默认仍是启用观察、Log-only、关闭注入。
+- 项目 `harness` 的三个可空覆盖值选择继承或覆盖全局默认；API 同时返回解析后的
+  `effectiveHarness`。升级前项目保留显式行为，新项目默认继承。
 - `workflowGate`：工程 Shell/完成审查开关与绝对 `jevConfigPath`；
-- `managed`：`enabled`、`requirementEgress`、`grantTtlMs`、`reviewer`（当前只有
-  `jev`）、绝对 `jevConfigPath`、review policy、calibration 与 `ceilingDigest`；
+- `managed`：`requirementEgress`、`grantTtlMs`、`reviewer`（当前只有 `jev`）、绝对
+  `jevConfigPath`、review policy、calibration 与 `ceilingDigest`；旧客户端写
+  `managed.enabled` 会映射为显式项目模式覆盖；
 - `tightening`：预授权模板与配额；
 - `rollout`：预注册阈值、逐规则阈值和当前 `RolloutState`。
 
@@ -29,7 +34,9 @@ Jev 配置；字面密钥由控制面原子写入私有状态目录的
 `review: null`，宿主停止，由人单次 PATCH 原地迁移。项目配置由 human 通过
 `POST /api/projects/:id/config` 更新；Agent 仅可读取和触发已预授权动作。
 
-发布（以及临时收紧、过期或配置更新）会用同一份配置生成并原子写入：
+全局或项目配置更新会按当前有效激活身份重新生成宿主投影，不创建规则版本，
+也不触发 TTL 到期编译。全局更新逐项目继续执行并返回失败的 project id；未发布项目
+不写宿主文件。发布（以及临时收紧、过期或配置更新）会用同一份配置生成并原子写入：
 
 ```text
 <workspace>/.pi/activation.json       P1 激活快照
@@ -37,14 +44,20 @@ Jev 配置；字面密钥由控制面原子写入私有状态目录的
 ```
 
 两个文件分别原子替换；managed 投影先 rename，因此中途崩溃会留下可见的
-digest/epoch 不匹配，而不是静默接受旧快照。适配器同时校验投影和激活
-digest/epoch/policyVersion，不匹配即 fail closed。`.pi/runtime.json` 仍由
-真实 Host 在加载后写入；控制台通过 `control-plane/runtime-status.ts` 显示
-`loaded` / `stale` / `never` / `invalid`，不把数据库发布或投影写入当作
-“宿主已生效”。
+digest/epoch 不匹配，而不是静默接受旧快照。投影 v2 增加解析后的 `harness` 与
+`configDigest`，并校验其与 `managed.enabled` 一致；v1 只作为旧协议读取。
+适配器同时校验投影和激活 digest/epoch/policyVersion/configDigest，不匹配即 fail closed。
+有效 `enabled:false` 会停用适配器拥有的记录、注入和 Managed gate；独立工程工作流门不随之
+改变。`advisoryInjection:false` 只抑制提示注入，不影响要求捕获、裁决或结果审计。
+
+真实 Host 按 Harness 写 `.pi/runtime.pi.json` 或 `.pi/runtime.opencode.json`，报告实际
+`enforcing`/`log-only`/`disabled` 与 configDigest；旧 `.pi/runtime.json` 仅在没有对应新
+回执时作为 legacy fallback。控制台通过 `control-plane/runtime-status.ts` 分别显示
+`loaded` / `stale` / `never` / `invalid`，不把数据库发布或投影写入当作“宿主已生效”。
+回执描述最近加载报告，不代表所有并发会话；配置变化需要后续支持的加载/重载边界。
 
 Pi 与 OpenCode 都优先读取 `.pi/amos.managed.json`；缺少投影时保留原有
-文件/选项配置行为。默认 `managed.enabled` 为 false。
+文件/选项配置行为。内建全局模式为 Log-only。
 
 ## 2. G08：持久临时收紧
 
@@ -100,7 +113,7 @@ Pi 与 OpenCode 都优先读取 `.pi/amos.managed.json`；缺少投影时保留�
   `amos_managed_reviewer_migration_required` 阻断，Jev 配置不可读时以
   `amos_managed_reviewer_unavailable` 阻断；
 - `execute.after` 写 executed/failed 结果，不记录内容；
-- 首次加载写 `.pi/runtime.json`，harness 标记为 `opencode`；
+- 首次加载写 `.pi/runtime.opencode.json`，harness 标记为 `opencode`；
 - 未显式启用 managed 时仍保持原 Stage A log-only + 可选 workflow gate。
 
 OpenCode 没有 Pi 的同名配置层，因此支持 `options.managed`；生成投影优先

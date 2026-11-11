@@ -321,6 +321,21 @@ export function createGovernanceServer(
       return;
     }
 
+    if (resource === 'config') {
+      requirePath(segments, 2);
+      if (method === 'GET') {
+        requireAnyActor(req);
+        sendJson(res, 200, service.getGlobalConfig());
+        return;
+      }
+      requireMethod(method, 'POST');
+      const actor = requireHumanActor(req);
+      requireBrowserMutation(req, port);
+      const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+      sendJson(res, 200, service.updateGlobalConfig(body, actor));
+      return;
+    }
+
     if (resource === 'status') {
       requirePath(segments, 2);
       requireMethod(method, 'GET');
