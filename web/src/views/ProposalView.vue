@@ -68,24 +68,28 @@ async function submit() {
   const ticket = generation
   if (!current || !selected || !project || busy.value || !pending.value || (selected === 'approve' && stale.value)) return
   busy.value = true
+  error.value = ''
+  let result: Proposal
   try {
-    const result = selected === 'withdraw'
+    result = selected === 'withdraw'
       ? await api.withdraw(current.id)
       : await api.decide(current.id, { decision: selected, note: note.value.trim(), expectedDigest: current.digest })
-    if (ticket !== generation || project !== store.activeProjectId) return
-    proposal.value = result
-    action.value = null
-    toast('操作已完成', selected === 'approve' ? '已发布治理版本；这不授权工具调用。' : '提案状态已更新。', 'success')
-    await store.refreshProject()
   } catch (e) {
     if (ticket === generation) {
       const message = e instanceof Error ? e.message : '操作失败。'
       error.value = message
       toast('操作失败', message, 'error')
     }
+    return
   } finally {
     if (ticket === generation) busy.value = false
   }
+  if (ticket !== generation || project !== store.activeProjectId) return
+  proposal.value = result
+  action.value = null
+  toast('操作已完成', selected === 'approve' ? '已发布治理版本；这不授权工具调用。' : '提案状态已更新。', 'success')
+  try { await store.refreshProject() }
+  catch { if (ticket === generation) toast('操作已完成，但刷新失败', '请手动刷新以查看最新策略与版本。', 'error') }
 }
 </script>
 

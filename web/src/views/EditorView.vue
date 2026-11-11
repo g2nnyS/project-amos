@@ -11,7 +11,7 @@ import { useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
-import type { Candidate, ValidationResult } from '@/types'
+import type { Candidate, Proposal, ValidationResult } from '@/types'
 
 const governance = useGovernanceStore()
 const auth = useAuthStore()
@@ -83,7 +83,7 @@ async function load(source: 'current' | 'seed' | 'history') {
       const version = Number(route.query.baseVersion)
       if (!Number.isSafeInteger(version) || version < 1) { error.value = '历史基准版本无效。'; return }
       const policy = await api.version(project, version)
-      if (run === epoch) install(policy.candidate, policy.version)
+      if (run === epoch) install(policy.candidate, governance.policy?.version ?? 0)
     } else if (governance.policy) {
       install(governance.policy.candidate, governance.policy.version)
     } else {
@@ -157,23 +157,27 @@ async function submit() {
   const project = governance.activeProjectId
   busy.value = true
   error.value = ''
+  let proposal: Proposal
   try {
-    const proposal = await api.createProposal(project, {
+    proposal = await api.createProposal(project, {
       title: title.value.trim(),
       rationale: rationale.value.trim(),
       baseVersion: baseVersion.value,
       expiresAt: new Date(expires.value).toISOString(),
       candidate: clone(draft.value)
     })
-    if (run !== epoch) return
-    reset()
-    toast('提案已创建', '请在提案列表中审阅。', 'success')
-    await router.push(`/proposals/${encodeURIComponent(proposal.id)}`)
   } catch {
     if (run === epoch) error.value = '提交失败。基准版本可能已过期，或请求未被接受；草稿仍保留。'
+    return
   } finally {
     if (run === epoch) busy.value = false
   }
+  if (run !== epoch) return
+  reset()
+  toast('提案已创建', '请在提案列表中审阅。', 'success')
+  try { await governance.refreshProject() }
+  catch { toast('提案已创建，但刷新失败', '提案列表可能未更新，请稍后手动刷新。', 'error') }
+  await router.push(`/proposals/${encodeURIComponent(proposal.id)}`)
 }
 
 function addRule() {

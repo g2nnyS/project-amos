@@ -354,11 +354,23 @@ try {
     await waitFor(`document.body.innerText.includes('待审批')`)
   })
 
+  await check('new proposal is immediately visible in the shared proposal list', async () => {
+    await click('a', '返回提案')
+    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
+    await click('a', 'E2E smoke proposal')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
+  })
+
   await check('approve and publish the proposal', async () => {
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
     await click('[role="alertdialog"] button', '确认')
     await waitFor(`document.body.innerText.includes('已批准')`)
+  })
+
+  await check('overview reflects the newly published current version', async () => {
+    await nav('项目边界')
+    await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
   await check('matrix filters update URL and search survives navigation back', async () => {
@@ -416,7 +428,12 @@ try {
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
-      while (await evaluate(visible('[aria-label^="关闭提示"]'))) await click('[aria-label^="关闭提示"]')
+      while (await evaluate(`(() => {
+        const button = Array.from(document.querySelectorAll('[aria-label^="关闭提示"]')).find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none')
+        if (!button) return false
+        button.click()
+        return true
+      })()`)) await sleep(50)
       await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
       await waitFor(visible(inspector))
       const layout = await evaluate(`(() => { const e = document.querySelector(${q(inspector)}), r = e.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, client:document.documentElement.clientWidth, focused:document.activeElement?.getAttribute('aria-label') }; })()`)
@@ -556,6 +573,13 @@ try {
     await waitFor(`document.body.innerText.includes('已加载当前版本')`)
   })
 
+  await check('history editing binds the proposal to the current published base', async () => {
+    await evaluate(`location.hash = '#/editor?baseVersion=1'`)
+    await waitFor(`location.hash === '#/editor?baseVersion=1' && ${visible('button')}`)
+    await click('button', '加载历史版本 1')
+    await waitFor(`document.body.innerText.includes('规则字段') && Array.from(document.querySelectorAll('.panel-kicker')).some(e => e.textContent.includes('基准版本 2'))`)
+  })
+
   await check('simulation binds historical version provenance and clears changed input', async () => {
     const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(projectId, 'active project missing')
@@ -584,6 +608,10 @@ try {
     await waitFor(`document.body.innerText.includes('尚无已发布版本')`)
     await nav('提案')
     await waitFor(`document.body.innerText.includes('尚无提案')`)
+    const secondId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(secondId, 'second project id missing')
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('nav[aria-label="主导航"]')} && document.querySelector('#project-select')?.value === ${q(secondId)}`)
     const firstId = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o=>o.textContent.includes(${q(projectOne)}))?.value`)
     assert.ok(firstId, 'first project option missing')
     await setBySelector('#project-select', firstId)

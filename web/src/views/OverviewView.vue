@@ -44,7 +44,7 @@ watch(() => governance.activeProjectId, () => { void loadAudit(); void governanc
 onMounted(() => { void loadAudit(); void governance.refreshRuntime() })
 
 const stats = computed(() => [
-  { label: '当前版本', value: governance.activeProject?.currentVersion == null ? '尚未发布' : `v${governance.activeProject.currentVersion}`, note: governance.activeProject?.currentVersion == null ? '项目无已发布治理版本' : '已发布本地治理版本' },
+  { label: '当前版本', value: governance.currentVersion == null ? '尚未发布' : `v${governance.currentVersion}`, note: governance.currentVersion == null ? '项目无已发布治理版本' : '已发布本地治理版本' },
   { label: '已发布规则', value: String(governance.policy?.candidate.rules.length ?? 0), note: '当前候选中的规则总数' },
   { label: '本地选中规则', value: String(activeCount.value), note: activationNote.value },
   { label: '待审提案', value: String(governance.proposals.filter(p => p.status === 'pending').length), note: '需审批后才会生成版本' },

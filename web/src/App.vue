@@ -10,7 +10,7 @@ import LoginView from '@/views/LoginView.vue'
 import { navSections, isActivePath, pageLabelForPath } from '@/components/layout/navigation'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAuthStore } from '@/stores/auth'
-import { useGovernanceStore } from '@/stores/governance'
+import { shouldClearForAuthState, useGovernanceStore } from '@/stores/governance'
 
 const preferences = usePreferencesStore()
 const auth = useAuthStore()
@@ -39,7 +39,7 @@ watch(query, () => { selected.value = 0 })
 watch(() => route.fullPath, () => { mobileOpen.value = false })
 watch(() => auth.authenticated, async value => {
   if (value) await governance.initialize().catch(() => {})
-  else { governance.clear(); mobileOpen.value = false; commandOpen.value = false; createOpen.value = false }
+  else if (shouldClearForAuthState(value, auth.ready)) { governance.clear(); mobileOpen.value = false; commandOpen.value = false; createOpen.value = false }
 }, { immediate: true })
 watch(() => preferences.resolvedTheme, value => {
   document.documentElement.classList.toggle('dark', value === 'dark')

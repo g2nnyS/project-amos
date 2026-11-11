@@ -40,6 +40,7 @@ import type {
   DecideProposalInput,
   RuleRecord,
 } from './contracts.ts';
+import { MAX_CANDIDATE_BYTES } from './compiler.ts';
 import {
   parsePolicyDocument,
   serializePolicyDocument,
@@ -74,6 +75,16 @@ export const HUMAN_ACTOR: Actor = Object.freeze({ id: 'human', role: 'human' });
 export const AGENT_ACTOR: Actor = Object.freeze({ id: 'agent', role: 'agent' });
 
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024;
+/**
+ * Candidate routes align with the compiler's candidate ceiling and add a
+ * bounded allowance for the request envelope (proposal metadata and JSON
+ * framing). An explicit `maxBodyBytes` still overrides this for every route.
+ */
+const CANDIDATE_BODY_ENVELOPE_BYTES = 64 * 1024;
+const DEFAULT_CANDIDATE_MAX_BODY_BYTES = Math.max(
+  DEFAULT_MAX_BODY_BYTES,
+  MAX_CANDIDATE_BYTES + CANDIDATE_BODY_ENVELOPE_BYTES,
+);
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 1000;
 const MAX_TOKEN_LENGTH = 1024;
 const MAX_TEXT_FIELD_LENGTH = 4096;
@@ -161,6 +172,8 @@ export function createGovernanceServer(
   });
   const now = options.now ?? Date.now;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const candidateMaxBodyBytes =
+    options.maxBodyBytes ?? DEFAULT_CANDIDATE_MAX_BODY_BYTES;
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const staticDir =
@@ -471,7 +484,9 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         const actor = requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         const input = parseProposalInput(body, now());
         sendJson(res, 201, service.createProposal(id, input, actor));
         return;
@@ -670,7 +685,9 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         sendJson(res, 200, service.validateCandidate(id, candidateFromBody(body)));
         return;
       }
