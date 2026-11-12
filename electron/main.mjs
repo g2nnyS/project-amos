@@ -1,19 +1,49 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, systemPreferences } from 'electron'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createSystemAuthHandler, detectSystemAuthenticator, isServiceDocument, SETUP_GRANT_CHANNEL, SYSTEM_AUTH_CHANNEL } from './system-auth.mjs'
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const nodeBinary = process.env.AMOS_NODE_PATH ?? process.env.npm_node_execpath ?? 'node'
 let service
 let consoleUrl
+let mainWindow
+let systemAuth
 
-function startService() {
+ipcMain.handle(SYSTEM_AUTH_CHANNEL, (event, challenge) => {
+  if (!systemAuth) throw new Error('System authentication unavailable')
+  return systemAuth.handle(event, challenge)
+})
+ipcMain.handle(SETUP_GRANT_CHANNEL, (event) => {
+  if (!systemAuth) return null
+  return systemAuth.getSetupGrant(event)
+})
+
+function startService(authenticator) {
+  const secret = randomBytes(32).toString('hex')
+  const setupGrant = randomBytes(32).toString('hex')
+  const env = { ...process.env, AMOS_SYSTEM_AUTH_SECRET: secret, AMOS_SETUP_GRANT: setupGrant }
+  delete env.AMOS_SYSTEM_AUTH_LABEL
+  if (authenticator) env.AMOS_SYSTEM_AUTH_LABEL = authenticator.label
   service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve', '--port', '0'], {
     cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    env,
     windowsHide: true,
   })
+  const child = service
+  const authHandler = createSystemAuthHandler({
+    authenticator, secret, setupGrant,
+    getWindow: () => mainWindow,
+    getServiceUrl: () => consoleUrl,
+    isServiceAlive: () => service === child && child.connected && !child.killed &&
+      child.exitCode === null && child.signalCode === null,
+  })
+  systemAuth = authHandler
+  child.on('exit', () => authHandler.cancel())
+  child.on('disconnect', () => authHandler.cancel())
 
   return new Promise((resolve, reject) => {
     let output = ''
@@ -47,16 +77,28 @@ function createWindow() {
     title: 'Amos 控制台',
     backgroundColor: '#f7f8fa',
     webPreferences: {
-      preload: join(root, 'electron', 'preload.mjs'),
+      preload: join(root, 'electron', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   })
 
-  window.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(`${consoleUrl}/`)) event.preventDefault()
+  mainWindow = window
+  window.on('closed', () => {
+    systemAuth?.cancel()
+    if (mainWindow === window) mainWindow = undefined
   })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!isServiceDocument(url, consoleUrl)) event.preventDefault()
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!isServiceDocument(url, consoleUrl)) event.preventDefault()
+  })
+  window.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) systemAuth?.cancel()
+  })
+  window.webContents.on('render-process-gone', () => systemAuth?.cancel())
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -74,7 +116,8 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   try {
-    consoleUrl = await startService()
+    const authenticator = await detectSystemAuthenticator({ systemPreferences })
+    consoleUrl = await startService(authenticator)
     createWindow()
   } catch (error) {
     if (service && !service.killed) service.kill()
@@ -92,6 +135,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  systemAuth?.cancel()
   if (service && !service.killed) service.kill()
 })
 app.on('window-all-closed', () => {
