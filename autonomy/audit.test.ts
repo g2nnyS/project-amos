@@ -8,6 +8,8 @@ import { Journal } from './journal.ts';
 import { createAuthorizationCore } from './authorization.ts';
 import { makeContext, makeLease, makeRequest, makeSnapshot, TEST_NOW } from './test-support.ts';
 
+const journalUnsupported = process.platform !== 'linux' ? 'durable autonomy journal requires Linux /proc/self/fd' : false;
+
 test('evidence is attributable, redacted, and rejects malformed states and accessors', () => {
   const snapshot = makeSnapshot('/work/demo');
   const core = createAuthorizationCore({ snapshot, expectedSnapshotDigest: snapshot.digest, capabilities: [makeLease(snapshot)] });
@@ -32,7 +34,7 @@ test('evidence is attributable, redacted, and rejects malformed states and acces
   assert.throws(() => buildAuditEvidence(env, { ...result, binding: { ...result.binding!, authorizedBytes: 100 } }));
 });
 
-test('journal v2 rejects old format and evidence, state, receipt and id tampering', () => {
+test('journal v2 rejects old format and evidence, state, receipt and id tampering', { skip: journalUnsupported }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-audit-'));
   const workspace = path.join(dir, 'work'); fs.mkdirSync(workspace);
   const file = path.join(dir, 'journal');
