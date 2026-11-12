@@ -286,6 +286,7 @@ try {
   await send('Page.navigate', { url: `${server.url}/` })
   await waitFor(`document.readyState === 'complete' && ${visible('input[type=password]')}`)
 
+  const password = 'e2e-password-enrollment-0123456789'
   const projectOne = 'E2E Governance Alpha'
   const projectTwo = 'E2E Governance Beta'
   const workspace = path.join(runDir, 'amos-e2e-workspace')
@@ -359,14 +360,26 @@ try {
   const harnessCardText = (name) =>
     `(Array.from(document.querySelectorAll('article')).find(e => e.querySelector('h3')?.textContent.trim() === ${q(name)})?.innerText ?? '')`
 
-  await check('login with human token reaches the governance shell', async () => {
-    await evaluate(`(() => {
-      const el = document.querySelector('input[type=password]');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${q(token)});
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`)
-    await click('button', '登录')
+  await check('first launch enrolls a password with one-time human verification', async () => {
+    await waitFor(`document.querySelector('h1')?.textContent.includes('设置登录密码')`)
+    assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="current-password"]')`), false)
+    await screenshot('desktop-password-setup')
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
+    await screenshot('mobile-password-setup')
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    await setBySelector('input[autocomplete="new-password"]', password)
+    await setByLabel('确认密码', password + '-mismatch')
+    await setBySelector('input[autocomplete="off"]', token)
+    await click('button', '设置密码')
+    await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
+    await setByLabel('确认密码', password)
+    await click('button', '设置密码')
     await waitFor(`${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
+    assert.equal(stored.includes(password), false)
+    assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
+    assert.equal(await evaluate(`JSON.stringify(localStorage).includes(${q(password)}) || JSON.stringify(sessionStorage).includes(${q(password)})`), false)
   })
 
   await mkdir(workspace, { recursive: true })
@@ -749,16 +762,12 @@ try {
     await waitFor(`document.body.innerText.includes('版本 2')`)
   })
 
-  await check('logout clears the session and relogin retains server projects', async () => {
+  await check('logout clears the session and password relogin retains server projects', async () => {
     await click('[aria-label="退出登录"]')
     await waitFor(visible('input[type=password]'))
     const sessionAfterLogout = await evaluate(`fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s => s.authenticated)`)
     assert.equal(sessionAfterLogout, false, 'server session remained authenticated after logout')
-    await evaluate(`(() => {
-      const el = document.querySelector('input[type=password]');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${q(token)});
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`)
+    await setBySelector('input[autocomplete="current-password"]', password)
     await click('button', '登录')
     await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
   })
