@@ -18,11 +18,14 @@ import {
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
+import { PasswordStore, PasswordError } from './password.ts';
+import { verifySystemProof } from './system-auth.ts';
 
 import { parse as parseYaml } from 'yaml';
 
 import {
   AuthManager,
+  constantTimeEqual,
   readSessionCookie,
   serializeClearedSessionCookie,
   serializeSessionCookie,
@@ -113,6 +116,9 @@ export interface GovernanceServerOptions {
   readonly service: ControlPlane;
   readonly humanToken: string;
   readonly agentToken: string;
+  readonly passwords?: PasswordStore;
+  readonly setupGrant?: string;
+  readonly systemAuth?: { readonly secret: string; readonly label: string };
   /** Raw or parsed constraints/schema.json; served at GET /api/schema. */
   readonly rawSchema: string | Record<string, unknown>;
   /** Fixed repository candidate served by GET /api/seed; never auto-approved. */
@@ -149,6 +155,16 @@ export function createGovernanceServer(
   options: GovernanceServerOptions,
 ): GovernanceServer {
   const service = options.service;
+  let setupGrant = options.setupGrant;
+  const grantExpiresAt = (options.now ?? Date.now)() + 10 * 60_000;
+  const passwordStore = options.passwords;
+  function authView(session: SessionState) {
+    return { ...sessionView(session), auth: {
+      setupRequired: passwordStore !== undefined && !passwordStore.configured,
+      methods: [...(passwordStore?.configured ? ['password'] : []), 'token', ...(options.systemAuth ? ['system'] : [])],
+      ...(options.systemAuth ? { systemLabel: options.systemAuth.label } : {}),
+    } };
+  }
   const auth = new AuthManager({
     humanToken: options.humanToken,
     agentToken: options.agentToken,
@@ -290,7 +306,14 @@ export function createGovernanceServer(
         session = auth.createAnonymousSession();
         setSessionCookie(res, session);
       }
-      sendJson(res, 200, sessionView(session));
+      sendJson(res, 200, authView(session));
+      return;
+    }
+
+    if (resource === 'setup') {
+      requirePath(segments, 2);
+      requireMethod(method, 'POST');
+      await handleLogin(req, res, port, true);
       return;
     }
 
@@ -743,6 +766,7 @@ export function createGovernanceServer(
     req: IncomingMessage,
     res: ServerResponse,
     port: number,
+    setup = false,
   ): Promise<void> {
     if (headerValues(req, 'authorization').length > 0) {
       throw new HttpError(401, 'browser_session_required');
@@ -756,15 +780,8 @@ export function createGovernanceServer(
     requireCsrf(req, session);
     requireJsonContentType(req);
     const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
-    const token = body.token;
-    if (
-      typeof token !== 'string' ||
-      token.length === 0 ||
-      token.length > MAX_TOKEN_LENGTH
-    ) {
-      throw new HttpError(401, 'invalid_credentials');
-    }
-
+    if (setup && !passwordStore) throw new HttpError(404, 'not_found');
+    if (setup && passwordStore?.configured) throw new HttpError(409, 'setup_already_complete');
     const key = loginKey(req);
     const limit = auth.checkLoginAllowed(key);
     if (!limit.allowed) {
@@ -773,15 +790,29 @@ export function createGovernanceServer(
       });
     }
 
-    if (!auth.verifyHumanToken(token)) {
-      auth.recordLoginFailure(key);
-      throw new HttpError(401, 'invalid_credentials');
+    // Reserve the attempt before asynchronous password work; one KDF runs at a time.
+    auth.recordLoginFailure(key);
+    const tokenValid = typeof body.token === 'string' && body.token.length <= MAX_TOKEN_LENGTH && auth.verifyHumanToken(body.token);
+    const systemValid = options.systemAuth !== undefined && verifySystemProof(options.systemAuth.secret, session.csrfToken, body.proof, now());
+    if (setup) {
+      const grantValid = typeof setupGrant === 'string' && now() < grantExpiresAt &&
+        typeof body.setupGrant === 'string' && body.setupGrant.length === setupGrant.length && constantTimeEqual(body.setupGrant, setupGrant);
+      if (session.role !== 'human' && !grantValid && !tokenValid && !systemValid) throw new HttpError(403, 'enrollment_required');
+      await passwordStore!.setup(body.password);
+      setupGrant = undefined;
+    } else {
+      let valid = false;
+      if (body.method === 'password') valid = passwordStore !== undefined && await passwordStore.verify(body.password);
+      else if (body.method === 'system') valid = systemValid;
+      else if (body.method === undefined || body.method === 'token') valid = tokenValid;
+      if (!valid) throw new HttpError(401, 'invalid_credentials');
     }
-
+    // Async verification must not revive a logged-out or expired session, or reuse a proof.
+    if (auth.getSession(session.id) !== session) throw new HttpError(401, 'unauthenticated');
     auth.resetLoginFailures(key);
     const rotated = auth.createHumanSession(session.id);
     setSessionCookie(res, rotated);
-    sendJson(res, 200, sessionView(rotated));
+    sendJson(res, 200, authView(rotated));
   }
 
   async function handleLogout(
@@ -953,6 +984,9 @@ export function createGovernanceServer(
         code: error.code,
         headers: error.headers,
       };
+    }
+    if (error instanceof PasswordError) {
+      return { status: error.code === 'password_busy' ? 429 : error.code === 'setup_already_complete' ? 409 : 400, code: error.code, headers: {} };
     }
     if (error instanceof DomainError || isDomainError(error)) {
       // DomainError messages equal their stable code; never copy anything else.
