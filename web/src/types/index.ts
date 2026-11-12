@@ -7,11 +7,21 @@ export type JevSettingsInput = SaveJevSettingsInput
 export type { ReviewRecord, ReviewQueue } from '../../../storage/audit-review.ts'
 
 export type ThemePreference = 'dark' | 'light' | 'system'
+export type AuthMethod = 'password' | 'token' | 'system'
+export type LoginCredentials = { method: 'password'; password: string } | { method: 'system' } | { token: string }
+export type SetupVerification = { token: string } | { method: 'system' } | { proof: string } | { setupGrant: string }
+export interface AmosDesktopBridge {
+  readonly isDesktop: true
+  authenticateSystem(challenge: string): Promise<string>
+  getSetupGrant(): Promise<string | null>
+}
+declare global { interface Window { amosDesktop?: AmosDesktopBridge } }
 export interface BrowserSession {
   authenticated: boolean
   role?: 'human' | 'agent'
   csrfToken: string
   expiresAt?: number
+  auth?: { setupRequired: boolean; methods: AuthMethod[]; systemLabel?: string }
 }
 export interface RuntimeStatus {
   mode: 'managed-opt-in'
