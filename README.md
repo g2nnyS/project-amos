@@ -131,6 +131,28 @@ npm run console
 # Or skip rebuilding if dist/ is already up to date: npm run console:serve
 ```
 
+### Desktop Application (Tauri)
+
+Run the governance console as a native desktop app with 90%+ smaller bundle size:
+
+```bash
+# Development (requires Rust toolchain)
+npm run tauri:dev
+
+# Production build
+npm run tauri:build
+```
+
+See [src-tauri/README.md](src-tauri/README.md) for setup instructions and architecture details.
+
+**Bundle sizes:**
+- Linux AppImage: ~10 MB
+- Windows NSIS: ~5 MB
+- macOS DMG: ~3 MB
+
+
+The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md). Engineering gating, Jev configuration, and its honest harness limits are documented in [Workflow Gate](docs/workflow-gate.md).
+
 Open the emitted `http://127.0.0.1:4310` URL (use `127.0.0.1` to preserve Host/Origin checks). Open `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` in a local editor and paste it into the login form—never paste tokens into chat, URLs, or logs. Create a project, import or edit rules, submit a proposal, and approve/publish it to write `<workspace>/.pi/activation.json`. See [Local Governance](docs/local-governance.md) and [Console README](web/README.md).
 
 ### 2. Run with Pi or OpenCode V2
