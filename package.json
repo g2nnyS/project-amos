@@ -24,6 +24,9 @@
     "e2e:smoke": "npm run build && node web/e2e/smoke.mjs",
     "probe:live": "node dist/managed/live-probe.js",
     "check:gate": "npm run build && node dist/check/cli.js"
+    "tauri": "tauri",
+    "tauri:dev": "npm run build && tauri dev",
+    "tauri:build": "npm run build && tauri build"
   },
   "dependencies": {
     "ajv": "^8.20.0",
@@ -34,6 +37,7 @@
     "@earendil-works/pi-coding-agent": "^1.4.0",
     "@opencode/plugin": "2.2.5",
     "@opencode/sdk": "2.2.5",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^26.6.5",
     "@types/picomatch": "^4.0.3",
     "electron": "^45.2.3",
