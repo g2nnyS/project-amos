@@ -6,13 +6,30 @@ import { fileURLToPath } from 'node:url'
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const packaged = app.isPackaged
 const nodeBinary = process.env.AMOS_NODE_PATH ?? (packaged ? process.execPath : process.env.npm_node_execpath ?? 'node')
+
+// ASAR unpacked路径解析：规则文件在app.asar.unpacked/，代码在app.asar内
+const getUnpackedPath = (relativePath) => {
+  if (!packaged) return join(root, relativePath)
+  return join(process.resourcesPath, 'app.asar.unpacked', relativePath)
+}
+
 let service
 let consoleUrl
 
 function startService() {
-  service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve', '--port', '0'], {
-    cwd: root,
-    env: packaged ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
+  const cliPath = packaged 
+    ? join(process.resourcesPath, 'app.asar', 'dist', 'control-plane', 'cli.js')
+    : join(root, 'dist', 'control-plane', 'cli.js')
+  
+  service = spawn(nodeBinary, [cliPath, 'serve', '--port', '0'], {
+    cwd: packaged ? process.resourcesPath : root,
+    env: packaged ? { 
+      ...process.env, 
+      ELECTRON_RUN_AS_NODE: '1',
+      // 指向unpacked的规则和指导目录
+      AMOS_CONSTRAINTS_PATH: getUnpackedPath('constraints'),
+      AMOS_GUIDANCE_PATH: getUnpackedPath('guidance')
+    } : process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })

@@ -2,11 +2,13 @@ appId: dev.amos.console
 productName: Amos Console
 copyright: Copyright © 2026 Amos maintainers
 
-# The desktop shell starts the compiled control plane as a child process with
-# Electron's bundled Node. Keeping the archive off disk lets that process read
-# dist/, constraints/ and guidance/ directly.
-asar: false
-npmRebuild: false
+# 启用ASAR压缩减少30-50%体积，但解包需要运行时访问的规则文件
+asar: true
+asarUnpack:
+  - "constraints/**/*"
+  - "guidance/**/*"
+
+npmRebuild: true
 
 directories:
   output: release
@@ -17,26 +19,37 @@ files:
   - constraints/**/*
   - guidance/**/*
   - package.json
+  # 排除测试文件和源码以减少体积
+  - "!dist/**/*.test.js"
+  - "!dist/**/*.test.js.map"
+  - "!**/*.ts"
+  - "!**/*.md"
 
 artifactName: amos-console-${version}-${os}-${arch}.${ext}
 
 linux:
   target:
-    - AppImage
+    - target: AppImage
+      arch: [x64, arm64]
   category: Development
   executableName: amos-console
+  compression: xz
 
 win:
   target:
     - nsis
+  compression: maximum
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  compression: lzma
+  differentialPackage: true
 
 mac:
   target:
     - dmg
   category: public.app-category.developer-tools
   identity: null
+  compression: store
