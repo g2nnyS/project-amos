@@ -12,3 +12,10 @@ decision/jev.local.json
 .slim/worktrees/
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/Cargo.lock
+*.AppImage
+*.deb
+*.rpm
