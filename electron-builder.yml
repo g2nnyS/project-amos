@@ -33,23 +33,18 @@ linux:
       arch: [x64, arm64]
   category: Development
   executableName: amos-console
-  compression: xz
 
 win:
   target:
     - nsis
-  compression: maximum
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  compression: lzma
-  differentialPackage: true
 
 mac:
   target:
     - dmg
   category: public.app-category.developer-tools
   identity: null
-  compression: store
