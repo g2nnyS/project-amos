@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, systemPreferences } from 'electron'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createSystemAuthHandler, detectSystemAuthenticator, isServiceDocument, SETUP_GRANT_CHANNEL, SYSTEM_AUTH_CHANNEL } from './system-auth.mjs'
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const packaged = app.isPackaged
@@ -15,6 +17,8 @@ const getUnpackedPath = (relativePath) => {
 
 let service
 let consoleUrl
+let mainWindow
+let systemAuth
 
 function startService() {
   const cliPath = packaged 
@@ -33,6 +37,17 @@ function startService() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
+  const child = service
+  const authHandler = createSystemAuthHandler({
+    authenticator, secret, setupGrant,
+    getWindow: () => mainWindow,
+    getServiceUrl: () => consoleUrl,
+    isServiceAlive: () => service === child && child.connected && !child.killed &&
+      child.exitCode === null && child.signalCode === null,
+  })
+  systemAuth = authHandler
+  child.on('exit', () => authHandler.cancel())
+  child.on('disconnect', () => authHandler.cancel())
 
   return new Promise((resolve, reject) => {
     let output = ''
@@ -66,16 +81,28 @@ function createWindow() {
     title: 'Amos 控制台',
     backgroundColor: '#f7f8fa',
     webPreferences: {
-      preload: join(root, 'electron', 'preload.mjs'),
+      preload: join(root, 'electron', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   })
 
-  window.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(`${consoleUrl}/`)) event.preventDefault()
+  mainWindow = window
+  window.on('closed', () => {
+    systemAuth?.cancel()
+    if (mainWindow === window) mainWindow = undefined
   })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!isServiceDocument(url, consoleUrl)) event.preventDefault()
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!isServiceDocument(url, consoleUrl)) event.preventDefault()
+  })
+  window.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) systemAuth?.cancel()
+  })
+  window.webContents.on('render-process-gone', () => systemAuth?.cancel())
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -92,8 +119,10 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null)
   try {
-    consoleUrl = await startService()
+    const authenticator = await detectSystemAuthenticator({ systemPreferences })
+    consoleUrl = await startService(authenticator)
     createWindow()
   } catch (error) {
     if (service && !service.killed) service.kill()
@@ -111,6 +140,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  systemAuth?.cancel()
   if (service && !service.killed) service.kill()
 })
 app.on('window-all-closed', () => {

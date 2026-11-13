@@ -36,6 +36,7 @@ import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
 import { JevSettingsStore } from './jev-settings.ts';
 import { ObservationLogs } from './observations.ts';
+import { PasswordStore } from './password.ts';
 import { createControlPlane } from './store.ts';
 
 export const DEFAULT_PORT = 4310;
@@ -488,6 +489,13 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
     tokenFactory: options.tokenFactory,
     now: options.now,
   });
+  const passwords = await PasswordStore.load(join(paths.dataDir, 'human-password.json'));
+  const env = options.env ?? process.env;
+  // Only the desktop's inherited private channel enables launch/native credentials.
+  const desktop = typeof process.send === 'function';
+  const systemAuth = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SYSTEM_AUTH_SECRET ?? '') && env.AMOS_SYSTEM_AUTH_LABEL
+    ? { secret: env.AMOS_SYSTEM_AUTH_SECRET!, label: env.AMOS_SYSTEM_AUTH_LABEL } : undefined;
+  const setupGrant = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
   const managedAuditDir = join(paths.dataDir, 'managed-audit');
   await ensurePrivateDirectory(managedAuditDir);
 
@@ -548,6 +556,9 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       service,
       humanToken: tokens.humanToken,
       agentToken: tokens.agentToken,
+      passwords,
+      ...(systemAuth ? { systemAuth } : {}),
+      ...(setupGrant ? { setupGrant } : {}),
       rawSchema,
       seed,
       staticDir: options.staticDir ?? paths.staticDir,

@@ -18,8 +18,9 @@ npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 
 服务仅接受 `http://127.0.0.1:<port>`，不要改用 localhost、局域网地址或反向代理。默认端口 4310；端口占用时用 `--port` 指定其他端口。前端使用 hash 路由，刷新治理页面不会依赖服务器开放任意 SPA 路径。
 若浏览器在另一台机器，可由人类在浏览器所在机器建立 `ssh -N -L 4310:127.0.0.1:4310 user@server` 隧道，再打开 `http://127.0.0.1:4310`；两端端口须一致以保留 Host/Origin 校验，不要为远程预览改成公网监听。
-默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token` 和 `agent.token`。
-启动时会创建缺失状态并只显示令牌文件路径。用本机编辑器打开 `human.token`，将内容粘贴进登录表单；不要把令牌贴到聊天、URL 或日志。
+默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。
+首次打开先设置并确认 12 至 1024 字符的登录密码。Electron 桌面启动提供 10 分钟的一次性设置授权，无需手动输入 token；独立浏览器首次设置需用本机 `human.token` 验证身份。后续默认密码登录，token 保留为恢复登录入口。浏览器不保存密码、token 或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。
+桌面还支持能力检测后的系统认证：macOS Touch ID；Linux 安装 Amos 专用 polkit action 后调用系统原生验证，安装步骤见 [桌面文档](../electron/README.md)。系统密码由系统对话框处理。缺少能力时隐藏该方式，Windows 暂显示密码与 token。登录不代替逐项治理审批。不要把凭据贴到聊天、URL 或日志。
 令牌文件须属当前用户且权限 0600，目录须为 0700；现有权限错误、符号链接或损坏状态会拒绝启动，不自动删除或重置。
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
 
@@ -104,8 +105,9 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 
 | 方法 | 路径 | 请求/响应 |
 | --- | --- | --- |
-| GET | `/api/session` | `{authenticated, role?, csrfToken, expiresAt?}`；建立短期匿名 CSRF 会话 |
-| POST | `/api/login` | `{token}` → 新 human 会话；轮换会话 ID 和 CSRF |
+| GET | `/api/session` | `{authenticated, role?, csrfToken, expiresAt?, auth:{setupRequired,methods,systemLabel?}}`；建立短期匿名 CSRF 会话 |
+| POST | `/api/setup` | `{password,setupGrant?或token?或proof?}`；受信首次设置；已有密码返回 409 |
+| POST | `/api/login` | `{method:"password",password}`、`{method:"system",proof}` 或 `{token}` → 新 human 会话；轮换会话 ID 和 CSRF |
 | POST | `/api/logout` | 撤销服务端会话 |
 | GET | `/api/status` | `{mode:'log-only', enforcement:false, trustBoundary:false}` 与可选计数 |
 | GET/POST | `/api/projects` | 列表 / `{name,workspace}` 创建尚未配置项目 |

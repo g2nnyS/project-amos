@@ -7,11 +7,13 @@ import { createPolicyBoundHost } from './host.ts';
 import { makeContext, makeLease, makeRequest, makeSnapshot, TEST_NOW } from './test-support.ts';
 import { createAuthorizationCore } from './authorization.ts';
 import { digest as makeDigest } from '../activation/json.ts';
-import { ENVELOPE_DIGEST_DOMAIN } from './contracts.ts';
+import { AutonomyError, ENVELOPE_DIGEST_DOMAIN } from './contracts.ts';
 import { auditId } from './audit.ts';
 import type { ActionEnvelope, AuthorizationCore, FileExecutionResult, FileExecutor } from './contracts.ts';
 
-test('opaque sessions, durable single consumption, revocation and stop', async () => {
+const journalUnsupported = process.platform !== 'linux' ? 'policy-bound host journal requires Linux /proc/self/fd' : false;
+
+test('opaque sessions, durable single consumption, revocation and stop', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   fs.symlinkSync('nonexistent', path.join(workspace, 'ordinary-project-link'));
@@ -47,7 +49,7 @@ test('opaque sessions, durable single consumption, revocation and stop', async (
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('real authorizer digest works with trusted fake executor', async () => {
+test('real authorizer digest works with trusted fake executor', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -62,7 +64,7 @@ test('real authorizer digest works with trusted fake executor', async () => {
   } finally { await host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('non-ALLOW decisions reserve ids without preparing', async () => {
+test('non-ALLOW decisions reserve ids without preparing', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -84,7 +86,7 @@ test('non-ALLOW decisions reserve ids without preparing', async () => {
   } finally { await host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('revoke and expiry during prepare prevent perform', async () => {
+test('revoke and expiry during prepare prevent perform', { skip: journalUnsupported }, async () => {
   for (const mode of ['revoke', 'expire'] as const) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
     const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
@@ -102,7 +104,7 @@ test('revoke and expiry during prepare prevent perform', async () => {
   }
 });
 
-test('session getter is never invoked and foreign sessions are rejected', async () => {
+test('session getter is never invoked and foreign sessions are rejected', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -119,7 +121,7 @@ test('session getter is never invoked and foreign sessions are rejected', async 
   } finally { await host.close(); await other.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('journal write and fsync failures prevent perform, result failure is unknown', async (t) => {
+test('journal write and fsync failures prevent perform, result failure is unknown', { skip: journalUnsupported }, async (t) => {
   for (const mode of ['write', 'fsync', 'result'] as const) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
     const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
@@ -153,7 +155,7 @@ test('journal write and fsync failures prevent perform, result failure is unknow
   }
 });
 
-test('unknown result stays consumed after clean restart', async () => {
+test('unknown result stays consumed after clean restart', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -170,7 +172,7 @@ test('unknown result stays consumed after clean restart', async () => {
   } finally { await host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('noncanonical or symlink journal parents are rejected', () => {
+test('noncanonical or symlink journal parents are rejected', { skip: journalUnsupported }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -184,7 +186,45 @@ test('noncanonical or symlink journal parents are rejected', () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('unsafe executor result is not propagated', async () => {
+test('malformed bootstrap workspace or executor mismatch is rejected before journal effects', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-')));
+  const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
+  const snapshot = makeSnapshot(workspace);
+  const core = createAuthorizationCore({ snapshot, expectedSnapshotDigest: snapshot.digest, capabilities: [makeLease(snapshot)] });
+  let prepares = 0;
+  const executor: FileExecutor = { workspace, prepare() { prepares++; throw Error(); }, async close() {} };
+  const journalPath = path.join(dir, 'journal');
+  try {
+    for (const bad of [{ ...core, workspace: 'relative/workspace' }, { ...core, workspace: `${workspace}/` }]) assert.throws(() => createPolicyBoundHost({ core: bad, executor, journalPath, now: () => TEST_NOW }), AutonomyError);
+    assert.throws(() => createPolicyBoundHost({ core, executor: { ...executor, workspace: path.join(dir, 'other') }, journalPath, now: () => TEST_NOW }), AutonomyError);
+    assert.equal(prepares, 0);
+    assert.deepEqual(fs.readdirSync(dir), ['workspace']);
+    assert.deepEqual(fs.readdirSync(workspace), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('non-Linux host construction fails closed before executor or journal effects', { skip: process.platform === 'linux' ? 'Linux journal is supported; execution is covered by the journal-backed host tests' : false }, () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-')));
+  const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
+  const snapshot = makeSnapshot(workspace);
+  const core = createAuthorizationCore({ snapshot, expectedSnapshotDigest: snapshot.digest, capabilities: [makeLease(snapshot)] });
+  const context = makeContext(snapshot); const request = makeRequest(snapshot);
+  const envelope = core.createEnvelope(context, request, TEST_NOW);
+  assert.equal(core.authorize(envelope, { now: TEST_NOW, revokedCapabilityIds: [] }).state, 'ALLOW');
+  let prepares = 0, performs = 0;
+  const executor: FileExecutor = { workspace, prepare(e) { prepares++; return { envelopeDigest: makeDigest(ENVELOPE_DIGEST_DOMAIN, e), cancel() {}, async perform() { performs++; return { status: 'succeeded', code: 'write_complete', bytesWritten: 5 }; } }; }, async close() {} };
+  const journalPath = path.join(dir, 'journal');
+  try {
+    assert.throws(() => createPolicyBoundHost({ core, executor, journalPath, now: () => TEST_NOW }), AutonomyError);
+    assert.equal(prepares, 0); assert.equal(performs, 0);
+    assert.deepEqual(fs.readdirSync(dir), ['workspace']);
+    assert.deepEqual(fs.readdirSync(workspace), []);
+    assert.equal(fs.existsSync(journalPath), false);
+    assert.equal(fs.existsSync(`${journalPath}.lock`), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('unsafe executor result is not propagated', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
@@ -208,7 +248,7 @@ test('unsafe executor result is not propagated', async () => {
   } finally { await host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('decision and consumption retain independent redacted attribution', async () => {
+test('decision and consumption retain independent redacted attribution', { skip: journalUnsupported }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-host-'));
   const workspace = path.join(dir, 'workspace'); fs.mkdirSync(workspace);
   const snapshot = makeSnapshot(workspace);
