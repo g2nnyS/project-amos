@@ -6,7 +6,9 @@ command or hold work for engineering review; that does not turn Amos into comple
 mediation or a trusted execution boundary.
 
 Current behavior and harness limitations are described below. In particular,
-OpenCode completion feedback is advisory and is not a merge block.
+OpenCode runs its completion review through the `experimental.idle` hook: like Pi's
+`agent_before_settle`, it can request one repair continuation, is advisory
+(soft-block), and does not hard-prevent completion or act as a merge block.
 
 ## What it does
 
@@ -187,6 +189,12 @@ gate-managed. Several host behaviors also remain outside the gate's control:
 The gate therefore remains an engineering guardrail, not a security boundary. Direct shell
 APIs cannot be claimed as mediated by this plugin.
 
+Completion review runs at the `experimental.idle` hook, mirroring Pi's
+`agent_before_settle`: it reviews the completed change and requests at most one repair
+continuation per diff digest. The result is advisory (soft-block), not a hard completion
+prevention, and `experimental.idle` is an experimental API that may change in a future
+OpenCode release.
+
 ### OpenCode approval verification (2026-10-30)
 
 A real OpenCode 2.1.4 standalone TUI session used the plan-class command
@@ -200,9 +208,12 @@ A real OpenCode 2.1.4 standalone TUI session used the plan-class command
 This verifies the native agent-tool approval path, not the excluded direct shell APIs or
 non-interactive/auto modes.
 
-OpenCode's context hooks can provide review feedback before a later model request, but the
-documented API does not provide a true "prevent settle/merge" hook; the local feedback must
-not be described as such. Branch protection and CI remain the merge authority.
+OpenCode's `experimental.idle` hook provides a single-repair continuation mechanism
+comparable to Pi's `agent_before_settle`: the gate reviews the completed change and may
+request one repair continuation for a given diff digest. This remains advisory
+(soft-block), not a hard completion prevention, and `experimental.idle` is an experimental
+API that may change in a future OpenCode release. Branch protection and CI remain the merge
+authority.
 
 ## Explicit non-guarantees
 
