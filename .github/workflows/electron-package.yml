@@ -28,8 +28,12 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux
-            target: --linux AppImage
+            platform: linux-x64
+            target: --linux AppImage --x64
+            artifacts: release/*.AppImage
+          - os: ubuntu-latest
+            platform: linux-arm64
+            target: --linux AppImage --arm64
             artifacts: release/*.AppImage
           - os: windows-latest
             platform: windows

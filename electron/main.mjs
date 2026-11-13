@@ -8,30 +8,36 @@ import { createSystemAuthHandler, detectSystemAuthenticator, isServiceDocument, 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const packaged = app.isPackaged
 const nodeBinary = process.env.AMOS_NODE_PATH ?? (packaged ? process.execPath : process.env.npm_node_execpath ?? 'node')
+
+// ASAR unpacked路径解析：规则文件在app.asar.unpacked/，代码在app.asar内
+const getUnpackedPath = (relativePath) => {
+  if (!packaged) return join(root, relativePath)
+  return join(process.resourcesPath, 'app.asar.unpacked', relativePath)
+}
+
 let service
 let consoleUrl
 let mainWindow
 let systemAuth
 
-ipcMain.handle(SYSTEM_AUTH_CHANNEL, (event, challenge) => {
-  if (!systemAuth) throw new Error('System authentication unavailable')
-  return systemAuth.handle(event, challenge)
-})
-ipcMain.handle(SETUP_GRANT_CHANNEL, (event) => {
-  if (!systemAuth) return null
-  return systemAuth.getSetupGrant(event)
-})
-
 function startService(authenticator) {
-  const secret = randomBytes(32).toString('hex')
-  const setupGrant = randomBytes(32).toString('hex')
-  const env = { ...process.env, AMOS_SYSTEM_AUTH_SECRET: secret, AMOS_SETUP_GRANT: setupGrant }
-  delete env.AMOS_SYSTEM_AUTH_LABEL
-  if (authenticator) env.AMOS_SYSTEM_AUTH_LABEL = authenticator.label
-  service = spawn(nodeBinary, [join(root, 'dist', 'control-plane', 'cli.js'), 'serve', '--port', '0'], {
-    cwd: root,
-    env: packaged ? { ...env, ELECTRON_RUN_AS_NODE: '1' } : env,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  const secret = randomBytes(32)
+  const setupGrant = randomBytes(32)
+  
+  const cliPath = packaged 
+    ? join(process.resourcesPath, 'app.asar', 'dist', 'control-plane', 'cli.js')
+    : join(root, 'dist', 'control-plane', 'cli.js')
+  
+  service = spawn(nodeBinary, [cliPath, 'serve', '--port', '0'], {
+    cwd: packaged ? process.resourcesPath : root,
+    env: packaged ? { 
+      ...process.env, 
+      ELECTRON_RUN_AS_NODE: '1',
+      // 指向unpacked的规则和指导目录
+      AMOS_CONSTRAINTS_PATH: getUnpackedPath('constraints'),
+      AMOS_GUIDANCE_PATH: getUnpackedPath('guidance')
+    } : process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
   const child = service
