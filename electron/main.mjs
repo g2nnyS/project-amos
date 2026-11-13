@@ -20,7 +20,10 @@ let consoleUrl
 let mainWindow
 let systemAuth
 
-function startService() {
+function startService(authenticator) {
+  const secret = randomBytes(32)
+  const setupGrant = randomBytes(32)
+  
   const cliPath = packaged 
     ? join(process.resourcesPath, 'app.asar', 'dist', 'control-plane', 'cli.js')
     : join(root, 'dist', 'control-plane', 'cli.js')
