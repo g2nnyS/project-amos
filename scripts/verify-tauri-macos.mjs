@@ -24,6 +24,7 @@ const DEFAULT_APP_PATH = path.join(
 const DEFAULT_DMG_DIR = path.join("src-tauri", "target", "release", "bundle", "dmg");
 const APP_BUNDLE_NAME = "Amos Console.app";
 const SERVE_TIMEOUT_MS = 15_000;
+const POST_URL_SETTLE_MS = 750;
 const MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 function fail(message) {
@@ -267,6 +268,33 @@ async function main() {
         fail(`console URL returned HTTP ${response.status}: ${url}`);
       }
       await response.arrayBuffer();
+
+      // Regression: the app must keep the child's stdout open after the URL
+      // line, otherwise the remaining startup lines hit EPIPE and the backend
+      // exits while the window still points at it.
+      await new Promise((resolve) => setTimeout(resolve, POST_URL_SETTLE_MS));
+      if (child.exitCode !== null || child.signalCode !== null) {
+        const detail = stderr.trim();
+        fail(
+          `control plane exited after reporting its URL (code ${child.exitCode}, ` +
+            `signal ${child.signalCode})${detail ? `: ${detail}` : ""}`,
+        );
+      }
+
+      const followUpRemaining = deadline - Date.now();
+      if (followUpRemaining <= 0) {
+        fail(`timed out after ${SERVE_TIMEOUT_MS}ms before re-checking the console URL`);
+      }
+      let followUp;
+      try {
+        followUp = await fetch(url, { signal: AbortSignal.timeout(followUpRemaining) });
+      } catch (error) {
+        fail(`console URL stopped responding: ${error.message}`);
+      }
+      if (followUp.status !== 200) {
+        fail(`console URL stopped returning HTTP 200 (${followUp.status}): ${url}`);
+      }
+      await followUp.arrayBuffer();
     } catch (error) {
       if (stderr.trim()) {
         fail(`${error.message}\n${stderr.trim()}`);

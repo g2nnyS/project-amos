@@ -1,10 +1,17 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Mutex;
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
+
+const URL_TIMEOUT: Duration = Duration::from_secs(15);
+const URL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[cfg(windows)]
 const NODE_BIN: &str = "node.exe";
@@ -16,7 +23,7 @@ struct ServiceState {
 }
 
 #[tauri::command]
-fn get_service_url(state: State<ServiceState>) -> Result<String, String> {
+fn get_service_url(_state: State<ServiceState>) -> Result<String, String> {
     // Service URL will be returned from the spawned process
     Ok("http://127.0.0.1:3000".to_string())
 }
@@ -104,25 +111,91 @@ fn spawn_control_plane(app: &AppHandle) -> Result<(Child, String), String> {
         .map_err(|e| format!("Failed to spawn control plane: {}", e))?;
 
     // Read stdout to get the URL
-    use std::io::{BufRead, BufReader};
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let reader = BufReader::new(stdout);
 
-    for line in reader.lines() {
-        if let Ok(line) = line {
-            if line.contains("本地控制台:") {
-                if let Some(url) = line.split_whitespace().last() {
-                    return Ok((child, url.to_string()));
+    // The URL is the first of several startup lines. Keep draining stdout to
+    // EOF on a background thread so the child never writes into a closed pipe
+    // (EPIPE) after the URL has been observed. Later lines are discarded; the
+    // CLI also prints token file paths, which do not belong in application
+    // logs. stderr stays inherited for diagnostics.
+    let (url_tx, url_rx) = mpsc::channel::<String>();
+    if let Err(error) = thread::Builder::new()
+        .name("control-plane-stdout".to_string())
+        .spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut sender = Some(url_tx);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                match reader.read_until(b'\n', &mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {
+                        if let Some(pending) = sender.as_ref() {
+                            let text = String::from_utf8_lossy(&line);
+                            if text.contains("本地控制台:") {
+                                if let Some(url) = text.split_whitespace().last() {
+                                    let _ = pending.send(url.to_string());
+                                    sender = None;
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
+        })
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Failed to start stdout reader: {}", error));
     }
 
-    Err("Failed to parse service URL".to_string())
+    let deadline = Instant::now() + URL_TIMEOUT;
+    loop {
+        match url_rx.recv_timeout(URL_POLL_INTERVAL) {
+            Ok(url) => return Ok((child, url)),
+            Err(RecvTimeoutError::Disconnected) => {
+                let detail = match child.try_wait() {
+                    Ok(Some(status)) => format!(" ({})", status),
+                    _ => String::new(),
+                };
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "Control plane exited before reporting its service URL{}",
+                    detail
+                ));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "Control plane exited before reporting its service URL ({})",
+                    status
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Failed to poll control plane: {}", error));
+            }
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Timed out after {}s waiting for the control plane URL",
+                URL_TIMEOUT.as_secs()
+            ));
+        }
+    }
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let (child, url) = spawn_control_plane(app.handle())
                 .map_err(|e| format!("Failed to start control plane: {}", e))?;
@@ -141,6 +214,17 @@ fn main() {
         })
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![get_service_url])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            if let Ok(mut process) = app_handle.state::<ServiceState>().process.lock() {
+                if let Some(mut child) = process.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+    });
 }

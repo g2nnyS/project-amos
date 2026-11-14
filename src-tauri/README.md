@@ -183,7 +183,7 @@ RUST_LOG=debug npm run tauri:dev
 ```
 
 ### 查看Node.js输出
-Node.js的stdout/stderr会转发到Tauri控制台。
+Node.js的stderr会转发到Tauri控制台。stdout仅用于读取启动URL；剩余启动行由后台线程读取后丢弃，避免子进程写入已关闭的管道而退出。
 
 ### 打开DevTools
 开发模式下在窗口内右键选择"Inspect"。
