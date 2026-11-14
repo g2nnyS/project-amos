@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -19,6 +20,8 @@ const DEFAULT_APP_PATH = path.join(
   "macos",
   "Amos Console.app",
 );
+const DEFAULT_DMG_DIR = path.join("src-tauri", "target", "release", "bundle", "dmg");
+const APP_BUNDLE_NAME = "Amos Console.app";
 const SERVE_TIMEOUT_MS = 15_000;
 const MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
@@ -45,6 +48,74 @@ function verifySignature(args, label) {
     const detail = (result.stderr || result.stdout || "").trim();
     fail(`${label} codesign verification failed (exit ${result.status}): ${detail}`);
   }
+}
+
+function findUniqueDmg(directory) {
+  requireDirectory(directory, "dmg output directory");
+  const images = readdirSync(directory)
+    .filter((name) => name.toLowerCase().endsWith(".dmg"))
+    .filter((name) => statSync(path.join(directory, name)).isFile());
+  if (images.length === 0) {
+    fail(`no .dmg image found in ${directory}`);
+  }
+  if (images.length > 1) {
+    fail(`multiple .dmg images found in ${directory}: ${images.join(", ")}`);
+  }
+  return path.join(directory, images[0]);
+}
+
+function attachDmg(dmgPath, mountPoint) {
+  requireFile(dmgPath, "dmg image");
+  mkdirSync(mountPoint, { recursive: true });
+  const result = spawnSync(
+    "hdiutil",
+    ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, dmgPath],
+    { encoding: "utf8" },
+  );
+  if (result.error) {
+    fail(`hdiutil attach could not run for ${dmgPath}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(`hdiutil attach failed (exit ${result.status}) for ${dmgPath}: ${detail}`);
+  }
+}
+
+function detachDmg(mountPoint) {
+  const result = spawnSync("hdiutil", ["detach", mountPoint], { encoding: "utf8" });
+  if (result.error) {
+    fail(`hdiutil detach could not run for ${mountPoint}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(`hdiutil detach failed (exit ${result.status}) for ${mountPoint}: ${detail}`);
+  }
+}
+
+function resolveBundle(input, tempRoot) {
+  const mountPoint = path.join(tempRoot, "mount");
+
+  if (input !== undefined) {
+    const target = path.resolve(input);
+    const extension = path.extname(target).toLowerCase();
+    if (extension === ".app") {
+      return { appPath: target, mountPoint: null };
+    }
+    if (extension === ".dmg") {
+      attachDmg(target, mountPoint);
+      return { appPath: path.join(mountPoint, APP_BUNDLE_NAME), mountPoint };
+    }
+    fail(`unsupported bundle path, expected .app or .dmg: ${target}`);
+  }
+
+  const defaultApp = path.resolve(DEFAULT_APP_PATH);
+  if (existsSync(defaultApp)) {
+    return { appPath: defaultApp, mountPoint: null };
+  }
+
+  const dmgPath = findUniqueDmg(path.resolve(DEFAULT_DMG_DIR));
+  attachDmg(dmgPath, mountPoint);
+  return { appPath: path.join(mountPoint, APP_BUNDLE_NAME), mountPoint };
 }
 
 function killChild(child) {
@@ -125,41 +196,48 @@ async function main() {
     return;
   }
 
-  const appPath = path.resolve(process.argv[2] ?? DEFAULT_APP_PATH);
-  requireDirectory(appPath, "app bundle");
-
-  const contentsDir = path.join(appPath, "Contents");
-  const resourcesDir = path.join(contentsDir, "Resources");
-  const appRoot = path.join(resourcesDir, "app");
-  const nodePath = path.join(contentsDir, "MacOS", "node");
-  const cliPath = path.join(appRoot, "dist", "control-plane", "cli.js");
-  const unexpectedResourceDir = path.join(resourcesDir, "_up_");
-
-  requireFile(nodePath, "bundled node sidecar");
-  requireFile(cliPath, "control plane CLI");
-  requireFile(path.join(appRoot, "package.json"), "staged runtime package.json");
-  requireDirectory(path.join(appRoot, "node_modules", "yaml"), "staged yaml dependency");
-  requireFile(path.join(appRoot, "constraints", "rules.yaml"), "staged constraints rules");
-  requireFile(path.join(appRoot, "dist", "console", "index.html"), "bundled console index");
-
-  if (existsSync(unexpectedResourceDir)) {
-    fail(`unexpected resource directory present: ${unexpectedResourceDir}`);
-  }
-
-  verifySignature(["--verify", "--strict", nodePath], "bundled node sidecar");
-  verifySignature(["--verify", "--deep", "--strict", appPath], "app bundle");
-
   const tempRoot = mkdtempSync(path.join(tmpdir(), "amos-tauri-verify-"));
-  const dataDir = path.join(tempRoot, "data");
-  const homeDir = path.join(tempRoot, "home");
-  mkdirSync(dataDir);
-  mkdirSync(homeDir);
-
   let child;
-  let stderr = "";
-  const deadline = Date.now() + SERVE_TIMEOUT_MS;
+  let mountPoint = null;
+  let appPath;
+  let primaryError = null;
 
   try {
+    const resolved = resolveBundle(process.argv[2], tempRoot);
+    appPath = resolved.appPath;
+    mountPoint = resolved.mountPoint;
+
+    requireDirectory(appPath, "app bundle");
+
+    const contentsDir = path.join(appPath, "Contents");
+    const resourcesDir = path.join(contentsDir, "Resources");
+    const appRoot = path.join(resourcesDir, "app");
+    const nodePath = path.join(contentsDir, "MacOS", "node");
+    const cliPath = path.join(appRoot, "dist", "control-plane", "cli.js");
+    const unexpectedResourceDir = path.join(resourcesDir, "_up_");
+
+    requireFile(nodePath, "bundled node sidecar");
+    requireFile(cliPath, "control plane CLI");
+    requireFile(path.join(appRoot, "package.json"), "staged runtime package.json");
+    requireDirectory(path.join(appRoot, "node_modules", "yaml"), "staged yaml dependency");
+    requireFile(path.join(appRoot, "constraints", "rules.yaml"), "staged constraints rules");
+    requireFile(path.join(appRoot, "dist", "console", "index.html"), "bundled console index");
+
+    if (existsSync(unexpectedResourceDir)) {
+      fail(`unexpected resource directory present: ${unexpectedResourceDir}`);
+    }
+
+    verifySignature(["--verify", "--strict", nodePath], "bundled node sidecar");
+    verifySignature(["--verify", "--deep", "--strict", appPath], "app bundle");
+
+    const dataDir = path.join(tempRoot, "data");
+    const homeDir = path.join(tempRoot, "home");
+    mkdirSync(dataDir);
+    mkdirSync(homeDir);
+
+    let stderr = "";
+    const deadline = Date.now() + SERVE_TIMEOUT_MS;
+
     child = spawn(nodePath, [cliPath, "serve", "--port", "0"], {
       cwd: dataDir,
       env: { PATH: MINIMAL_PATH, HOME: homeDir },
@@ -171,30 +249,51 @@ async function main() {
       if (stderr.length < 20_000) stderr += chunk;
     });
 
-    const url = await waitForConsoleUrl(child, () => stderr);
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      fail(`timed out after ${SERVE_TIMEOUT_MS}ms before fetching the console URL`);
-    }
-
-    let response;
     try {
-      response = await fetch(url, { signal: AbortSignal.timeout(remaining) });
+      const url = await waitForConsoleUrl(child, () => stderr);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        fail(`timed out after ${SERVE_TIMEOUT_MS}ms before fetching the console URL`);
+      }
+
+      let response;
+      try {
+        response = await fetch(url, { signal: AbortSignal.timeout(remaining) });
+      } catch (error) {
+        fail(`console URL did not respond: ${error.message}`);
+      }
+      if (response.status !== 200) {
+        fail(`console URL returned HTTP ${response.status}: ${url}`);
+      }
+      await response.arrayBuffer();
     } catch (error) {
-      fail(`console URL did not respond: ${error.message}`);
+      if (stderr.trim()) {
+        fail(`${error.message}\n${stderr.trim()}`);
+      }
+      throw error;
     }
-    if (response.status !== 200) {
-      fail(`console URL returned HTTP ${response.status}: ${url}`);
-    }
-    await response.arrayBuffer();
   } catch (error) {
-    if (stderr.trim()) {
-      fail(`${error.message}\n${stderr.trim()}`);
-    }
+    primaryError = error;
     throw error;
   } finally {
     if (child) await killChild(child);
-    rmSync(tempRoot, { recursive: true, force: true });
+
+    let cleanupError = null;
+    if (mountPoint !== null) {
+      try {
+        detachDmg(mountPoint);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+
+    if (cleanupError === null) {
+      rmSync(tempRoot, { recursive: true, force: true });
+    } else if (primaryError !== null) {
+      console.error(`verify-tauri-macos: ${cleanupError.message}`);
+    } else {
+      throw cleanupError;
+    }
   }
 
   console.log(`verify-tauri-macos: verified ${appPath}`);
