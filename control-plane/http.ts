@@ -416,6 +416,14 @@ export function createGovernanceServer(
       return;
     }
 
+    if (resource === 'harnesses') {
+      requirePath(segments, 2);
+      requireMethod(method, 'GET');
+      requireAnyActor(req);
+      sendJson(res, 200, service.discoverHarnesses());
+      return;
+    }
+
     if (resource === 'projects') {
       if (id === undefined) {
         if (method === 'GET') {

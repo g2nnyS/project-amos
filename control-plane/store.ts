@@ -2498,6 +2498,13 @@ class GovernanceControlPlane implements ControlPlane {
       throw new DomainError('closed');
     }
   }
+
+  discoverHarnesses(): import('./contracts.ts').HarnessDiscoveryResult {
+    return this.guard(() => {
+      const { discoverHarnessInstallations } = require('./harness-discovery.ts');
+      return deepFreeze(discoverHarnessInstallations());
+    });
+  }
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

@@ -594,6 +594,19 @@ export interface CreateControlPlaneOptions {
   readonly now?: () => number;
 }
 
+export interface HarnessInstallation {
+  readonly harness: HarnessId;
+  readonly path: string;
+  readonly version: string | null;
+  readonly amosPluginInstalled: boolean;
+  readonly amosPluginPath: string | null;
+}
+
+export interface HarnessDiscoveryResult {
+  readonly installations: readonly HarnessInstallation[];
+  readonly scannedPaths: readonly string[];
+}
+
 export interface ControlPlane {
   close(): void;
   listProjects(): Project[];
@@ -641,6 +654,7 @@ export interface ControlPlane {
     actor: Actor,
   ): ProjectConfigView;
   getRuntimeStatus(projectId: string): RuntimeStatus;
+  discoverHarnesses(): HarnessDiscoveryResult;
   applyTemporaryTightening(
     projectId: string,
     input: ApplyTemporaryTighteningInput,
