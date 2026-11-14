@@ -75,6 +75,10 @@
     0 8px 24px -18px hsl(220 20% 12% / 0.35);
   --shadow-pop: 0 16px 40px -24px hsl(220 25% 12% / 0.45),
     0 2px 6px hsl(220 25% 12% / 0.06);
+
+  /* Login overlay sits on a blurred shell; both values are theme-tuned. */
+  --login-scrim: 220 14% 98% / 0.16;
+  --login-dim: 0.84;
 }
 
 .dark {
@@ -133,6 +137,9 @@
     0 12px 30px -22px hsl(0 0% 0% / 0.6);
   --shadow-pop: 0 18px 44px -26px hsl(0 0% 0% / 0.75),
     0 2px 8px hsl(0 0% 0% / 0.4);
+
+  --login-scrim: 222 12% 9% / 0.2;
+  --login-dim: 0.78;
 }
 
 @theme inline {
@@ -275,6 +282,104 @@
   color: hsl(var(--muted-foreground));
 }
 
+/* The shell doubles as the backdrop for the login overlay: display: contents
+   keeps the authenticated flex layout byte-for-byte identical. */
+.shell-workspace {
+  display: contents;
+}
+
+.shell-skeleton {
+  display: grid;
+  gap: 14px;
+  padding: calc(var(--page-pad-y) + 8px) 0 0;
+}
+
+.shell-skeleton-head {
+  display: grid;
+  gap: 8px;
+}
+
+.shell-skeleton-title,
+.shell-skeleton-sub,
+.shell-skeleton-chips span,
+.shell-skeleton-band,
+.shell-skeleton-row {
+  display: block;
+  border-radius: 4px;
+  background: hsl(var(--foreground) / 0.13);
+}
+
+.shell-skeleton-title {
+  width: 176px;
+  height: 11px;
+}
+
+.shell-skeleton-sub {
+  width: 104px;
+  height: 8px;
+  background: hsl(var(--foreground) / 0.1);
+}
+
+.shell-skeleton-chips {
+  display: flex;
+  gap: 8px;
+}
+
+.shell-skeleton-chips span {
+  width: 62px;
+  height: 20px;
+  border-radius: 5px;
+  background: hsl(var(--foreground) / 0.07);
+}
+
+.shell-skeleton-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+}
+
+.shell-skeleton-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 150px;
+  padding: 14px;
+  border: 1px solid hsl(var(--foreground) / 0.18);
+  border-radius: 8px;
+  background: hsl(var(--foreground) / 0.08);
+}
+
+.shell-skeleton-panel-wide {
+  min-height: clamp(220px, 50vh, 440px);
+}
+
+.shell-skeleton-band {
+  width: 92px;
+  height: 9px;
+  margin-bottom: 2px;
+  background: hsl(var(--foreground) / 0.26);
+}
+
+.shell-skeleton-row {
+  width: 100%;
+  height: 8px;
+  background: hsl(var(--foreground) / 0.15);
+}
+
+.shell-skeleton-row-mid {
+  width: 82%;
+}
+
+.shell-skeleton-row-short {
+  width: 58%;
+}
+
+@media (max-width: 900px) {
+  .shell-skeleton-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .skip-link {
   position: absolute;
   top: -48px;
@@ -316,69 +421,11 @@
   width: var(--sidebar-w-collapsed);
 }
 
-.brand {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-  height: var(--topbar-h);
-  padding: 0 12px;
-  border-bottom: 1px solid hsl(var(--sidebar-border));
-  color: inherit;
-  text-decoration: none;
-}
-
-.brand-mark {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: linear-gradient(160deg, hsl(var(--sidebar-primary)), hsl(var(--sidebar-primary) / 0.72));
-  color: hsl(var(--sidebar-primary-foreground));
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  box-shadow: inset 0 0 0 1px hsl(0 0% 100% / 0.14);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.15;
-}
-
-.brand-name {
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.brand-sub {
-  overflow: hidden;
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-shell[data-collapsed="true"] .brand {
-  justify-content: center;
-  padding-inline: 0;
-}
-
-.app-shell[data-collapsed="true"] .brand-text {
-  display: none;
-}
-
 .sidebar-project {
   display: grid;
   flex: 0 0 auto;
   gap: 6px;
-  padding: 10px 10px 9px;
+  padding: 12px 10px 10px;
   border-bottom: 1px solid hsl(var(--sidebar-border));
 }
 
