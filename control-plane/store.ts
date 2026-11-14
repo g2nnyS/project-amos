@@ -27,6 +27,7 @@ import {
 } from '../rollout/contracts.ts';
 import { evaluatePromotion } from '../rollout/promote.ts';
 import type { ProjectActivationSnapshot } from '../activation/types.ts';
+import { discoverHarnessInstallations } from './harness-discovery.ts';
 import type {
   Actor,
   AuditPage,
@@ -2501,7 +2502,6 @@ class GovernanceControlPlane implements ControlPlane {
 
   discoverHarnesses(): import('./contracts.ts').HarnessDiscoveryResult {
     return this.guard(() => {
-      const { discoverHarnessInstallations } = require('./harness-discovery.ts');
       return deepFreeze(discoverHarnessInstallations());
     });
   }
