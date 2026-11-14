@@ -31,7 +31,7 @@ jobs:
             platform: linux-x64
             arch: x86_64-unknown-linux-gnu
             artifacts: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-          - os: ubuntu-24.04-arm64
+          - os: ubuntu-24.04-arm
             platform: linux-arm64
             arch: aarch64-unknown-linux-gnu
             artifacts: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
