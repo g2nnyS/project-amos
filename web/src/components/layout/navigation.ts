@@ -1,4 +1,4 @@
-import { LayoutDashboard, ListChecks, FilePenLine, GitPullRequest, History, ScrollText, Eye, FlaskConical, Settings } from 'lucide-vue-next'
+import { LayoutDashboard, ListChecks, FilePenLine, GitPullRequest, History, ScrollText, Eye, FlaskConical, ServerCog, Settings } from 'lucide-vue-next'
 
 export interface NavItem { label: string; to: string; icon: typeof LayoutDashboard }
 export interface NavSection { label: string; items: NavItem[] }
@@ -25,6 +25,7 @@ export const navSections: NavSection[] = [
     items: [
       { label: '观察记录', to: '/observations', icon: Eye },
       { label: '动作模拟', to: '/simulate', icon: FlaskConical },
+      { label: 'Harness 探测', to: '/harnesses', icon: ServerCog },
       { label: '设置', to: '/settings', icon: Settings },
     ],
   },
