@@ -67,5 +67,16 @@ export interface HarnessRuntimeStatus {
   /** Latest load report per harness, not every running session. */
   harnesses: Record<HarnessId, HarnessRuntimeObservation>
 }
+export interface HarnessInstallation {
+  harness: HarnessId
+  path: string
+  version: string | null
+  amosPluginInstalled: boolean
+  amosPluginPath: string | null
+}
+export interface HarnessDiscoveryResult {
+  installations: readonly HarnessInstallation[]
+  scannedPaths: readonly string[]
+}
 export type ToastVariant = 'success' | 'error' | 'info'
 export interface ToastItem { id: string; title: string; description?: string; variant: ToastVariant }

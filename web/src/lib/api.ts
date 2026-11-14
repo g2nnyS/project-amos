@@ -159,6 +159,7 @@ export class ApiClient {
   restore(id: string, version: number, input: CreateRollbackProposalInput): Promise<Proposal> { return this.json(`/api/projects/${pathId(id)}/versions/${pathId(version)}/restore`, 'POST', input) }
   audit(query: AuditQuery = {}): Promise<AuditPage> { const params = new URLSearchParams(); if (query.projectId !== undefined) params.set('projectId', query.projectId); if (query.limit !== undefined) params.set('limit', String(query.limit)); if (query.before !== undefined) params.set('before', String(query.before)); return this.json(`/api/audit${params.size ? `?${params}` : ''}`) }
   observations(): Promise<ObservationReport> { return this.json('/api/audit/observations') }
+  discoverHarnesses(): Promise<import('../types/index.js').HarnessDiscoveryResult> { return this.json('/api/harnesses') }
   simulate(id: string, input: SimulateInput): Promise<PolicyDecision> { return this.json(`/api/projects/${pathId(id)}/simulate`, 'POST', input) }
   async exportVersion(id: string, version: number, format: 'yaml' | 'json'): Promise<void> {
     if (format !== 'yaml' && format !== 'json') throw new ApiError('invalid_format', '导出格式无效。')
