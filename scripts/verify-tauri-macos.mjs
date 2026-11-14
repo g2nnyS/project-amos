@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -196,7 +197,7 @@ async function main() {
     return;
   }
 
-  const tempRoot = mkdtempSync(path.join(tmpdir(), "amos-tauri-verify-"));
+  const tempRoot = mkdtempSync(path.join(realpathSync(tmpdir()), "amos-tauri-verify-"));
   let child;
   let mountPoint = null;
   let appPath;
