@@ -19,8 +19,8 @@ npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 服务仅接受 `http://127.0.0.1:<port>`，不要改用 localhost、局域网地址或反向代理。默认端口 4310；端口占用时用 `--port` 指定其他端口。前端使用 hash 路由，刷新治理页面不会依赖服务器开放任意 SPA 路径。
 若浏览器在另一台机器，可由人类在浏览器所在机器建立 `ssh -N -L 4310:127.0.0.1:4310 user@server` 隧道，再打开 `http://127.0.0.1:4310`；两端端口须一致以保留 Host/Origin 校验，不要为远程预览改成公网监听。
 默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。
-首次打开先设置并确认 12 至 1024 字符的登录密码。Electron 桌面启动提供 10 分钟的一次性设置授权，无需手动输入 token；独立浏览器首次设置需用本机 `human.token` 验证身份。后续默认密码登录，token 保留为恢复登录入口。浏览器不保存密码、token 或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。
-桌面还支持能力检测后的系统认证：macOS Touch ID；Linux 安装 Amos 专用 polkit action 后调用系统原生验证，安装步骤见 [桌面文档](../electron/README.md)。系统密码由系统对话框处理。缺少能力时隐藏该方式，Windows 暂显示密码与 token。登录不代替逐项治理审批。不要把凭据贴到聊天、URL 或日志。
+首次打开先设置并确认 12 至 1024 字符的登录密码。Tauri 桌面启动通过私有 IPC 启动器提供 10 分钟的一次性设置授权，无需手动输入 token；后续使用密码登录。应用不保存密码明文或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。Agent 使用独立 Bearer token，与桌面人类密码会话分离。
+桌面登录只提供密码方式。登录不代替逐项治理审批。不要把凭据贴到聊天、URL 或日志。
 令牌文件须属当前用户且权限 0600，目录须为 0700；现有权限错误、符号链接或损坏状态会拒绝启动，不自动删除或重置。
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
 

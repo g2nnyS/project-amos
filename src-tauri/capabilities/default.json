@@ -1,1 +1,10 @@
-[]
+{
+  "identifier": "desktop-loopback",
+  "description": "Loopback console document for the desktop window.",
+  "windows": ["main"],
+  "local": false,
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["allow-get-setup-grant"]
+}

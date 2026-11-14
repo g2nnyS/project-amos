@@ -41,17 +41,8 @@
     }
   },
   "app": {
-    "windows": [
-      {
-        "title": "Amos 控制台",
-        "width": 1440,
-        "height": 960,
-        "minWidth": 1024,
-        "minHeight": 680,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "withGlobalTauri": true,
+    "windows": [],
     "security": {
       "csp": null
     }

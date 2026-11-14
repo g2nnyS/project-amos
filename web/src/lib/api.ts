@@ -106,7 +106,7 @@ export class ApiClient {
     else {
       const grant = await this.getSetupGrant()
       if (epoch !== this.generation) throw stale()
-      if (!grant) throw new ApiError('enrollment_required', '请使用一次性 human token 或系统认证完成身份验证。')
+      if (!grant) throw new ApiError('enrollment_required', '桌面启动授权不可用或已过期，请重启应用后重试。')
       identity = { setupGrant: grant }
     }
     const result = await this.finishAuthentication('/api/setup', { password, ...identity }, epoch)
