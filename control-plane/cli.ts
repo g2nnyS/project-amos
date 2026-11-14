@@ -474,6 +474,8 @@ export interface ServeOptions extends CliPathOptions {
   readonly now?: () => number;
   /** Test injection; defaults to dist/console from the checkout root. */
   readonly staticDir?: string;
+  /** Test injection for the one-time desktop setup grant; ignored unless 64 hex. */
+  readonly setupGrant?: string;
 }
 
 export interface ServeHandle {
@@ -495,7 +497,9 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
   const desktop = typeof process.send === 'function';
   const systemAuth = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SYSTEM_AUTH_SECRET ?? '') && env.AMOS_SYSTEM_AUTH_LABEL
     ? { secret: env.AMOS_SYSTEM_AUTH_SECRET!, label: env.AMOS_SYSTEM_AUTH_LABEL } : undefined;
-  const setupGrant = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
+  const setupGrant = /^[a-f0-9]{64}$/.test(options.setupGrant ?? '')
+    ? options.setupGrant
+    : desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
   const managedAuditDir = join(paths.dataDir, 'managed-audit');
   await ensurePrivateDirectory(managedAuditDir);
 

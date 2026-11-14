@@ -4,8 +4,13 @@
  *
  * It starts the real compiled CLI server (dist/control-plane/cli.js) with a
  * brand-new temporary data directory and synthetic in-process credentials, then
- * drives /usr/bin/chromium through the DevTools pipe protocol. No application
- * hooks, store injection, mocked API responses or reused user state are used.
+ * drives /usr/bin/chromium through the DevTools pipe protocol. The real UI,
+ * real password storage and real server sessions are exercised; API responses,
+ * stores and user state are never mocked.
+ *
+ * Desktop-only first-run setup is simulated by installing a minimal read-only
+ * `window.amosDesktop` bridge (isDesktop plus a single-use getSetupGrant) and a
+ * synthetic one-time setup grant, both of which exist only in this test process.
  *
  * Run from the repository root after `npm run build`:
  *   node web/e2e/smoke.mjs
@@ -16,6 +21,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -101,6 +107,8 @@ try {
     human: 'e2e-human-synthetic-token-0123456789abcdef',
     agent: 'e2e-agent-synthetic-token-0123456789abcdef',
   }
+  // One-time desktop setup authorization; only the hash is kept by the server.
+  const setupGrant = randomBytes(32).toString('hex')
   let tokenIndex = 0
   server = await startServe({
     rootDir: repoRoot,
@@ -108,6 +116,7 @@ try {
     workspace: repoRoot,
     staticDir,
     port: 0,
+    setupGrant,
     tokenFactory: () => (tokenIndex++ === 0 ? synthetic.human : synthetic.agent),
   })
   token = synthetic.human
@@ -281,6 +290,18 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', {
     source: `window.__amosCspViolations = []; window.addEventListener('securitypolicyviolation', (event) => { window.__amosCspViolations.push({ directive: event.violatedDirective, blockedURI: event.blockedURI }); });`,
   })
+  // Minimal synthetic desktop bridge: the production UI reads only isDesktop
+  // and a single-use getSetupGrant; neither value is written to evidence.
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => {
+      let grant = ${q(setupGrant)};
+      const bridge = Object.freeze({
+        isDesktop: true,
+        getSetupGrant: () => { const value = grant; grant = null; return Promise.resolve(value); },
+      });
+      Object.defineProperty(window, 'amosDesktop', { value: bridge, writable: false, configurable: false, enumerable: true });
+    })();`,
+  })
   await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir, eventsEnabled: true }, null)
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
   await send('Page.navigate', { url: `${server.url}/` })
@@ -360,9 +381,14 @@ try {
   const harnessCardText = (name) =>
     `(Array.from(document.querySelectorAll('article')).find(e => e.querySelector('h3')?.textContent.trim() === ${q(name)})?.innerText ?? '')`
 
-  await check('first launch enrolls a password with one-time human verification', async () => {
+  await check('first launch sets a desktop password through the one-time setup grant', async () => {
     await waitFor(`document.querySelector('h1')?.textContent.includes('设置登录密码')`)
+    await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2`)
     assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="current-password"]')`), false)
+    assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="off"]')`), false)
+    const bodyText = await evaluate('document.body.innerText')
+    assert.equal(/human\s*token/i.test(bodyText), false, 'setup page still mentions a human token')
+    assert.equal(/token\s*恢复/i.test(bodyText), false, 'setup page still offers token recovery')
     await screenshot('desktop-password-setup')
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
@@ -370,12 +396,11 @@ try {
     await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
     await setBySelector('input[autocomplete="new-password"]', password)
     await setByLabel('确认密码', password + '-mismatch')
-    await setBySelector('input[autocomplete="off"]', token)
     await click('button', '设置密码')
     await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
     await setByLabel('确认密码', password)
     await click('button', '设置密码')
-    await waitFor(`${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
     const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)
     assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
