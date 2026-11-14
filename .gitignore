@@ -14,6 +14,9 @@ decision/jev.local.json
 # END oh-my-opencode-slim worktrees
 
 # Tauri build artifacts
+src-tauri/.runtime/
+src-tauri/binaries/
+src-tauri/gen/
 src-tauri/target/
 src-tauri/Cargo.lock
 *.AppImage

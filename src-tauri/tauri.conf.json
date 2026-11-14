@@ -5,7 +5,7 @@
   "identifier": "dev.amos.console",
   "build": {
     "beforeDevCommand": "npm run console:serve",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run tauri:prepare",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../dist/console"
   },
@@ -19,11 +19,19 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../dist/**/*",
-      "../constraints/**/*",
-      "../guidance/**/*"
-    ],
+    "externalBin": ["binaries/node"],
+    "resources": {
+      "../dist/": "app/dist/",
+      "../constraints/": "app/constraints/",
+      "../guidance/": "app/guidance/",
+      ".runtime/package.json": "app/package.json",
+      ".runtime/node_modules/": "app/node_modules/"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist"
+    },
     "linux": {
       "appimage": {
         "bundleMediaFramework": false

@@ -166,21 +166,14 @@ npm run tauri build -- --target aarch64-unknown-linux-gnu
 
 ## 资源打包
 
-构建时自动打包：
-- `dist/` - 编译后的TypeScript代码和Web资源
-- `constraints/` - YAML规则定义
-- `guidance/` - 注入指导文本
+构建时自动执行 `tauri:prepare` 并打包：
+- `dist/` - 编译后的 TypeScript 代码和 Web 资源，位于 `Resources/app/dist/`
+- `constraints/` - YAML 规则定义，位于 `Resources/app/constraints/`
+- `guidance/` - 注入指导文本，位于 `Resources/app/guidance/`
+- `.runtime/` - 最小 ESM `package.json` 与生产依赖闭包，位于 `Resources/app/`
+- `binaries/node-<target>` - 当前构建平台的 Node.js sidecar，由 Tauri 放入主程序目录并签名
 
-运行时路径解析：
-```rust
-// 开发模式: 项目根目录
-#[cfg(debug_assertions)]
-let working_dir = project_root;
-
-// 生产模式: 可执行文件旁边
-#[cfg(not(debug_assertions))]
-let working_dir = exe_parent_dir;
-```
+运行时通过 Tauri `resource_dir()` 定位后端，通过主程序目录定位 Node.js。后端工作目录使用 `app_data_dir()`，不会写入已签名的应用包。开发模式使用项目根目录和 PATH 中的 Node.js。
 
 ## 调试
 
@@ -207,8 +200,17 @@ sudo apt-get install libwebkit2gtk-4.1-dev
 Windows 10需要WebView2运行时，会在首次运行时自动下载。或手动下载：
 https://developer.microsoft.com/microsoft-edge/webview2/
 
-### macOS: 代码签名问题
-开发模式不需要签名。生产构建需要Apple Developer证书。
+### macOS: 代码签名与包体验证
+
+默认使用 ad-hoc 身份 `-` 签署应用和 Node.js sidecar，适用于本地结构与启动验证。正式分发时在 macOS 钥匙串中安装 Developer ID Application 证书，并设置：
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <团队名称> (<团队ID>)"
+npm run tauri:build
+node scripts/verify-tauri-macos.mjs
+```
+
+环境变量会覆盖配置中的 ad-hoc 身份。公证还需要 Apple ID 或 App Store Connect API 凭据；CI 对应的证书、公证变量见 `.github/workflows/tauri-package.yml`。
 
 ### 构建体积仍然很大
 确保使用release模式：
@@ -224,7 +226,7 @@ Debug构建会包含符号信息，体积大10倍以上。
 |------|----------|-------|
 | 渲染引擎 | 捆绑Chromium | 系统WebView |
 | 后端语言 | Node.js | Rust (调用Node.js) |
-| 包体积 | 120-130 MB | 3-10 MB |
+| 包体积 | 120-130 MB | 包含 Node.js sidecar，随平台变化 |
 | 启动速度 | 慢 | 快 |
 | 内存占用 | 高 | 低 |
 | 安全性 | 好 | 更好 |

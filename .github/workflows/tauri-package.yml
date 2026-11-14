@@ -75,14 +75,53 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build backend and console
-        run: npm run build
-
       - name: Build Tauri app
-        run: npm run tauri build ${{ matrix.arch && format('-- --target {0}', matrix.arch) || '' }}
+        shell: bash
         env:
-          # Build unsigned installers; signing credentials are not available to CI
-          TAURI_SIGNING_PRIVATE_KEY: ''
+          # beforeBuildCommand runs the backend and console build plus runtime staging.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_PROVIDER_SHORT_NAME: ${{ secrets.APPLE_PROVIDER_SHORT_NAME }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
+              if [[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]]; then
+                echo "::error::APPLE_CERTIFICATE_PASSWORD is required when APPLE_CERTIFICATE is set"
+                exit 1
+              fi
+              if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+                echo "::error::APPLE_SIGNING_IDENTITY is required when APPLE_CERTIFICATE is set"
+                exit 1
+              fi
+              if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
+                echo "::error::KEYCHAIN_PASSWORD is required when APPLE_CERTIFICATE is set"
+                exit 1
+              fi
+              [[ -n "${APPLE_ID:-}" ]] || unset APPLE_ID
+              [[ -n "${APPLE_PASSWORD:-}" ]] || unset APPLE_PASSWORD
+              [[ -n "${APPLE_PROVIDER_SHORT_NAME:-}" ]] || unset APPLE_PROVIDER_SHORT_NAME
+            else
+              unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_PROVIDER_SHORT_NAME
+              export APPLE_SIGNING_IDENTITY=-
+            fi
+          fi
+
+          if [[ -n "${{ matrix.arch }}" ]]; then
+            npm run tauri -- build --target "${{ matrix.arch }}"
+          else
+            npm run tauri -- build
+          fi
+
+      - name: Verify macOS bundle
+        if: runner.os == 'macOS'
+        run: node scripts/verify-tauri-macos.mjs
 
       - name: Upload installers
         uses: actions/upload-artifact@v4

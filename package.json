@@ -22,7 +22,8 @@
     "check:gate": "npm run build && node dist/check/cli.js",
     "tauri": "tauri",
     "tauri:dev": "npm run build && tauri dev",
-    "tauri:build": "npm run build && tauri build"
+    "tauri:prepare": "node scripts/prepare-tauri-runtime.mjs",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "ajv": "^8.20.0",
