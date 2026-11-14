@@ -21,7 +21,7 @@ fn get_service_url(state: State<ServiceState>) -> Result<String, String> {
     Ok("http://127.0.0.1:3000".to_string())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, target_os = "linux"))]
 fn find_node_on_path() -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
@@ -44,12 +44,18 @@ fn control_plane_paths(_app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), 
 
 #[cfg(not(debug_assertions))]
 fn control_plane_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let exe_path =
-        std::env::current_exe().map_err(|e| format!("Failed to get executable path: {}", e))?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("Failed to get executable directory")?;
-    let node_path = exe_dir.join(NODE_BIN);
+    #[cfg(target_os = "linux")]
+    let node_path = find_node_on_path()
+        .ok_or("Node.js 26 or later is required; executable 'node' was not found on PATH")?;
+    #[cfg(not(target_os = "linux"))]
+    let node_path = {
+        let exe_path =
+            std::env::current_exe().map_err(|e| format!("Failed to get executable path: {}", e))?;
+        let exe_dir = exe_path
+            .parent()
+            .ok_or("Failed to get executable directory")?;
+        exe_dir.join(NODE_BIN)
+    };
     let cli_path = app
         .path()
         .resource_dir()

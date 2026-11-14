@@ -54,31 +54,21 @@ function listProductionClosure() {
   return [...entries].sort();
 }
 
-function hasGlibc() {
-  try {
-    return Boolean(process.report?.getReport?.()?.header?.glibcVersionRuntime);
-  } catch {
-    return false;
-  }
-}
-
 function hostTargetTriple() {
   const { platform, arch } = process;
 
   if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
   if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
   if (platform === "win32" && arch === "x64") return "x86_64-pc-windows-msvc";
-  if (platform === "linux" && (arch === "x64" || arch === "arm64")) {
-    const prefix = arch === "x64" ? "x86_64" : "aarch64";
-    return `${prefix}-unknown-linux-${hasGlibc() ? "gnu" : "musl"}`;
-  }
 
   fail(`unsupported host for Tauri runtime staging: ${platform}/${arch}`);
 }
 
 function copyNodeSidecar() {
-  const triple = hostTargetTriple();
   rmSync(binariesDir, { recursive: true, force: true });
+  if (process.platform === "linux") return null;
+
+  const triple = hostTargetTriple();
   mkdirSync(binariesDir, { recursive: true });
 
   const fileName = `node-${triple}${process.platform === "win32" ? ".exe" : ""}`;
@@ -134,7 +124,11 @@ const nodeSidecar = copyNodeSidecar();
 const dependencyCount = verifyDirectDependencies();
 
 console.log(`prepare-tauri-runtime: staged ${packages.length} packages into ${runtimeDir}`);
-console.log(`prepare-tauri-runtime: node sidecar at ${nodeSidecar}`);
+console.log(
+  nodeSidecar
+    ? `prepare-tauri-runtime: node sidecar at ${nodeSidecar}`
+    : "prepare-tauri-runtime: Linux uses Node.js 26+ from PATH",
+);
 console.log(
   `prepare-tauri-runtime: ${dependencyCount} direct production dependencies resolve from staging`,
 );

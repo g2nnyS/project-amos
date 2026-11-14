@@ -118,7 +118,7 @@ npm run tauri:build
 ```
 
 输出位置：
-- Linux: `src-tauri/target/release/bundle/appimage/`
+- Linux: `src-tauri/target/release/bundle/appimage/` 和 `src-tauri/target/release/bundle/deb/`
 - Windows: `src-tauri/target/release/bundle/nsis/`
 - macOS: `src-tauri/target/release/bundle/dmg/`
 
@@ -171,9 +171,9 @@ npm run tauri build -- --target aarch64-unknown-linux-gnu
 - `constraints/` - YAML 规则定义，位于 `Resources/app/constraints/`
 - `guidance/` - 注入指导文本，位于 `Resources/app/guidance/`
 - `.runtime/` - 最小 ESM `package.json` 与生产依赖闭包，位于 `Resources/app/`
-- `binaries/node-<target>` - 当前构建平台的 Node.js sidecar，由 Tauri 放入主程序目录并签名
+- `binaries/node-<target>` - macOS 和 Windows 的 Node.js sidecar，由 Tauri 放入主程序目录；macOS 会同时签名
 
-运行时通过 Tauri `resource_dir()` 定位后端，通过主程序目录定位 Node.js。后端工作目录使用 `app_data_dir()`，不会写入已签名的应用包。开发模式使用项目根目录和 PATH 中的 Node.js。
+运行时通过 Tauri `resource_dir()` 定位后端。macOS 和 Windows 从主程序目录定位 Node.js；Linux 使用 PATH 中的 Node.js 26+，Deb 包声明 `nodejs (>= 26)` 依赖，AppImage 需要用户预先安装。后端工作目录使用 `app_data_dir()`，不会写入已签名的应用包。开发模式使用项目根目录和 PATH 中的 Node.js。
 
 ## 调试
 
@@ -226,7 +226,7 @@ Debug构建会包含符号信息，体积大10倍以上。
 |------|----------|-------|
 | 渲染引擎 | 捆绑Chromium | 系统WebView |
 | 后端语言 | Node.js | Rust (调用Node.js) |
-| 包体积 | 120-130 MB | 包含 Node.js sidecar，随平台变化 |
+| 包体积 | 120-130 MB | Linux 使用系统 Node.js；macOS/Windows 包含 sidecar |
 | 启动速度 | 慢 | 快 |
 | 内存占用 | 高 | 低 |
 | 安全性 | 好 | 更好 |
