@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { LogOut, Monitor, Moon, ShieldAlert, Sun } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -65,8 +65,34 @@ const sections = [
   { id: 'pref-harness', label: 'Harness 全局默认' },
   { id: 'pref-appearance', label: '外观' },
   { id: 'pref-session', label: '会话与边界' },
-  { id: 'pref-jev', label: 'Jev 应用内设置' }
+  { id: 'pref-jev', label: 'Jev 应用内设置' },
+  { id: 'pref-about', label: '关于' }
 ]
+const activeSection = ref('pref-harness')
+const sectionNav = ref<HTMLElement | null>(null)
+
+function focusSectionTab(id: string) {
+  void nextTick(() => {
+    const tab = sectionNav.value?.querySelector<HTMLElement>(`[data-section-id="${id}"]`)
+    tab?.focus()
+    tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+}
+
+function onSectionKeydown(event: KeyboardEvent, index: number) {
+  const last = sections.length - 1
+  let next = -1
+  if (event.key === 'ArrowRight') next = index === last ? 0 : index + 1
+  else if (event.key === 'ArrowLeft') next = index === 0 ? last : index - 1
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = last
+  if (next < 0) return
+  event.preventDefault()
+  const id = sections[next].id
+  activeSection.value = id
+  focusSectionTab(id)
+}
+const developmentCommit = __AMOS_DEV_COMMIT__
 const pillClass = 'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium'
 const roleLabel = computed(() => auth.session?.role === 'human' ? '人类' : auth.session?.role === 'agent' ? 'Agent' : '已认证')
 const sessionToneClass = computed(() => auth.authenticated
@@ -92,10 +118,6 @@ const jevStateClass = computed(() => ({
   positive: 'border-positive/30 bg-positive/5 text-positive',
   muted: 'border-border bg-muted/40 text-muted-foreground'
 })[jevStateTone.value])
-
-function jumpTo(id: string) {
-  document.getElementById(id)?.scrollIntoView({ block: 'start' })
-}
 
 function applyJev(view: JevSettingsView) {
   jev.value = view
@@ -182,13 +204,21 @@ async function testJev() {
     </PageHeader>
 
     <nav aria-label="设置分区" class="settings-sections scroll-thin -mx-1 mb-5 flex items-start overflow-x-auto overscroll-x-contain px-1 py-1">
-      <div class="segmented w-max">
+      <div ref="sectionNav" class="segmented w-max" role="tablist">
         <button
-          v-for="item in sections"
+          v-for="(item, index) in sections"
+          :id="`${item.id}-tab`"
           :key="item.id"
           type="button"
+          role="tab"
           class="segmented-item whitespace-nowrap"
-          @click="jumpTo(item.id)"
+          :data-section-id="item.id"
+          :data-active="activeSection === item.id"
+          :aria-selected="activeSection === item.id"
+          :aria-controls="item.id"
+          :tabindex="activeSection === item.id ? 0 : -1"
+          @click="activeSection = item.id"
+          @keydown="onSectionKeydown($event, index)"
         >
           {{ item.label }}
         </button>
@@ -196,7 +226,7 @@ async function testJev() {
     </nav>
 
     <div class="grid gap-4">
-      <section id="pref-harness" class="panel scroll-mt-4" aria-labelledby="pref-harness-title">
+      <section v-show="activeSection === 'pref-harness'" id="pref-harness" class="panel" role="tabpanel" aria-labelledby="pref-harness-tab">
         <div class="panel-header">
           <div>
             <h2 id="pref-harness-title" class="panel-title">Amos Harness 全局默认</h2>
@@ -253,7 +283,7 @@ async function testJev() {
         </div>
       </section>
 
-      <section id="pref-appearance" class="panel scroll-mt-4" aria-labelledby="pref-appearance-title">
+      <section v-show="activeSection === 'pref-appearance'" id="pref-appearance" class="panel" role="tabpanel" aria-labelledby="pref-appearance-tab">
         <div class="panel-header">
           <div>
             <h2 id="pref-appearance-title" class="panel-title">外观</h2>
@@ -295,7 +325,7 @@ async function testJev() {
         </div>
       </section>
 
-      <section id="pref-session" class="panel scroll-mt-4" aria-labelledby="pref-session-title">
+      <section v-show="activeSection === 'pref-session'" id="pref-session" class="panel" role="tabpanel" aria-labelledby="pref-session-tab">
         <div class="panel-header">
           <div>
             <h2 id="pref-session-title" class="panel-title">会话与边界</h2>
@@ -326,7 +356,7 @@ async function testJev() {
         </div>
       </section>
 
-      <section id="pref-jev" class="panel scroll-mt-4" aria-labelledby="pref-jev-title">
+      <section v-show="activeSection === 'pref-jev'" id="pref-jev" class="panel" role="tabpanel" aria-labelledby="pref-jev-tab">
         <div class="panel-header">
           <div>
             <h2 id="pref-jev-title" class="panel-title">Jev 应用内设置</h2>
@@ -391,6 +421,38 @@ async function testJev() {
           </div>
         </div>
       </section>
+
+      <section v-show="activeSection === 'pref-about'" id="pref-about" class="panel" role="tabpanel" aria-labelledby="pref-about-tab">
+        <div class="panel-header">
+          <div>
+            <h2 id="pref-about-title" class="panel-title">关于</h2>
+            <p class="panel-kicker">本地桌面治理工作区与项目信息。</p>
+          </div>
+        </div>
+        <dl class="divide-y divide-hairline text-[12.5px]">
+          <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
+            <dt class="shrink-0 text-muted-foreground">项目</dt>
+            <dd class="text-right font-medium text-foreground">Amos Console</dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
+            <dt class="shrink-0 text-muted-foreground">简介</dt>
+            <dd class="max-w-[26rem] text-right leading-relaxed text-foreground">用于本地规则、提案、版本与治理审计的桌面工作区。</dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
+            <dt class="shrink-0 text-muted-foreground">版本</dt>
+            <dd class="tabular min-w-0 text-right text-foreground">开发测试版 · <span class="font-mono text-[11.5px]">{{ developmentCommit }}</span></dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
+            <dt class="shrink-0 text-muted-foreground">开源协议</dt>
+            <dd class="text-right text-foreground">Apache License 2.0</dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
+            <dt class="shrink-0 text-muted-foreground">项目仓库</dt>
+            <dd class="min-w-0 truncate text-right font-mono text-[11.5px] text-foreground">github.com/g2nnyS/project-amos</dd>
+          </div>
+        </dl>
+        <p class="border-t border-hairline px-4 py-2.5 text-[10.5px] text-muted-foreground">版权所有 © 2026 Amos maintainers</p>
+      </section>
     </div>
   </div>
 </template>
@@ -404,8 +466,12 @@ async function testJev() {
   letter-spacing: 0.01em;
 }
 
-.settings-sections .segmented-item:hover {
+.settings-sections .segmented-item:not([data-active='true']):hover {
   background: hsl(var(--accent));
+}
+
+.settings-sections .segmented-item[data-active='true']:hover {
+  background: hsl(var(--card));
 }
 </style>
 
