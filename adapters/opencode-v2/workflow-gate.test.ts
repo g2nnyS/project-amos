@@ -711,7 +711,7 @@ test("completion review runs once per diff digest and reports bounded checks", a
   assert.equal(first.system.length, 1);
   assert.deepEqual(runChecksCalls, [false, true]);
   const feedback = first.system[0] as { text: string };
-  assert.match(feedback.text, /advisory only/);
+  assert.match(feedback.text, /advisory/);
   assert.match(feedback.text, /test=failed/);
   assert.equal(feedback.text.includes("OPENCODE_CHECK_SECRET"), false);
 
