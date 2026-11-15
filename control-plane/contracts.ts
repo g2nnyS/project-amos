@@ -602,9 +602,22 @@ export interface HarnessInstallation {
   readonly amosPluginPath: string | null;
 }
 
+export interface HarnessDiscoveryItem {
+  readonly id: string;
+  readonly name: string;
+  readonly support: 'current' | 'future';
+  readonly supportNote: string | null;
+  readonly detected: boolean;
+  readonly managed: boolean;
+  readonly path: string | null;
+  readonly version: string | null;
+  readonly amosPluginPath: string | null;
+}
+
 export interface HarnessDiscoveryResult {
   readonly installations: readonly HarnessInstallation[];
   readonly scannedPaths: readonly string[];
+  readonly harnesses: readonly HarnessDiscoveryItem[];
 }
 
 export interface ControlPlane {

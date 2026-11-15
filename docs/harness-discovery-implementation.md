@@ -1,102 +1,115 @@
-# Harness 探测功能实现总结
+# Harness 探测功能实现
 
 ## 功能概述
 
-在治理台添加了本地 Harness 安装探测功能，可以：
-1. 自动扫描常见的 Pi 和 OpenCode 安装路径
-2. 检测每个 Harness 是否安装了 Amos 插件
-3. 在 Web 界面展示探测结果，区分受管理和未管理的 Harness
+治理台提供本地 Harness 安装探测，并在一个目录中展示：
 
-## 实现内容
+- 当前支持的 Pi、OpenCode 和 Oh My Pi；
+- 未来预期支持的 Codex、Claude Code 和 DSH；
+- 每项独立的“已探测到”和“已受到管理”状态；
+- 未探测到项的灰色展示，以及支持说明、版本、安装路径和 Amos 插件路径等可用详情。
 
-### 1. 后端实现
+Oh My Pi 复用 Pi 适配器。仓库已记录 Oh My Pi 18.12.6 的 Pi 扩展 API 兼容验证；目录中的“Pi 兼容，使用 Pi 适配器”描述这一接入方式，不引入独立运行适配器。
 
-#### `control-plane/harness-discovery.ts`
-- 实现 `discoverHarnessInstallations()` 函数
-- 扫描常见安装路径：
-  - Pi: `~/.pi`, `~/.local/share/pi`, `/opt/pi`, `/usr/local/pi`
-  - OpenCode: `~/.opencode`, `~/.config/opencode`, `~/.local/share/opencode`, `/opt/opencode`, `/usr/local/opencode`
-- 检测 Harness 特征文件判断是否为有效安装
-- 检测 Amos 插件标记：
-  - Pi: `node_modules/@amos/pi-plugin`, `extensions/amos`, `.pi-extensions/amos`
-  - OpenCode: `plugins/amos`, `.opencode/plugins/amos`
-- 尝试读取版本信息（从 package.json、version.json 或 VERSION 文件）
-- 优雅处理文件系统权限错误
+Claude Code 和 DSH 仅参与探测。DSH 的未来接入形式为 DSH 插件。Codex、Claude Code、DSH 均不加入 `HarnessId` 或运行时报告。
 
-#### `control-plane/contracts.ts`
-- 添加 `HarnessInstallation` 接口
-- 添加 `HarnessDiscoveryResult` 接口
-- 在 `ControlPlane` 接口添加 `discoverHarnesses()` 方法
+“已受到管理”表示探测到了当前 Pi/OpenCode 配置根中的 Amos 插件标记。它是文件系统快照，不表示插件已加载，也不表示 Harness 正在 enforcing 模式运行。项目级加载报告继续由 `GET /api/projects/:id/runtime` 提供。
 
-#### `control-plane/store.ts`
-- 实现 `discoverHarnesses()` 方法，调用探测逻辑并返回冻结的结果
+## 后端实现
 
-#### `control-plane/http.ts`
-- 添加 `GET /api/harnesses` 路由
-- 需要认证访问
-- 返回探测结果 JSON
+### `control-plane/harness-discovery.ts`
 
-#### 测试
-- `control-plane/harness-discovery.test.ts`: 验证数据结构和错误处理
+`discoverHarnessInstallations()` 执行只读、纯文件系统探测，不启动 Harness 或执行其版本命令。
 
-### 2. 前端实现
+安装发现来源包括：
 
-#### `web/src/types/index.ts`
-- 导出 `HarnessInstallation` 和 `HarnessDiscoveryResult` 类型
+1. 调用进程 `PATH` 中的 `pi`、`opencode`、`codex`、`claude`、`dsh` 和 `omp`；
+2. 常见补充位置：`~/.local/bin`、`~/.local/share/mise/shims` 和 `~/.local/share/mise/command-wrappers/bin`；
+3. 常见安装、配置和数据候选目录；DSH 同时支持 `$DSH_HOME`，默认使用 `~/.dsh`。
 
-#### `web/src/lib/api.ts`
-- 添加 `discoverHarnesses()` API 客户端方法
+Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`，Oh My Pi 使用 `omp`。
 
-#### `web/src/views/HarnessesView.vue`
-- 新的 Harness 探测页面
-- 显示统计卡片：已扫描路径、发现的 Harness、受管理的 Harness
-- 分两个区域展示：
-  - 受管理的 Harness（已安装 Amos 插件）：绿色正面提示
-  - 未管理的 Harness（未安装 Amos 插件）：橙色警告提示
-- 每个 Harness 显示：名称、版本、安装路径、插件路径
-- 可折叠的已扫描路径详情
-- 支持手动刷新
+解析规则：
 
-#### `web/src/router/index.ts`
-- 添加 `/harnesses` 路由
+- 跟随普通符号链接，并从真实可执行文件位置向上有界查找包元数据；
+- mise 多调用 shim 保留原命令路径，并要求对应 `installs/<tool>/latest` 下存在真实安装标记；残留 shim 不计为已安装；
+- mise 原生单文件安装可从 `installs/<tool>/<version>/` 真实路径取得版本；
+- OpenCode 支持 `node_modules/@opencode/cli/package.json` 和 `node_modules/opencode-ai/package.json`；
+- Claude Code 支持 `@anthropic-ai/claude-code`，DSH 支持 `@deepseek-ai/dsh`，Oh My Pi 支持 `@oh-my-pi/pi-coding-agent`；
+- Pi 和 Codex 继续支持各自包元数据及兼容版本文件；
+- 配置或数据目录只有存在可执行文件或匹配包标记时才计为已安装；
+- 无法取得版本时返回 `null`，不执行外部命令补全版本；
+- 不存在路径、权限错误和损坏符号链接按未命中处理，不中断整次扫描。
 
-#### `web/src/components/layout/navigation.ts`
-- 在"系统"导航区添加"Harness 探测"菜单项
-- 使用 `ServerCog` 图标
+Amos 插件从配置根检测：
 
-## 安全考虑
+- Pi：`~/.pi` 下的 `extensions/amos`、`extensions/amos.js`、`extensions/amos.ts` 及兼容标记；
+- OpenCode：`${XDG_CONFIG_HOME:-~/.config}/opencode` 下的 `plugins/amos`、`plugin/amos` 及对应 `.js`、`.ts` 文件。
 
-1. **权限边界**：探测仅读取文件系统元数据，不执行代码或修改文件
-2. **错误处理**：优雅处理权限拒绝、符号链接、不存在路径等情况
-3. **认证要求**：API 需要经过认证的会话访问
-4. **信息披露**：仅暴露安装路径和版本信息，不泄露敏感数据
+新增项不进入旧版 `installations`，其 `managed` 始终为 `false`。Oh My Pi 的既有接入验证使用项目级 `.pi/amos.json` 和显式扩展加载；当前全局探测 API 没有项目上下文，因此不将其他项目的配置归为 Oh My Pi 的受管证据。
 
-## 用户体验
+### `control-plane/contracts.ts`
 
-1. **自动探测**：页面加载时自动执行探测
-2. **手动刷新**：提供刷新按钮重新扫描
-3. **清晰分类**：用颜色和图标区分受管理/未管理状态
-4. **安装提示**：对未管理的 Harness 显示安装插件提示
-5. **详细信息**：展示安装路径、版本、插件路径等完整信息
+`HarnessDiscoveryResult` 保留既有 `installations` 和 `scannedPaths`，并提供完整的 `harnesses` 目录：
 
-## 测试覆盖
+```ts
+interface HarnessDiscoveryItem {
+  id: string
+  name: string
+  support: 'current' | 'future'
+  supportNote: string | null
+  detected: boolean
+  managed: boolean
+  path: string | null
+  version: string | null
+  amosPluginPath: string | null
+}
+```
 
-- ✅ 后端单元测试：数据结构验证、错误处理
-- ✅ 前端类型检查：TypeScript 编译通过
-- ✅ 完整构建：npm build 成功
-- ✅ 现有测试：所有测试保持通过（973 个后端测试 + 21 个前端测试）
+`supportNote` 提供接入方式说明：DSH 返回“未来以 DSH 插件形式支持”，Oh My Pi 返回“Pi 兼容，使用 Pi 适配器”，其余项目前返回 `null`。
 
-## 局限性说明
+`installations` 继续只包含 Pi/OpenCode 安装，保持现有调用方与运行类型兼容。`harnesses` 始终返回 Pi、OpenCode、Codex、Claude Code、DSH、Oh My Pi 六项，包括未探测到项。
 
-1. **快照性质**：探测结果是静态快照，不反映实时运行状态
-2. **路径覆盖**：仅扫描常见路径，非标准安装可能遗漏
-3. **版本检测**：依赖标准版本文件，某些安装可能无法获取版本
-4. **插件检测**：基于文件系统标记，不验证插件功能完整性
+`web/src/types/index.ts` 通过共享契约导出这些类型，视图不维护重复响应类型或 Harness 名单。
 
-## 未来改进方向
+## HTTP 与存储
 
-1. 支持用户自定义扫描路径
-2. 检测 Harness 运行状态（进程、端口）
-3. 提供插件安装引导链接
-4. 支持刷新单个 Harness 而非全量扫描
-5. 缓存探测结果减少文件系统访问
+- `control-plane/store.ts` 调用探测逻辑并返回冻结结果；
+- `GET /api/harnesses` 要求认证，每次请求重新扫描，不使用缓存；
+- 响应仅包含路径、版本、支持说明和状态，不返回 Harness 配置正文或凭据。
+
+## 前端实现
+
+`web/src/views/HarnessesView.vue` 使用 `harnesses` 渲染统一列表：
+
+- 每行显示“当前支持”或“未来支持”；
+- 有 `supportNote` 时显示对应接入说明；
+- 每行独立显示“已探测到 / 未探测到”和“已受到管理 / 未受管理”；
+- 未探测到行整体灰色；
+- 顶部统计已扫描路径、已探测到数量和已受到管理数量；
+- 保留加载、错误、手动刷新和已扫描路径详情。
+
+页面明确说明“已受到管理”的插件标记语义，不将其呈现为实时治理或 enforcing 证据。
+
+## 测试与边界
+
+`control-plane/harness-discovery.test.ts` 使用临时目录并注入 `env` 和 `home`，覆盖：
+
+- 空环境返回完整六项目录且配置目录不误判为安装；
+- mise 风格 OpenCode 符号链接和嵌套包版本；
+- 有效 mise 多调用 shim 与真实安装的绑定；
+- OpenCode Amos 插件状态；
+- Codex、Claude Code、DSH 的未来支持及永不受管状态；
+- DSH 残留 shim 的未探测结果；
+- Oh My Pi 的当前支持、Pi 兼容说明、mise 原生版本及旧契约隔离；
+- 文件系统错误的容错。
+
+主要验证命令：
+
+```bash
+npm run build
+node --test dist/control-plane/harness-discovery.test.js
+npm run typecheck
+```
+
+探测结果是调用时刻的静态快照。自定义安装位置、插件功能完整性和实际运行状态不属于该文件系统探测的证明范围。Oh My Pi 的兼容验证版本及项目级加载范围以 `docs/pi-adapter.md` 的记录为准。
