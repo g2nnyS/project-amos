@@ -438,6 +438,8 @@ try {
     assert.deepEqual(providerRequests, [{ authorized: true, connectionTest: true }])
     assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
     await screenshot('desktop-jev-settings')
+    await evaluate(`document.querySelector('main.workspace').scrollTop = 0`)
+    await screenshot('desktop-settings-top')
   })
 
   await check('seed candidate, add a project rule and validate on the server', async () => {
