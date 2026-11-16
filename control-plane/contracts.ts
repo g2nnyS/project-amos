@@ -616,7 +616,6 @@ export interface HarnessDiscoveryItem {
 
 export interface HarnessDiscoveryResult {
   readonly installations: readonly HarnessInstallation[];
-  readonly scannedPaths: readonly string[];
   readonly harnesses: readonly HarnessDiscoveryItem[];
 }
 

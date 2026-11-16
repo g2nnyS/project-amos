@@ -98,12 +98,7 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
     </div>
 
     <template v-else-if="discovery">
-      <div class="mb-4 grid gap-3 sm:grid-cols-3">
-        <article class="panel p-3">
-          <p class="eyebrow">已扫描路径</p>
-          <p class="mt-1 text-2xl font-semibold">{{ discovery.scannedPaths.length }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">检查的安装位置</p>
-        </article>
+      <div class="mb-4 grid gap-3 sm:grid-cols-2">
         <article class="panel p-3">
           <p class="eyebrow">已探测到</p>
           <p class="mt-1 text-2xl font-semibold">{{ detectedCount }}</p>
@@ -150,15 +145,16 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
                   </span>
                 </div>
                 <p
+                  v-if="h.detected && h.path"
+                  class="mt-1 break-all font-mono text-xs text-muted-foreground">
+                  {{ h.path }}
+                </p>
+                <p
                   v-if="h.supportNote"
                   class="mt-2 text-xs leading-relaxed text-muted-foreground">
                   {{ h.supportNote }}
                 </p>
                 <dl v-if="h.detected" class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                  <div>
-                    <dt class="text-muted-foreground">安装路径</dt>
-                    <dd class="mt-0.5 break-all font-mono">{{ h.path ?? '—' }}</dd>
-                  </div>
                   <div>
                     <dt class="text-muted-foreground">版本</dt>
                     <dd class="mt-0.5 font-mono">{{ h.version ?? '未知' }}</dd>
@@ -183,26 +179,10 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
           <ServerCog class="mx-auto mb-3 size-12 text-muted-foreground/40" />
           <h3 class="font-medium text-foreground">未发现 Harness</h3>
           <p class="mt-1 text-sm text-muted-foreground">
-            扫描了 {{ discovery.scannedPaths.length }} 个路径，未找到任何已支持或计划支持的 Harness。
+            未找到任何已支持或计划支持的 Harness。
           </p>
         </div>
       </section>
-
-      <details class="panel mt-4">
-        <summary class="cursor-pointer p-3 text-xs font-medium text-muted-foreground hover:text-foreground">
-          已扫描路径 ({{ discovery.scannedPaths.length }})
-        </summary>
-        <div class="border-t px-3 py-2">
-          <ul class="space-y-1 text-xs">
-            <li
-              v-for="(path, idx) in discovery.scannedPaths"
-              :key="idx"
-              class="font-mono text-muted-foreground">
-              {{ path }}
-            </li>
-          </ul>
-        </div>
-      </details>
     </template>
   </div>
 </template>
