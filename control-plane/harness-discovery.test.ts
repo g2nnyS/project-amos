@@ -62,7 +62,6 @@ test('empty environment returns the six known harnesses as undetected', (t) => {
     assert.equal(harness.amosPluginPath, null);
   }
   assert.equal(result.installations.length, 0);
-  assert.ok(result.scannedPaths.every((path) => path.length > 0));
 });
 
 test('detects a mise-style opencode symlink and its package version', (t) => {
@@ -160,7 +159,46 @@ test('rejects a residual mise shim with no matching real install', (t) => {
   assert.ok(dsh);
   assert.equal(dsh.detected, false);
   assert.equal(dsh.path, null);
-  assert.ok(result.scannedPaths.includes(shimPath));
+});
+
+test('detects a Homebrew Cellar install and extracts its version', (t) => {
+  const home = createTempHome(t);
+  const cellarBinary = join(home, 'Cellar/opencode/2.1.2/bin/opencode');
+  const binDir = join(home, 'bin');
+
+  writeExecutable(cellarBinary);
+  mkdirSync(binDir, { recursive: true });
+  symlinkSync(cellarBinary, join(binDir, 'opencode'));
+
+  const result = discoverHarnessInstallations({
+    env: { PATH: binDir },
+    home,
+  });
+
+  const opencode = result.harnesses.find((harness) => harness.id === 'opencode');
+  assert.ok(opencode);
+  assert.equal(opencode.detected, true);
+  assert.equal(opencode.path, join(binDir, 'opencode'));
+  assert.equal(opencode.version, '2.1.2');
+});
+
+test('ignores a Cellar directory whose name does not match the command', (t) => {
+  const home = createTempHome(t);
+  const binDir = join(home, 'Cellar/other/3.0.0/bin');
+  const opencodeBinary = join(binDir, 'opencode');
+
+  writeExecutable(opencodeBinary);
+
+  const result = discoverHarnessInstallations({
+    env: { PATH: binDir },
+    home,
+  });
+
+  const opencode = result.harnesses.find((harness) => harness.id === 'opencode');
+  assert.ok(opencode);
+  assert.equal(opencode.detected, true);
+  assert.equal(opencode.path, opencodeBinary);
+  assert.equal(opencode.version, null);
 });
 
 test('reports managed when the opencode config has an amos plugin', (t) => {

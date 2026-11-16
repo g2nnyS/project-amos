@@ -302,6 +302,32 @@ function extractMiseVersion(
 }
 
 /**
+ * Extract a version from a Homebrew Cellar install path such as
+ * `/opt/homebrew/Cellar/<command>/<version>/bin/<command>`.
+ */
+function extractCellarVersion(
+  realPath: string,
+  definition: HarnessDefinition,
+): string | null {
+  const parts = resolve(realPath).split(sep);
+  const cellarIndex = parts.lastIndexOf('Cellar');
+  if (cellarIndex < 0) return null;
+
+  const name = parts[cellarIndex + 1];
+  if (name === undefined || name !== definition.command) return null;
+
+  const fileName = basename(realPath);
+  if (
+    fileName !== definition.command &&
+    fileName !== `${definition.command}.exe`
+  ) {
+    return null;
+  }
+
+  return safeVersionSegment(parts[cellarIndex + 2]);
+}
+
+/**
  * Resolve symlinks for version lookup. A mise multi-call shim resolves to the
  * mise binary, which is not the harness install root; such shims are validated
  * against a real `installs/<tool>/latest` marker instead.
@@ -392,7 +418,6 @@ function candidateDirsFor(
 function findMiseInstall(
   definition: HarnessDefinition,
   home: string,
-  addScanned: (path: string) => void,
 ): { readonly identity: string; readonly version: string | null } | null {
   for (const toolName of definition.miseToolNames) {
     const latestDir = join(
@@ -401,7 +426,7 @@ function findMiseInstall(
       toolName,
       'latest',
     );
-    const probe = probeCandidateDir(latestDir, definition, addScanned);
+    const probe = probeCandidateDir(latestDir, definition);
     if (probe === null) continue;
 
     try {
@@ -428,7 +453,6 @@ function collectExecutableHits(
   definition: HarnessDefinition,
   pathDirs: readonly string[],
   home: string,
-  addScanned: (path: string) => void,
 ): HarnessHit[] {
   const hits: HarnessHit[] = [];
   const seen = new Set<string>();
@@ -437,13 +461,9 @@ function collectExecutableHits(
     const candidate = join(dir, definition.command);
     if (!isFile(candidate)) continue;
 
-    // Record every executable candidate that was inspected, even when a mise
-    // shim is rejected because no matching real install exists.
-    addScanned(candidate);
-
     const resolved = resolveExecutable(candidate);
     if (resolved.isMiseShim) {
-      const install = findMiseInstall(definition, home, addScanned);
+      const install = findMiseInstall(definition, home);
       if (install === null) continue;
 
       const identity = `${definition.id}:${install.identity}`;
@@ -462,6 +482,7 @@ function collectExecutableHits(
       resolved.realPath === null
         ? findVersion(dirname(candidate), definition)
         : (extractMiseVersion(resolved.realPath, definition) ??
+          extractCellarVersion(resolved.realPath, definition) ??
           findVersion(dirname(resolved.realPath), definition));
 
     hits.push({ path: candidate, version });
@@ -477,10 +498,8 @@ function collectExecutableHits(
 function probeCandidateDir(
   dir: string,
   definition: HarnessDefinition,
-  addScanned: (path: string) => void,
 ): HarnessHit | null {
   if (!isDirectory(dir)) return null;
-  addScanned(dir);
 
   for (const relative of [
     definition.command,
@@ -488,7 +507,6 @@ function probeCandidateDir(
   ]) {
     const candidate = join(dir, relative);
     if (!isFile(candidate)) continue;
-    addScanned(candidate);
     return {
       path: candidate,
       version: findVersion(dirname(candidate), definition),
@@ -553,12 +571,10 @@ function detectAmosPlugin(
   id: 'pi' | 'opencode',
   env: NodeJS.ProcessEnv,
   home: string,
-  addScanned: (path: string) => void,
 ): string | null {
   if (id === 'opencode') {
     const root = openCodeConfigRoot(env, home);
     if (!isDirectory(root)) return null;
-    addScanned(root);
     for (const marker of OPENCODE_PLUGIN_MARKERS) {
       const markerPath = join(root, marker);
       if (existsSync(markerPath)) return markerPath;
@@ -568,7 +584,6 @@ function detectAmosPlugin(
 
   const root = join(home, '.pi');
   if (!isDirectory(root)) return null;
-  addScanned(root);
   for (const marker of PI_PLUGIN_MARKERS) {
     const markerPath = join(root, marker);
     if (existsSync(markerPath)) return markerPath;
@@ -589,14 +604,10 @@ export function discoverHarnessInstallations(
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
   const pathDirs = getPathDirs(env, home);
-  const scanned = new Set<string>();
-  const addScanned = (path: string): void => {
-    scanned.add(path);
-  };
 
   const pluginByHarness = new Map<'pi' | 'opencode', string | null>();
   for (const id of ['pi', 'opencode'] as const) {
-    pluginByHarness.set(id, detectAmosPlugin(id, env, home, addScanned));
+    pluginByHarness.set(id, detectAmosPlugin(id, env, home));
   }
 
   const installations: HarnessInstallation[] = [];
@@ -604,9 +615,9 @@ export function discoverHarnessInstallations(
 
   for (const definition of HARNESS_DEFINITIONS) {
     const hits = uniqueByPath([
-      ...collectExecutableHits(definition, pathDirs, home, addScanned),
+      ...collectExecutableHits(definition, pathDirs, home),
       ...candidateDirsFor(definition, env, home)
-        .map((dir) => probeCandidateDir(dir, definition, addScanned))
+        .map((dir) => probeCandidateDir(dir, definition))
         .filter((hit): hit is HarnessHit => hit !== null),
     ]);
     hitsByHarness.set(definition.id, hits);
@@ -653,7 +664,6 @@ export function discoverHarnessInstallations(
 
   return {
     installations,
-    scannedPaths: [...scanned],
     harnesses,
   };
 }

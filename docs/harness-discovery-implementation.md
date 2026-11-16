@@ -34,6 +34,7 @@ Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`
 - 跟随普通符号链接，并从真实可执行文件位置向上有界查找包元数据；
 - mise 多调用 shim 保留原命令路径，并要求对应 `installs/<tool>/latest` 下存在真实安装标记；残留 shim 不计为已安装；
 - mise 原生单文件安装可从 `installs/<tool>/<version>/` 真实路径取得版本；
+- Homebrew Cellar 安装（如 `/Cellar/opencode/2.1.2/bin/opencode`）从 Cellar 版本目录名取得版本；
 - OpenCode 支持 `node_modules/@opencode/cli/package.json` 和 `node_modules/opencode-ai/package.json`；
 - Claude Code 支持 `@anthropic-ai/claude-code`，DSH 支持 `@deepseek-ai/dsh`，Oh My Pi 支持 `@oh-my-pi/pi-coding-agent`；
 - Pi 和 Codex 继续支持各自包元数据及兼容版本文件；
@@ -50,7 +51,7 @@ Amos 插件从配置根检测：
 
 ### `control-plane/contracts.ts`
 
-`HarnessDiscoveryResult` 保留既有 `installations` 和 `scannedPaths`，并提供完整的 `harnesses` 目录：
+`HarnessDiscoveryResult` 保留既有 `installations`，并提供完整的 `harnesses` 目录：
 
 ```ts
 interface HarnessDiscoveryItem {
@@ -86,8 +87,9 @@ interface HarnessDiscoveryItem {
 - 有 `supportNote` 时显示对应接入说明；
 - 每行独立显示“已探测到 / 未探测到”和“已受到管理 / 未受管理”；
 - 未探测到行整体灰色；
-- 顶部统计已扫描路径、已探测到数量和已受到管理数量；
-- 保留加载、错误、手动刷新和已扫描路径详情。
+- 顶部统计已探测到数量和已受到管理数量；
+- 已探测到的条目在安装位置一行小字中显示路径；
+- 保留加载、错误和手动刷新。
 
 页面明确说明“已受到管理”的插件标记语义，不将其呈现为实时治理或 enforcing 证据。
 
@@ -97,6 +99,7 @@ interface HarnessDiscoveryItem {
 
 - 空环境返回完整六项目录且配置目录不误判为安装；
 - mise 风格 OpenCode 符号链接和嵌套包版本；
+- Homebrew Cellar 安装的版本提取与名称不匹配目录的拒绝；
 - 有效 mise 多调用 shim 与真实安装的绑定；
 - OpenCode Amos 插件状态；
 - Codex、Claude Code、DSH 的未来支持及永不受管状态；

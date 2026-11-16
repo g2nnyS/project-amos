@@ -49,25 +49,20 @@ Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项�
 
 顶部统计卡片显示：
 
-- **已扫描路径**：本次实际检查并记录的候选或命中路径数量；
 - **已探测到**：`detected=true` 的目录项数量；
 - **已受到管理**：`managed=true` 的目录项数量。
 
-可用时，每行还显示接入说明、版本、安装或命令路径和 Amos 插件路径。“已扫描路径”折叠区可用于排查服务实际看到的文件系统位置。
+可用时，每行还显示接入说明、版本、安装位置和 Amos 插件路径；安装位置以 harness 名称下方的一行小字呈现。
 
 ## API
 
 后端提供 `GET /api/harnesses`，需要 human 或 agent 认证。
 
-响应保留 `installations`、`scannedPaths`，并提供完整 `harnesses` 目录。以下为目录字段示例：
+响应保留 `installations`，并提供完整 `harnesses` 目录。以下为目录字段示例：
 
 ```json
 {
   "installations": [],
-  "scannedPaths": [
-    "/home/user/.local/bin/opencode",
-    "/home/user/.local/share/mise/installs/claude/2.1.316/claude"
-  ],
   "harnesses": [
     {
       "id": "pi",
@@ -143,6 +138,6 @@ Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项�
 
 1. 探测仅读取文件系统元数据及包版本信息，不执行 Harness，也不修改安装或配置。
 2. 结果是请求时刻的快照；安装或插件变更后需手动刷新。
-3. 服务进程的 `PATH` 可能与交互式终端不同。页面中的命令路径和已扫描路径可用于确认实际探测环境。
+3. 服务进程的 `PATH` 可能与交互式终端不同。页面中每行显示的安装位置可用于确认实际探测环境。
 4. 非标准位置可能未被覆盖；版本元数据缺失时版本显示为未知。
 5. 文件系统错误按未命中处理，不会中断其他 Harness 的探测。
