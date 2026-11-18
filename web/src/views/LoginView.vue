@@ -3,14 +3,15 @@ import { computed, ref } from 'vue'
 import { ShieldAlert } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
+import { t } from '@/i18n'
 const auth = useAuthStore()
 const password = ref(''), confirmation = ref('')
 const setupRequired = computed(() => auth.authentication?.setupRequired === true)
 async function submit() {
   if (auth.loading) return
   if (setupRequired.value) {
-    if (password.value.length < 12 || password.value.length > 1024) { auth.error = '密码需为 12 至 1024 个字符。'; return }
-    if (password.value !== confirmation.value) { auth.error = '两次输入的密码不一致。'; return }
+    if (password.value.length < 12 || password.value.length > 1024) { auth.error = t('auth.errors.passwordLength'); return }
+    if (password.value !== confirmation.value) { auth.error = t('auth.passwordMismatch'); return }
     try { await auth.setup(password.value); password.value = ''; confirmation.value = '' } catch {}
     return
   }
@@ -23,36 +24,36 @@ async function submit() {
       <section class="login-surface" aria-labelledby="login-title">
         <div class="login-body">
           <div class="login-head">
-            <p class="eyebrow">本地人类会话</p>
-            <h1 id="login-title" class="login-title">{{ setupRequired ? '设置登录密码' : '登录控制台' }}</h1>
-            <p class="login-lede">{{ setupRequired ? '首次使用请设置登录密码。服务仅保存验证摘要，应用不保存密码。' : '输入密码以解锁本地控制台。应用不会保存密码明文。' }}</p>
+            <p class="eyebrow">{{ t('auth.eyebrow') }}</p>
+            <h1 id="login-title" class="login-title">{{ setupRequired ? t('auth.setupTitle') : t('auth.loginTitle') }}</h1>
+            <p class="login-lede">{{ setupRequired ? t('auth.setupLede') : t('auth.loginLede') }}</p>
           </div>
 
           <form class="login-form" :aria-busy="auth.loading" @submit.prevent="submit">
             <template v-if="setupRequired">
               <label class="field">
-                <span class="field-label">新密码（12 至 1024 个字符）</span>
+                <span class="field-label">{{ t('auth.newPassword') }}</span>
                 <input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required class="control login-control" />
               </label>
               <label class="field">
-                <span class="field-label">确认密码</span>
+                <span class="field-label">{{ t('auth.confirmPassword') }}</span>
                 <input v-model="confirmation" type="password" autocomplete="new-password" required class="control login-control" />
               </label>
             </template>
 
             <label v-else class="field">
-              <span class="field-label">密码</span>
+              <span class="field-label">{{ t('auth.password') }}</span>
               <input v-model="password" type="password" autocomplete="current-password" required class="control login-control" />
             </label>
 
             <p v-if="auth.error" class="login-error" role="alert">{{ auth.error }}</p>
-            <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">{{ auth.loading ? '处理中…' : setupRequired ? '设置密码' : '登录' }}</Button>
+            <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">{{ auth.loading ? t('common.processing') : setupRequired ? t('auth.setupSubmit') : t('auth.loginSubmit') }}</Button>
           </form>
         </div>
 
         <div class="login-notice">
           <ShieldAlert class="size-3.5" aria-hidden="true" />
-          <p>全局默认与项目覆盖决定 Harness 期望配置；实际模式须以各 Harness 最新加载报告为准。Workflow Gate 独立配置，Managed 不是 OS 沙箱。同 UID 访问不构成可信隔离。</p>
+          <p>{{ t('auth.notice') }}</p>
         </div>
       </section>
     </div>

@@ -302,6 +302,12 @@ try {
       Object.defineProperty(window, 'amosDesktop', { value: bridge, writable: false, configurable: false, enumerable: true });
     })();`,
   })
+  // The console follows the system language until a language is chosen in
+  // settings. Pin the synthetic system language so the Chinese assertions are
+  // deterministic on any host locale.
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true }); Object.defineProperty(Navigator.prototype, 'language', { get: () => 'zh-CN', configurable: true });`,
+  })
   await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir, eventsEnabled: true }, null)
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
   await send('Page.navigate', { url: `${server.url}/` })
@@ -343,7 +349,7 @@ try {
   }
 
   function loadedCardLabel(mode) {
-    return mode === 'enforcing' ? '约束已加载' : mode === 'log-only' ? 'Log-only 已加载' : 'Disabled 已加载'
+    return mode === 'enforcing' ? '管理模式已生效' : mode === 'log-only' ? '仅记录模式已生效' : '停用模式已生效'
   }
 
   /**
@@ -415,7 +421,7 @@ try {
 
   await check('Jev settings save, reload and test through the browser', async () => {
     await nav('设置')
-    await click('nav[aria-label="设置分区"] button', 'Jev 应用内设置')
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
     await waitFor(`${visible('#pref-jev')}`)
     await setByLabel('Base URL', providerUrl)
     await setByLabel('默认模型', 'typesafe/jev-1.14')
@@ -431,9 +437,9 @@ try {
     assert.equal(saved.apiKey, 'e2e-synthetic-jev-key')
     if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600)
 
-    await nav('项目边界')
+    await nav('项目概况')
     await nav('设置')
-    await click('nav[aria-label="设置分区"] button', 'Jev 应用内设置')
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
     await waitFor(`${visible('#pref-jev')} && document.body.innerText.includes('已保存 API key；留空将保留现有密钥。')`)
     await click('button', '测试已保存配置')
     await waitFor(`document.body.innerText.includes('Jev 连接成功，模型：typesafe/jev-1.14。')`)
@@ -441,7 +447,7 @@ try {
     assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
     await screenshot('desktop-jev-settings')
     await evaluate(`document.querySelector('main.workspace').scrollTop = 0`)
-    await click('nav[aria-label="设置分区"] button', 'Harness 全局默认')
+    await click('nav[aria-label="设置分区"] button', '助手默认设置')
     await waitFor(`${visible('#pref-harness')}`)
     await screenshot('desktop-settings-top')
     await click('nav[aria-label="设置分区"] button', '关于')
@@ -456,30 +462,30 @@ try {
   })
 
   await check('seed candidate, add a project rule and validate on the server', async () => {
-    await nav('候选编辑')
-    await click('button', '仓库种子')
+    await nav('编辑草稿')
+    await click('button', '内置示例')
     await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
     // Repository rules are the global catalog. A project adds its own rule ID
     // instead of silently redefining the global deny table.
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
-    await setByLabel('说明 narrative', 'E2E project-specific smoke rule; never an execution authorization.')
-    await click('button', '校验候选')
-    await waitFor(`document.body.innerText.includes('服务端校验通过')`)
+    await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
   await check('submit immutable proposal from the editor', async () => {
     await setByLabel('标题', 'E2E smoke proposal')
     await setByLabel('理由', 'Synthetic smoke rationale; never an execution authorization.')
     const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('提案过期时间（本地时间）', expiry)
-    await click('button', '提交提案')
-    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('提案详情')`)
+    await setByLabel('申请过期时间（本地时间）', expiry)
+    await click('button', '提交审批')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
   })
 
   await check('new proposal is immediately visible in the shared proposal list', async () => {
-    await click('a', '返回提案')
+    await click('a', '返回申请列表')
     await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
     await click('a', 'E2E smoke proposal')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
@@ -493,7 +499,7 @@ try {
   })
 
   await check('overview reflects the newly published current version', async () => {
-    await nav('项目边界')
+    await nav('项目概况')
     await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
@@ -511,14 +517,14 @@ try {
     assert.ok(cell, 'no non-empty matrix cell')
     await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
     await waitFor(`(() => { const p = new URLSearchParams(location.hash.split('?')[1] || ''); return p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}; })()`)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选维度"]').value`), cell.dimension)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中裁决"]').value`), cell.hit)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
     const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
     assert.ok(id, 'filtered rule missing')
     await setBySelector('[aria-label="搜索规则"]', id)
     await waitFor(`new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(id)}`)
-    await nav('项目边界')
-    await waitFor(`location.hash === '#/' && document.querySelector('h1')?.textContent.includes('项目边界')`)
+    await nav('项目概况')
+    await waitFor(`location.hash === '#/boundary' && document.querySelector('h1')?.textContent.includes('项目概况')`)
     await evaluate('history.back()')
     await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(id)}`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('dimension')`), cell.dimension)
@@ -528,11 +534,11 @@ try {
   await check('rule inspector tabs, read-only raw data and Escape focus restoration', async () => {
     const rowButton = 'section:has(input[aria-label="搜索规则"]) tbody tr:first-child button'
     await click(rowButton)
-    const inspector = '[role="complementary"][aria-label="规则上下文检查器"]'
+    const inspector = '[role="complementary"][aria-label="规则检查器"]'
     await waitFor(visible(inspector))
     await waitFor(`document.activeElement?.getAttribute('aria-label') === '关闭检查器'`)
     await screenshot('desktop-rules-inspector-semantics')
-    for (const [label, expected] of [['语义', '说明 narrative'], ['执行', '命中裁决 on_hit'], ['证据', '探测 probe'], ['原始', null]]) {
+    for (const [label, expected] of [['内容', '说明'], ['执行', '命中后处理'], ['证据', '探测'], ['原始', null]]) {
       await click(`${inspector} [role="tab"]`, label)
       await waitFor(`Array.from(document.querySelectorAll(${q(inspector + ' [role="tab"]')})).some(e => e.textContent.includes(${q(label)}) && e.getAttribute('aria-selected') === 'true')`)
       if (expected) await waitFor(`document.querySelector(${q(inspector)})?.textContent.includes(${q(expected)})`)
@@ -640,9 +646,9 @@ try {
     assert.equal(status.harnesses.opencode.runtime?.version, 2)
     assert.equal(status.harnesses.pi.runtime?.configDigest, projection.configDigest)
 
-    await nav('项目边界')
+    await nav('项目概况')
     const label = loadedCardLabel(mode)
-    await waitFor(`document.body.innerText.includes('当前配置投影已写入') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+    await waitFor(`document.body.innerText.includes('配置已写入助手') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
     await waitFor(`document.body.innerText.includes(${q(projection.configDigest)})`)
     await screenshot('desktop-runtime-loaded')
   })
@@ -675,8 +681,8 @@ try {
     assert.equal(status.status, 'loaded-unverified')
 
     await nav('版本')
-    await nav('项目边界')
-    await waitFor(`${harnessCardText('Pi')}.includes('身份匹配 · 配置待核验')`)
+    await nav('项目概况')
+    await waitFor(`${harnessCardText('Pi')}.includes('已识别 · 配置待核对')`)
 
     // Identity mismatch is still stale; the v1 fallback cannot mask a different policy.
     await writeFile(legacyReportPath, JSON.stringify(legacyReport(`sha256:${'0'.repeat(64)}`)))
@@ -695,9 +701,9 @@ try {
   })
 
   await check('imports the exported YAML through the same validation pipeline', async () => {
-    await nav('候选编辑')
-    await waitFor(`${visible('button')} && document.body.innerText.includes('候选来源')`)
-    await click('button', '当前策略')
+    await nav('编辑草稿')
+    await waitFor(`${visible('button')} && document.body.innerText.includes('从哪里开始')`)
+    await click('button', '当前规则')
     await waitFor(`document.body.innerText.includes('规则字段')`)
     const accepted = await evaluate(`(() => {
       const input = document.querySelector('input[type=file]');
@@ -710,18 +716,18 @@ try {
     })()`)
     assert.ok(accepted, 'file input missing')
     await waitFor(`document.body.innerText.includes('导入成功')`)
-    await click('button', '校验候选')
-    await waitFor(`document.body.innerText.includes('服务端校验通过')`)
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
   await check('rollback marks the previous v2 reports stale until the latest projection is loaded', async () => {
     await nav('版本')
     await click('a', '版本 1')
     await waitFor(`document.body.innerText.includes('版本 1')`)
-    await click('button', '创建回滚提案')
+    await click('button', '回滚到这个版本')
     await waitFor(visible('[role="dialog"]'))
     await setByLabel('理由', 'Synthetic rollback rationale.')
-    await click('[role="dialog"] button', '创建提案')
+    await click('[role="dialog"] button', '提交申请')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
@@ -729,7 +735,7 @@ try {
     await waitFor(`document.body.innerText.includes('已批准')`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 2')`)
-    await nav('项目边界')
+    await nav('项目概况')
 
     const previous = JSON.parse(await readFile(harnessReportPath('pi'), 'utf8'))
     const projection = await readProjection()
@@ -743,45 +749,94 @@ try {
     assert.equal(status.harnesses.pi.status, 'stale')
     assert.equal(status.harnesses.opencode.status, 'stale')
     assert.equal(status.status, 'stale')
-    await waitFor(`${harnessCardText('Pi')}.includes('旧配置报告') && ${harnessCardText('OpenCode')}.includes('旧配置报告')`)
+    await waitFor(`${harnessCardText('Pi')}.includes('配置已更新，待重新加载') && ${harnessCardText('OpenCode')}.includes('配置已更新，待重新加载')`)
 
     const { projection: latest, mode } = await writeHarnessReports()
     await nav('版本')
-    await nav('项目边界')
+    await nav('项目概况')
     status = await runtimeStatusApi(latest.projectId)
     assert.equal(status.status, 'loaded')
     assert.equal(status.harnesses.pi.status, 'loaded')
     assert.equal(status.harnesses.opencode.status, 'loaded')
     const label = loadedCardLabel(mode)
-    await waitFor(`document.body.innerText.includes('当前配置投影已写入') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+    await waitFor(`document.body.innerText.includes('配置已写入助手') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+  })
+
+  await check('home switch moves the project between log-only and managing and the host projection follows', async () => {
+    const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(projectId, 'active project missing')
+    const modeSwitch = '#home-mode-switch'
+    const harnessRow = (id) => `(document.querySelector('[data-harness="${id}"]')?.innerText ?? '')`
+    const projectConfig = () => evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/config`)}).then(r => r.json())`)
+
+    await nav('首页')
+    await waitFor(`location.hash === '#/' && document.querySelector('h1')?.textContent.includes('首页') && document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'false'`)
+    await waitFor(`document.querySelector('#home-mode-title')?.textContent.includes('仅记录') && ${harnessRow('pi')}.includes('仅记录模式已生效')`)
+    await screenshot('desktop-home-log-only')
+
+    await click(modeSwitch)
+    await waitFor(`document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'true' && document.querySelector('#home-mode-title')?.textContent.includes('正在管理') && document.body.innerText.includes('已切换为正在管理')`)
+    let config = await projectConfig()
+    assert.equal(config.harness.mode, 'managed')
+    assert.equal(config.effectiveHarness.enabled, true)
+    assert.equal(config.effectiveHarness.mode, 'managed')
+    let projection = await readProjection()
+    assert.equal(projection.harness?.mode, 'managed')
+    assert.equal(projection.managed?.enabled, true)
+    // Receipts for the previous projection stay stale until the harnesses reload.
+    await waitFor(`${harnessRow('pi')}.includes('配置已更新，待重新加载') && document.body.innerText.includes('Pi 还在用旧配置')`)
+    assert.equal((await writeHarnessReports()).mode, 'enforcing')
+    await click('button[aria-label="刷新状态"]')
+    await waitFor(`${harnessRow('pi')}.includes('管理模式已生效') && ${harnessRow('opencode')}.includes('管理模式已生效') && document.body.innerText.includes('已加载当前配置')`)
+    await screenshot('desktop-home-managed')
+
+    await click(modeSwitch)
+    await waitFor(`document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'false' && document.querySelector('#home-mode-title')?.textContent.includes('仅记录')`)
+    config = await projectConfig()
+    assert.equal(config.harness.mode, 'log-only')
+    projection = await readProjection()
+    assert.equal(projection.managed?.enabled, false)
+    assert.equal((await writeHarnessReports()).mode, 'log-only')
+    await click('button[aria-label="刷新状态"]')
+    await waitFor(`${harnessRow('pi')}.includes('仅记录模式已生效') && ${harnessRow('opencode')}.includes('仅记录模式已生效') && document.body.innerText.includes('Pi 和 OpenCode 已加载当前配置。')`)
+
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await sleep(400)
+      const layout = await evaluate(`(() => { const main = document.querySelector('main.workspace'); return { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, mainScroll: main.scrollWidth, mainClient: main.clientWidth }; })()`)
+      assert.ok(layout.scroll <= layout.client && layout.mainScroll <= layout.mainClient, `mobile home overflow: ${JSON.stringify(layout)}`)
+      await screenshot('mobile-home')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
   })
 
   await check('history editing binds the proposal to the current published base', async () => {
     await evaluate(`location.hash = '#/editor?baseVersion=1'`)
     await waitFor(`location.hash === '#/editor?baseVersion=1' && ${visible('button')}`)
     await click('button', '加载历史版本 1')
-    await waitFor(`document.body.innerText.includes('规则字段') && Array.from(document.querySelectorAll('.panel-kicker')).some(e => e.textContent.includes('基准版本 2'))`)
+    await waitFor(`document.body.innerText.includes('规则字段') && Array.from(document.querySelectorAll('.panel-kicker')).some(e => e.textContent.includes('基于版本 2'))`)
   })
 
   await check('simulation binds historical version provenance and clears changed input', async () => {
     const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(projectId, 'active project missing')
-    await nav('动作模拟')
+    await nav('模拟测试')
     await waitFor(`document.querySelector('form select') && Array.from(document.querySelectorAll('form select option')).some(o => o.value === '1')`)
-    await setByLabel('工具 tool', 'read')
-    await setByLabel('操作 operation', 'file_read')
-    await setByLabel('目标 target', `${workspace}/example.txt`)
+    await setByLabel('工具', 'read')
+    await setByLabel('操作', 'file_read')
+    await setByLabel('对象', `${workspace}/example.txt`)
     await setByLabel('已发布版本', '1')
-    await click('button', '模拟裁决')
-    await waitFor(`document.body.textContent.includes('评估来源 · 本地治理版本 1')`)
+    await click('button', '开始模拟')
+    await waitFor(`document.body.textContent.includes('评估依据 · 本地版本 1')`)
     const validProvenance = await evaluate(`(() => {
-      const source = Array.from(document.querySelectorAll('p')).find(p => p.textContent.includes('评估来源 · 本地治理版本 1'))?.parentElement;
+      const source = Array.from(document.querySelectorAll('p')).find(p => p.textContent.includes('评估依据 · 本地版本 1'))?.parentElement;
       const text = source?.textContent ?? '';
-      return text.includes(${q(projectOne)}) && text.includes(${q(projectId)}) && /本地快照摘要：\\s*(?:sha256:)?[a-f0-9]{64}/i.test(text);
+      return text.includes(${q(projectOne)}) && text.includes(${q(projectId)}) && /本地快照指纹：\\s*(?:sha256:)?[a-f0-9]{64}/i.test(text);
     })()`)
     assert.equal(validProvenance, true, 'historical project/version/digest provenance missing')
-    await setByLabel('目标 target', `${workspace}/other.txt`)
-    await waitFor(`!document.body.textContent.includes('评估来源 · 本地治理版本 1') && document.body.textContent.includes('提交动作后显示假设裁决')`)
+    await setByLabel('对象', `${workspace}/other.txt`)
+    await waitFor(`!document.body.textContent.includes('评估依据 · 本地版本 1') && document.body.textContent.includes('输入操作并模拟后，这里会显示预计的处理结果')`)
   })
 
   await check('project list and version data are fenced per project', async () => {
@@ -789,8 +844,8 @@ try {
     await waitFor(`document.body.innerText.includes(${q(projectTwo)})`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('尚无已发布版本')`)
-    await nav('提案')
-    await waitFor(`document.body.innerText.includes('尚无提案')`)
+    await nav('申请')
+    await waitFor(`document.body.innerText.includes('尚无申请')`)
     const secondId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(secondId, 'second project id missing')
     await send('Page.reload', { ignoreCache: true })
@@ -812,6 +867,29 @@ try {
     await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
   })
 
+  await check('language switch translates the console, persists across reload and switches back', async () => {
+    await nav('设置')
+    await click('nav[aria-label="设置分区"] button', '外观与语言')
+    await waitFor(visible('#pref-appearance'))
+    await click('#pref-appearance button[data-locale="en-US"]')
+    await waitFor(`document.documentElement.lang === 'en-US' && document.querySelector('h1')?.textContent.includes('Settings') && !!document.querySelector('nav[aria-label="Main navigation"] a[aria-label="Home"]')`)
+    assert.equal(await evaluate(`document.querySelector('#pref-appearance button[data-locale="en-US"]')?.getAttribute('aria-pressed')`), 'true')
+    await screenshot('desktop-settings-english')
+    // A stored choice wins over the (Chinese) system language after reload.
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`document.documentElement.lang === 'en-US' && ${visible('nav[aria-label="Main navigation"]')}`)
+    await click('nav[aria-label="Main navigation"] a[aria-label="Home"]')
+    await waitFor(`location.hash === '#/' && document.querySelector('#home-mode-title')?.textContent.includes('Log only') && document.querySelector('#home-mode-switch')?.getAttribute('aria-label') === 'Managed mode'`)
+    await screenshot('desktop-home-english')
+    const cjk = await evaluate(`/[\u4e00-\u9fff]/.test(document.body.innerText)`)
+    assert.equal(cjk, false, 'English home page still shows Chinese text')
+    await click('nav[aria-label="Main navigation"] a[aria-label="Settings"]')
+    await click('nav[aria-label="Settings sections"] button', 'Appearance')
+    await waitFor(visible('#pref-appearance'))
+    await click('#pref-appearance button[data-locale="zh-CN"]')
+    await waitFor(`document.documentElement.lang === 'zh-CN' && document.querySelector('h1')?.textContent.includes('设置') && !!document.querySelector('nav[aria-label="主导航"] a[aria-label="首页"]')`)
+  })
+
   await check('desktop shell, theme and density persist across reload', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
     await sleep(400)
@@ -822,6 +900,11 @@ try {
     await click('button', '深色')
     await waitFor(`document.documentElement.classList.contains('dark')`)
     await screenshot('desktop-dark')
+    await nav('首页')
+    await waitFor(visible('#home-mode-switch'))
+    await screenshot('desktop-home-dark')
+    await nav('设置')
+    await click('nav[aria-label="设置分区"] button', '外观')
     await click('#pref-compact')
     await waitFor(`document.querySelector('.app-shell')?.dataset.density === 'compact' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'true'`)
     await screenshot('desktop-dark-compact')

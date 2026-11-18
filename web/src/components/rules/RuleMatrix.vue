@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { RuleRecord } from '@/types'
+import { t } from '@/i18n'
 
 type OnHit = 'deny' | 'confirm' | 'log'
 type Expressivity = 'deterministic' | 'advisory_only'
@@ -60,19 +61,19 @@ function applyOnHit(h: OnHit) {
   <section class="panel overflow-hidden">
     <div class="panel-header">
       <div>
-        <h2 class="panel-title">规则矩阵</h2>
-        <p class="panel-kicker">范围：本地已发布候选的全部存储规则（含未选中）。按 ID 去重；on_hit 是声明值，建议性规则不会机械命中。点击数字筛选列表。</p>
+        <h2 class="panel-title">{{ t('ruleMatrix.title') }}</h2>
+        <p class="panel-kicker">{{ t('ruleMatrix.kicker') }}</p>
       </div>
     </div>
     <div class="overflow-x-auto">
       <table class="data-table min-w-[540px]">
         <thead>
           <tr>
-            <th class="w-40">维度 / 假设 on_hit</th>
+            <th class="w-40">{{ t('ruleMatrix.header') }}</th>
             <th v-for="h in onHits" :key="h" class="num">
               <button type="button" class="font-[inherit] uppercase hover:text-foreground" @click="applyOnHit(h)">{{ labels[h] }}</button>
             </th>
-            <th class="num">合计</th>
+            <th class="num">{{ t('ruleMatrix.total') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -81,20 +82,20 @@ function applyOnHit(h: OnHit) {
             <td v-for="h in onHits" :key="h" class="num">
               <button v-if="cell(d, h).deterministic + cell(d, h).advisory > 0" type="button" class="inline-flex flex-col items-end gap-0.5 rounded px-1.5 py-1 hover:bg-accent" @click="apply(d, h)">
                 <span class="tabular">{{ cell(d, h).deterministic + cell(d, h).advisory }}</span>
-                <span class="text-[10px] text-muted-foreground">确定 {{ cell(d, h).deterministic }} · 建议 {{ cell(d, h).advisory }}</span>
+                <span class="text-[10px] text-muted-foreground">{{ t('ruleMatrix.split', { deterministic: cell(d, h).deterministic, advisory: cell(d, h).advisory }) }}</span>
               </button>
               <span v-else class="text-muted-foreground">—</span>
             </td>
             <td class="num tabular text-muted-foreground">{{ dimensionTotals.get(d) }}</td>
           </tr>
           <tr class="border-t border-border bg-surface/40 font-medium">
-            <td>合计</td>
+            <td>{{ t('ruleMatrix.total') }}</td>
             <td v-for="h in onHits" :key="h" class="num tabular">{{ onHitTotals.get(h) }}</td>
             <td class="num tabular">{{ uniqueRules.length }}</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p v-if="!rules.length" class="p-6 text-center text-xs text-muted-foreground">无规则数据。</p>
+    <p v-if="!rules.length" class="p-6 text-center text-xs text-muted-foreground">{{ t('ruleMatrix.empty') }}</p>
   </section>
 </template>

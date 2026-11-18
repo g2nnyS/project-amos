@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 export default createRouter({ history: createWebHashHistory(), routes: [
-  { path: '/', component: () => import('@/views/OverviewView.vue') },
+  { path: '/', component: () => import('@/views/HomeView.vue') },
+  { path: '/boundary', component: () => import('@/views/OverviewView.vue') },
   { path: '/rules', component: () => import('@/views/RulesView.vue') },
   { path: '/editor', component: () => import('@/views/EditorView.vue') },
   { path: '/proposals', component: () => import('@/views/ProposalsView.vue') },

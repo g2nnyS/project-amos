@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Candidate, RuleRecord } from '@/types'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { t, type MessageKey } from '@/i18n'
 
 const props = defineProps<{ candidate: Candidate; before?: Candidate | null }>()
 const activeTab = ref('semantic')
@@ -59,63 +60,64 @@ function fields(a: RuleRecord | undefined, b: RuleRecord | undefined) {
 }
 
 function show(value: unknown): string {
-  if (value === undefined) return '（无）'
+  if (value === undefined) return t('common.absent')
   return JSON.stringify(value, null, 2) ?? 'null'
 }
 
 function changeKind(a: RuleRecord | undefined, b: RuleRecord | undefined): string {
-  if (!a) return '新增'
-  if (!b) return '移除'
-  return '修改'
+  if (!a) return t('candidate.added')
+  if (!b) return t('candidate.removed')
+  return t('candidate.modified')
 }
 
-const fieldNames: Record<string, string> = {
-  narrative: '说明', on_hit: '命中裁决', scope: '范围', enforcement: '执行面',
-  expressivity: '表达力', dimension: '维度', level: '层级', policy_class: '分类',
-  owner: '属主', ttl: 'TTL', predicate: '命中条件', source: '来源', probe: '探测'
+const fieldNames: Readonly<Record<string, MessageKey>> = {
+  narrative: 'ruleFields.narrative', on_hit: 'ruleFields.onHit', scope: 'ruleFields.scope', enforcement: 'ruleFields.enforcement',
+  expressivity: 'ruleFields.expressivity', dimension: 'ruleFields.dimension', level: 'ruleFields.level', policy_class: 'ruleFields.policyClass',
+  owner: 'ruleFields.owner', ttl: 'ruleFields.ttl', predicate: 'ruleFields.predicate', source: 'ruleFields.source', probe: 'ruleFields.probe'
 }
+function fieldName(key: string): string { const label = fieldNames[key]; return label ? t(label) : key }
 </script>
 
 <template>
   <section class="panel overflow-hidden">
     <div class="panel-header">
       <div>
-        <h2 class="panel-title">{{ before ? '候选差异' : '完整候选' }}</h2>
-        <p class="panel-kicker">包含全部规则字段与激活集合；元数据不是工具执行授权。</p>
+        <h2 class="panel-title">{{ before ? t('candidate.diffTitle') : t('candidate.fullTitle') }}</h2>
+        <p class="panel-kicker">{{ t('candidate.kicker') }}</p>
       </div>
     </div>
     <Tabs v-model="activeTab">
       <TabsList class="m-4 mb-0">
-        <TabsTrigger value="semantic" class="text-[11px]">语义差异</TabsTrigger>
-        <TabsTrigger value="activation" class="text-[11px]">激活集合</TabsTrigger>
-        <TabsTrigger value="raw" class="text-[11px]">原始 JSON</TabsTrigger>
+        <TabsTrigger value="semantic" class="text-[11px]">{{ t('candidate.semanticTab') }}</TabsTrigger>
+        <TabsTrigger value="activation" class="text-[11px]">{{ t('candidate.activationTab') }}</TabsTrigger>
+        <TabsTrigger value="raw" class="text-[11px]">{{ t('candidate.rawTab') }}</TabsTrigger>
       </TabsList>
       <TabsContent value="semantic" class="mt-0">
         <div v-if="before" class="divide-y divide-border">
-          <div v-if="!changes.length && !activationChanged" class="p-4 text-xs text-muted-foreground">规则字段与激活集合均无变化。</div>
+          <div v-if="!changes.length && !activationChanged" class="p-4 text-xs text-muted-foreground">{{ t('candidate.noChanges') }}</div>
           <div v-if="effectiveDiff.added.length || effectiveDiff.removed.length" class="p-4">
-            <h3 class="text-xs font-semibold">本地选中规则变化</h3>
-            <p class="mt-1 text-[11px] text-muted-foreground">候选激活集合选取的规则 ID 变化，不表示运行时生效。</p>
+            <h3 class="text-xs font-semibold">{{ t('candidate.selectionTitle') }}</h3>
+            <p class="mt-1 text-[11px] text-muted-foreground">{{ t('candidate.selectionNote') }}</p>
             <div class="mt-2 grid gap-2 text-xs sm:grid-cols-2">
               <div>
-                <p class="text-[11px] text-info">新增选中</p>
+                <p class="text-[11px] text-info">{{ t('candidate.addedSelection') }}</p>
                 <ul v-if="effectiveDiff.added.length" class="mt-1 space-y-0.5"><li v-for="id in effectiveDiff.added" :key="id" class="break-all font-mono">+ {{ id }}</li></ul>
-                <p v-else class="text-muted-foreground">无</p>
+                <p v-else class="text-muted-foreground">{{ t('common.none') }}</p>
               </div>
               <div>
-                <p class="text-[11px] text-warning">移除选中</p>
+                <p class="text-[11px] text-warning">{{ t('candidate.removedSelection') }}</p>
                 <ul v-if="effectiveDiff.removed.length" class="mt-1 space-y-0.5"><li v-for="id in effectiveDiff.removed" :key="id" class="break-all font-mono">- {{ id }}</li></ul>
-                <p v-else class="text-muted-foreground">无</p>
+                <p v-else class="text-muted-foreground">{{ t('common.none') }}</p>
               </div>
             </div>
           </div>
           <details v-for="change in changes" :key="change.id" class="p-4" open>
             <summary class="cursor-pointer text-sm font-medium">{{ change.id }} <span class="ml-2 text-xs text-muted-foreground">{{ changeKind(change.a, change.b) }}</span></summary>
             <div v-for="field in change.fields" :key="field.key" class="mt-3 border-t border-border pt-3 text-xs">
-              <p class="font-mono text-muted-foreground">{{ fieldNames[field.key] ?? field.key }}</p>
+              <p class="font-mono text-muted-foreground">{{ fieldName(field.key) }}</p>
               <div class="mt-1 grid gap-3 sm:grid-cols-2">
-                <div class="rounded-md border border-border bg-surface p-2"><span class="text-[10px] text-muted-foreground">当前</span><pre class="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ field.before }}</pre></div>
-                <div class="rounded-md border border-border bg-surface p-2"><span class="text-[10px] text-muted-foreground">候选</span><pre class="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ field.after }}</pre></div>
+                <div class="rounded-md border border-border bg-surface p-2"><span class="text-[10px] text-muted-foreground">{{ t('candidate.before') }}</span><pre class="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ field.before }}</pre></div>
+                <div class="rounded-md border border-border bg-surface p-2"><span class="text-[10px] text-muted-foreground">{{ t('candidate.after') }}</span><pre class="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ field.after }}</pre></div>
               </div>
             </div>
           </details>
@@ -124,8 +126,8 @@ const fieldNames: Record<string, string> = {
           <details v-for="rule in candidate.rules" :key="rule.id" class="p-4">
             <summary class="cursor-pointer text-sm font-medium">{{ rule.id }} <span class="ml-2 text-xs text-muted-foreground">{{ rule.dimension }} · {{ rule.on_hit }}</span></summary>
             <div class="mt-3 grid gap-3 text-xs sm:grid-cols-2">
-              <div><p class="text-[11px] text-muted-foreground">说明</p><p class="mt-1 whitespace-pre-wrap break-words">{{ rule.narrative }}</p></div>
-              <div><p class="text-[11px] text-muted-foreground">命中条件</p><p class="mt-1 break-all">{{ rule.predicate ? rule.predicate.map(p => p.op).join(' · ') : '建议性规则' }}</p></div>
+              <div><p class="text-[11px] text-muted-foreground">{{ t('ruleFields.narrative') }}</p><p class="mt-1 whitespace-pre-wrap break-words">{{ rule.narrative }}</p></div>
+              <div><p class="text-[11px] text-muted-foreground">{{ t('ruleFields.predicate') }}</p><p class="mt-1 break-all">{{ rule.predicate ? rule.predicate.map(p => p.op).join(' · ') : t('candidate.advisory') }}</p></div>
             </div>
           </details>
         </div>
@@ -133,25 +135,25 @@ const fieldNames: Record<string, string> = {
       <TabsContent value="activation" class="mt-0">
         <div class="grid gap-4 p-4 text-xs sm:grid-cols-2">
           <div class="rounded-md border border-border bg-surface p-3">
-            <p class="font-semibold">本候选</p>
+            <p class="font-semibold">{{ t('candidate.thisCandidate') }}</p>
             <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px]">{{ show(candidate.activation) }}</pre>
-            <p class="mt-2 text-[11px] text-muted-foreground">includedRuleIds 为 null 表示包含全部规则。</p>
+            <p class="mt-2 text-[11px] text-muted-foreground">{{ t('candidate.nullNote') }}</p>
           </div>
           <div v-if="before" class="rounded-md border border-border bg-surface p-3">
-            <p class="font-semibold">当前已发布</p>
+            <p class="font-semibold">{{ t('candidate.published') }}</p>
             <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px]">{{ show(before.activation) }}</pre>
-            <p class="mt-2 text-[11px] text-muted-foreground">本地选中规则数：{{ effectiveBefore.length }}</p>
+            <p class="mt-2 text-[11px] text-muted-foreground">{{ t('candidate.selectedCount', { count: effectiveBefore.length }) }}</p>
           </div>
         </div>
       </TabsContent>
       <TabsContent value="raw" class="mt-0 p-4">
         <div class="grid gap-4 lg:grid-cols-2">
           <div>
-            <p class="mb-2 text-[11px] font-semibold">候选 JSON</p>
+            <p class="mb-2 text-[11px] font-semibold">{{ t('candidate.candidateJson') }}</p>
             <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px]">{{ show(candidate) }}</pre>
           </div>
           <div v-if="before">
-            <p class="mb-2 text-[11px] font-semibold">当前已发布 JSON</p>
+            <p class="mb-2 text-[11px] font-semibold">{{ t('candidate.publishedJson') }}</p>
             <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px]">{{ show(before) }}</pre>
           </div>
         </div>

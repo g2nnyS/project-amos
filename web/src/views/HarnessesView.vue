@@ -4,6 +4,7 @@ import { ServerCog, Info } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { t, type MessageKey } from '@/i18n'
 import type { HarnessDiscoveryItem, HarnessDiscoveryResult } from '@/types'
 
 const discovery = ref<HarnessDiscoveryResult | null>(null)
@@ -17,7 +18,7 @@ async function loadDiscovery() {
   try {
     discovery.value = await api.discoverHarnesses()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '探测 Harness 安装失败'
+    error.value = err instanceof Error ? err.message : t('harnesses.loadError')
   } finally {
     loading.value = false
   }
@@ -45,77 +46,84 @@ const toneClasses: Record<Tone, string> = {
   neutral: 'border-border bg-muted/60 text-muted-foreground',
 }
 
+/** The service describes known integrations by harness id; other notes are shown as sent. */
+const supportNotes: Readonly<Record<string, MessageKey>> = { dsh: 'harnesses.noteDsh', 'oh-my-pi': 'harnesses.noteOhMyPi' }
+function supportNote(h: HarnessDiscoveryItem): string | null {
+  if (h.supportNote === null) return null
+  const key = supportNotes[h.id]
+  return key ? t(key) : h.supportNote
+}
+
 function supportBadge(h: HarnessDiscoveryItem): { label: string; classes: string } {
   if (h.support === 'future') {
-    return { label: '未来支持', classes: 'border-dashed border-info/40 bg-info/5 text-info' }
+    return { label: t('harnesses.future'), classes: 'border-dashed border-info/40 bg-info/5 text-info' }
   }
-  return { label: '当前支持', classes: toneClasses.neutral }
+  return { label: t('harnesses.current'), classes: toneClasses.neutral }
 }
 
 function detectedBadge(h: HarnessDiscoveryItem): { label: string; classes: string } {
   return h.detected
-    ? { label: '已探测到', classes: toneClasses.positive }
-    : { label: '未探测到', classes: toneClasses.neutral }
+    ? { label: t('harnesses.detected'), classes: toneClasses.positive }
+    : { label: t('harnesses.notDetected'), classes: toneClasses.neutral }
 }
 
 function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string } {
   return h.managed
-    ? { label: '已受到管理', classes: toneClasses.positive }
-    : { label: '未受管理', classes: h.detected ? toneClasses.warning : toneClasses.neutral }
+    ? { label: t('harnesses.managed'), classes: toneClasses.positive }
+    : { label: t('harnesses.unmanaged'), classes: h.detected ? toneClasses.warning : toneClasses.neutral }
 }
 </script>
 
 <template>
   <div class="page">
     <PageHeader
-      title="Harness 探测"
-      description="探测本地已安装的 Harness 实例及其 Amos 插件状态。">
+      :title="t('harnesses.title')"
+      :description="t('harnesses.description')">
       <template #actions>
         <Button
           size="sm"
           variant="outline"
           @click="loadDiscovery"
           :disabled="loading">
-          {{ loading ? '探测中…' : '刷新' }}
+          {{ loading ? t('harnesses.scanning') : t('common.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
     <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
       <Info class="mb-1 mr-1 inline size-3" />
-      <strong class="text-foreground">探测范围：</strong>本功能通过 PATH、常见安装目录（如 ~/.pi、~/.opencode、/opt 等）以及 mise shims 探测 Harness 安装，并检查 Amos 插件的安装状态。
-      <strong class="text-foreground">「已受到管理」</strong>仅表示已探测到 Amos 插件，不代表该 Harness 当前正在以 enforcing 模式运行或实时接受治理规则。探测结果为快照，不保证找到所有安装或反映实时运行状态。
+      <strong class="text-foreground">{{ t('harnesses.scopeLead') }}</strong>{{ t('harnesses.scopeText') }}<strong class="text-foreground">{{ t('harnesses.managedLead') }}</strong>{{ t('harnesses.managedText') }}
     </div>
 
     <div v-if="error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">
       {{ error }}
-      <button class="ml-2 underline" @click="loadDiscovery">重试</button>
+      <button class="ml-2 underline" @click="loadDiscovery">{{ t('common.retry') }}</button>
     </div>
 
     <div v-if="loading" class="py-12 text-center text-sm text-muted-foreground" role="status">
       <ServerCog class="mx-auto mb-3 size-8 animate-pulse" />
-      正在探测本地 Harness 安装…
+      {{ t('harnesses.loading') }}
     </div>
 
     <template v-else-if="discovery">
       <div class="mb-4 grid gap-3 sm:grid-cols-2">
         <article class="panel p-3">
-          <p class="eyebrow">已探测到</p>
+          <p class="eyebrow">{{ t('harnesses.detected') }}</p>
           <p class="mt-1 text-2xl font-semibold">{{ detectedCount }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">发现的 Harness 实例</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ t('harnesses.detectedNote') }}</p>
         </article>
         <article class="panel p-3">
-          <p class="eyebrow">已受到管理</p>
+          <p class="eyebrow">{{ t('harnesses.managed') }}</p>
           <p class="mt-1 text-2xl font-semibold">{{ managedCount }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">Amos 插件已安装</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ t('harnesses.managedNote') }}</p>
         </article>
       </div>
 
       <section class="panel mb-4">
         <div class="panel-header">
           <div>
-            <h2 class="panel-title">Harness 列表</h2>
-            <p class="panel-kicker">所有当前支持及未来预期支持的 Harness 探测结果。</p>
+            <h2 class="panel-title">{{ t('harnesses.listTitle') }}</h2>
+            <p class="panel-kicker">{{ t('harnesses.listKicker') }}</p>
           </div>
         </div>
         <div class="divide-y">
@@ -150,17 +158,17 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
                   {{ h.path }}
                 </p>
                 <p
-                  v-if="h.supportNote"
+                  v-if="supportNote(h)"
                   class="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  {{ h.supportNote }}
+                  {{ supportNote(h) }}
                 </p>
                 <dl v-if="h.detected" class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
                   <div>
-                    <dt class="text-muted-foreground">版本</dt>
-                    <dd class="mt-0.5 font-mono">{{ h.version ?? '未知' }}</dd>
+                    <dt class="text-muted-foreground">{{ t('harnesses.version') }}</dt>
+                    <dd class="mt-0.5 font-mono">{{ h.version ?? t('common.unknown') }}</dd>
                   </div>
                   <div class="sm:col-span-2">
-                    <dt class="text-muted-foreground">Amos 插件路径</dt>
+                    <dt class="text-muted-foreground">{{ t('harnesses.plugin') }}</dt>
                     <dd class="mt-0.5 break-all font-mono" :class="{ 'text-positive': h.managed }">
                       {{ h.amosPluginPath ?? '—' }}
                     </dd>
@@ -169,7 +177,7 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
                 <p
                   v-else-if="h.support === 'future' && !h.supportNote"
                   class="mt-3 text-xs text-muted-foreground">
-                  该 Harness 属于未来计划支持的候选，当前尚未探测到安装。
+                  {{ t('harnesses.futureNote') }}
                 </p>
               </div>
             </div>
@@ -177,9 +185,9 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
         </div>
         <div v-if="rows.length === 0" class="p-8 text-center">
           <ServerCog class="mx-auto mb-3 size-12 text-muted-foreground/40" />
-          <h3 class="font-medium text-foreground">未发现 Harness</h3>
+          <h3 class="font-medium text-foreground">{{ t('harnesses.noneTitle') }}</h3>
           <p class="mt-1 text-sm text-muted-foreground">
-            未找到任何已支持或计划支持的 Harness。
+            {{ t('harnesses.noneDescription') }}
           </p>
         </div>
       </section>

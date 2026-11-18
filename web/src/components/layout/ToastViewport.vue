@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useToast } from '@/composables/useToast'
+import { t } from '@/i18n'
 const { toasts, dismiss } = useToast()
 </script>
 <template>
@@ -14,7 +15,7 @@ const { toasts, dismiss } = useToast()
         <p class="text-sm font-medium" :class="item.variant === 'error' ? 'text-destructive' : ''">{{ item.title }}</p>
         <p v-if="item.description" class="mt-1 text-xs text-muted-foreground">{{ item.description }}</p>
       </div>
-      <button type="button" class="self-start rounded px-1 text-xs text-muted-foreground hover:text-foreground" :aria-label="`关闭提示：${item.title}`" @click="dismiss(item.id)">关闭</button>
+      <button type="button" class="self-start rounded px-1 text-xs text-muted-foreground hover:text-foreground" :aria-label="t('toast.dismiss', { title: item.title })" @click="dismiss(item.id)">{{ t('common.close') }}</button>
     </div>
   </div>
 </template>

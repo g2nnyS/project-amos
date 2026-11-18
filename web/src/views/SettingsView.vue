@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { LogOut, Monitor, Moon, ShieldAlert, Sun } from 'lucide-vue-next'
+import { Languages, LogOut, Monitor, Moon, ShieldAlert, Sun } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAuthStore } from '@/stores/auth'
@@ -9,15 +9,17 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
+import { localeNames, locales, t, type MessageKey } from '@/i18n'
+import { roleLabel } from '@/i18n/labels'
 import type { GlobalHarnessConfig, JevProviderId, JevSettingsInput, JevSettingsView } from '@/types'
 
 const preferences = usePreferencesStore()
 const auth = useAuthStore()
 const governance = useGovernanceStore()
 const themes = [
-  { value: 'light' as const, label: '浅色', icon: Sun },
-  { value: 'dark' as const, label: '深色', icon: Moon },
-  { value: 'system' as const, label: '跟随系统', icon: Monitor }
+  { value: 'light' as const, labelKey: 'settings.appearance.light' as const, icon: Sun },
+  { value: 'dark' as const, labelKey: 'settings.appearance.dark' as const, icon: Moon },
+  { value: 'system' as const, labelKey: 'settings.appearance.system' as const, icon: Monitor }
 ]
 const globalForm = reactive({ enabled: true, mode: 'log-only' as GlobalHarnessConfig['mode'], advisoryInjection: false })
 const globalError = ref(''), globalNotice = ref('')
@@ -42,16 +44,16 @@ async function saveGlobalConfig() {
     if (!result) return
     globalProjectionFailures.value = [...result.projectionFailures]
     globalNotice.value = result.projectionFailures.length
-      ? '全局默认已保存，但部分项目的宿主投影未更新。'
-      : '全局默认已保存；仍需后续 Harness 重新加载。'
+      ? t('settings.harness.savedPartial')
+      : t('settings.harness.saved')
   } catch (error) {
-    globalError.value = error instanceof Error ? error.message : '保存全局 Harness 默认配置失败。'
+    globalError.value = error instanceof Error ? error.message : t('settings.harness.saveFailed')
   }
 }
 async function reloadGlobalConfig() {
   globalError.value = ''; globalNotice.value = ''
   try { await governance.initialize() }
-  catch (error) { globalError.value = error instanceof Error ? error.message : '重新加载全局配置失败。' }
+  catch (error) { globalError.value = error instanceof Error ? error.message : t('settings.harness.reloadFailed') }
 }
 
 const providerUrls: Record<JevProviderId, string> = { openrouter: 'https://openrouter.ai/api', typesafe: 'https://api.typesafe.ai' }
@@ -61,12 +63,12 @@ const jevLoading = ref(false), jevSaving = ref(false), jevTesting = ref(false)
 const jevError = ref(''), jevNotice = ref('')
 let jevEpoch = 0
 
-const sections = [
-  { id: 'pref-harness', label: 'Harness 全局默认' },
-  { id: 'pref-appearance', label: '外观' },
-  { id: 'pref-session', label: '会话与边界' },
-  { id: 'pref-jev', label: 'Jev 应用内设置' },
-  { id: 'pref-about', label: '关于' }
+const sections: ReadonlyArray<{ id: string; labelKey: MessageKey }> = [
+  { id: 'pref-harness', labelKey: 'settings.sections.harness' },
+  { id: 'pref-appearance', labelKey: 'settings.sections.appearance' },
+  { id: 'pref-session', labelKey: 'settings.sections.session' },
+  { id: 'pref-jev', labelKey: 'settings.sections.jev' },
+  { id: 'pref-about', labelKey: 'settings.sections.about' }
 ]
 const activeSection = ref('pref-harness')
 const sectionNav = ref<HTMLElement | null>(null)
@@ -94,7 +96,6 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
 }
 const developmentCommit = __AMOS_DEV_COMMIT__
 const pillClass = 'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium'
-const roleLabel = computed(() => auth.session?.role === 'human' ? '人类' : auth.session?.role === 'agent' ? 'Agent' : '已认证')
 const sessionToneClass = computed(() => auth.authenticated
   ? 'border-positive/30 bg-positive/5 text-positive'
   : 'border-warning/30 bg-warning/5 text-warning')
@@ -106,11 +107,11 @@ const jevStateTone = computed<JevTone>(() => {
   return jev.value.hasApiKey ? 'positive' : 'warning'
 })
 const jevStateLabel = computed(() => {
-  if (!governance.activeProjectId) return '未选择项目'
-  if (jevLoading.value) return '加载中'
-  if (!jev.value) return jevError.value ? '加载失败' : '未加载'
-  if (!jev.value.config) return '未配置'
-  return jev.value.hasApiKey ? '已配置' : '缺少密钥'
+  if (!governance.activeProjectId) return t('settings.jev.stateNoProject')
+  if (jevLoading.value) return t('settings.jev.stateLoading')
+  if (!jev.value) return jevError.value ? t('settings.jev.stateFailed') : t('settings.jev.stateNotLoaded')
+  if (!jev.value.config) return t('common.notConfigured')
+  return jev.value.hasApiKey ? t('settings.jev.stateConfigured') : t('settings.jev.stateMissingKey')
 })
 const jevStateClass = computed(() => ({
   error: 'border-destructive/30 bg-destructive/5 text-destructive',
@@ -137,7 +138,7 @@ async function loadJev(id: string | null) {
     const view = await api.jevSettings(id)
     if (epoch === jevEpoch && id === governance.activeProjectId) applyJev(view)
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : '加载 Jev 配置失败。'
+    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.loadFailed')
   } finally {
     if (epoch === jevEpoch) jevLoading.value = false
   }
@@ -151,8 +152,8 @@ async function saveJev() {
   const id = governance.activeProjectId, current = jev.value?.config
   if (!id || !jev.value || jevSaving.value) return
   const baseUrl = jevForm.baseUrl.trim(), defaultModel = jevForm.defaultModel.trim(), apiKey = jevForm.apiKey
-  if (!baseUrl || !defaultModel) { jevNotice.value = ''; jevError.value = '请填写 Base URL 和默认模型。'; return }
-  if (!current && !apiKey) { jevNotice.value = ''; jevError.value = '新配置必须填写 API key。'; return }
+  if (!baseUrl || !defaultModel) { jevNotice.value = ''; jevError.value = t('settings.jev.missingFields'); return }
+  if (!current && !apiKey) { jevNotice.value = ''; jevError.value = t('settings.jev.keyRequired'); return }
   const epoch = jevEpoch, models = [...(current?.models ?? [])]
   if (!models.includes(defaultModel)) models.push(defaultModel)
   const input: JevSettingsInput = {
@@ -169,9 +170,9 @@ async function saveJev() {
     if (epoch !== jevEpoch || id !== governance.activeProjectId) return
     applyJev(view)
     await governance.refreshProject()
-    if (epoch === jevEpoch) jevNotice.value = 'Jev 配置已保存。'
+    if (epoch === jevEpoch) jevNotice.value = t('settings.jev.saved')
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : '保存 Jev 配置失败。'
+    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.saveFailed')
   } finally {
     if (epoch === jevEpoch) { jevSaving.value = false; jevForm.apiKey = '' }
   }
@@ -183,9 +184,9 @@ async function testJev() {
   jevTesting.value = true; jevError.value = ''; jevNotice.value = ''
   try {
     const result = await api.testJevSettings(id)
-    if (epoch === jevEpoch) jevNotice.value = `Jev 连接成功，模型：${result.model}。`
+    if (epoch === jevEpoch) jevNotice.value = t('settings.jev.tested', { model: result.model })
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : 'Jev 连接测试失败。'
+    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.testFailed')
   } finally {
     if (epoch === jevEpoch) jevTesting.value = false
   }
@@ -194,16 +195,16 @@ async function testJev() {
 
 <template>
   <div class="page">
-    <PageHeader title="设置" description="Harness 全局默认、本地外观、Jev 连接和当前会话。">
+    <PageHeader :title="t('settings.title')" :description="t('settings.description')">
       <template #actions>
         <span :class="[pillClass, sessionToneClass]">
           <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          {{ auth.authenticated ? '会话已认证' : '未认证会话' }}
+          {{ auth.authenticated ? t('settings.sessionAuthenticated') : t('settings.sessionAnonymous') }}
         </span>
       </template>
     </PageHeader>
 
-    <nav aria-label="设置分区" class="settings-sections scroll-thin -mx-1 mb-5 flex items-start overflow-x-auto overscroll-x-contain px-1 py-1">
+    <nav :aria-label="t('settings.sectionsLabel')" class="settings-sections scroll-thin -mx-1 mb-5 flex items-start overflow-x-auto overscroll-x-contain px-1 py-1">
       <div ref="sectionNav" class="segmented w-max" role="tablist">
         <button
           v-for="(item, index) in sections"
@@ -220,7 +221,7 @@ async function testJev() {
           @click="activeSection = item.id"
           @keydown="onSectionKeydown($event, index)"
         >
-          {{ item.label }}
+          {{ t(item.labelKey) }}
         </button>
       </div>
     </nav>
@@ -229,55 +230,55 @@ async function testJev() {
       <section v-show="activeSection === 'pref-harness'" id="pref-harness" class="panel" role="tabpanel" aria-labelledby="pref-harness-tab">
         <div class="panel-header">
           <div>
-            <h2 id="pref-harness-title" class="panel-title">Amos Harness 全局默认</h2>
-            <p class="panel-kicker">供未覆盖对应项的项目使用；这是期望配置，不是宿主加载证明。</p>
+            <h2 id="pref-harness-title" class="panel-title">{{ t('settings.harness.title') }}</h2>
+            <p class="panel-kicker">{{ t('settings.harness.kicker') }}</p>
           </div>
-          <span v-if="!canEditGlobal" class="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">当前角色只读</span>
+          <span v-if="!canEditGlobal" class="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">{{ t('common.readOnly') }}</span>
         </div>
         <div v-if="!governance.globalConfig" class="p-4">
           <div class="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs leading-relaxed text-warning">
-            全局配置不可用，无法确认当前默认值；此处不会将“未读取”按“已关闭”处理。
+            {{ t('settings.harness.unavailable') }}
           </div>
-          <Button class="mt-3" variant="outline" size="sm" :disabled="governance.loading" @click="reloadGlobalConfig">{{ governance.loading ? '加载中…' : '重新加载' }}</Button>
+          <Button class="mt-3" variant="outline" size="sm" :disabled="governance.loading" @click="reloadGlobalConfig">{{ governance.loading ? t('common.loading') : t('common.reload') }}</Button>
         </div>
         <form v-else @submit.prevent="saveGlobalConfig">
           <div class="grid gap-3 p-4 md:grid-cols-3">
             <div class="rounded-md border border-border bg-surface p-3">
               <div class="flex items-center justify-between gap-3">
-                <label for="global-harness-enabled" class="text-xs font-semibold">启用 Amos</label>
-                <Switch id="global-harness-enabled" v-model="globalForm.enabled" :disabled="!canEditGlobal || governance.globalConfigSaving" aria-label="全局默认启用 Amos" />
+                <label for="global-harness-enabled" class="text-xs font-semibold">{{ t('settings.harness.enabled') }}</label>
+                <Switch id="global-harness-enabled" v-model="globalForm.enabled" :disabled="!canEditGlobal || governance.globalConfigSaving" :aria-label="t('settings.harness.enabledLabel')" />
               </div>
-              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">设置项目的 enabled 默认值；项目仍可单独覆盖。</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.enabledHint') }}</p>
             </div>
             <div class="rounded-md border border-border bg-surface p-3">
-              <label id="global-harness-mode-label" class="text-xs font-semibold">默认模式</label>
+              <label id="global-harness-mode-label" class="text-xs font-semibold">{{ t('settings.harness.mode') }}</label>
               <Select v-model="globalForm.mode" :disabled="!canEditGlobal || governance.globalConfigSaving">
-                <SelectTrigger class="mt-2 w-full" size="sm" aria-labelledby="global-harness-mode-label"><SelectValue placeholder="选择默认模式" /></SelectTrigger>
+                <SelectTrigger class="mt-2 w-full" size="sm" aria-labelledby="global-harness-mode-label"><SelectValue :placeholder="t('settings.harness.modePlaceholder')" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="log-only">Log-only（仅观察）</SelectItem>
-                  <SelectItem value="managed">Managed（受管）</SelectItem>
+                  <SelectItem value="log-only">{{ t('harness.modes.logOnly') }}</SelectItem>
+                  <SelectItem value="managed">{{ t('harness.modes.managed') }}</SelectItem>
                 </SelectContent>
               </Select>
-              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">选择项目默认使用的 Harness 模式，不改变现有会话。</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.modeHint') }}</p>
             </div>
             <div class="rounded-md border border-border bg-surface p-3">
               <div class="flex items-center justify-between gap-3">
-                <label for="global-advisory-injection" class="text-xs font-semibold">建议注入</label>
-                <Switch id="global-advisory-injection" v-model="globalForm.advisoryInjection" :disabled="!canEditGlobal || governance.globalConfigSaving" aria-label="全局默认建议注入" />
+                <label for="global-advisory-injection" class="text-xs font-semibold">{{ t('settings.harness.advisory') }}</label>
+                <Switch id="global-advisory-injection" v-model="globalForm.advisoryInjection" :disabled="!canEditGlobal || governance.globalConfigSaving" :aria-label="t('settings.harness.advisoryLabel')" />
               </div>
-              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">关闭只抑制建议内容注入，不改变 Harness 开关、运行模式或 Workflow Gate。</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.advisoryHint') }}</p>
             </div>
           </div>
           <div class="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p class="max-w-3xl text-[11px] leading-relaxed text-muted-foreground">保存会尝试更新适用项目的宿主投影，后续 Harness 重新加载才采用新配置；不会立即改变已加载会话，也不保证所有项目、会话或工具入口均被覆盖。Workflow Gate 始终独立配置。</p>
-            <Button type="submit" class="shrink-0" :disabled="!canEditGlobal || !globalDirty || governance.globalConfigSaving">{{ governance.globalConfigSaving ? '保存中…' : '保存全局默认' }}</Button>
+            <p class="max-w-3xl text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.saveNote') }}</p>
+            <Button type="submit" class="shrink-0" :disabled="!canEditGlobal || !globalDirty || governance.globalConfigSaving">{{ governance.globalConfigSaving ? t('common.saving') : t('settings.harness.save') }}</Button>
           </div>
         </form>
         <div class="px-4 pb-4">
           <p v-if="globalError" class="text-xs text-destructive" role="alert">{{ globalError }}</p>
-          <p v-if="globalNotice" class="text-xs" :class="globalProjectionFailures.length ? 'text-warning' : 'text-success'" role="status">{{ globalNotice }}</p>
+          <p v-if="globalNotice" class="text-xs" :class="globalProjectionFailures.length ? 'text-warning' : 'text-positive'" role="status">{{ globalNotice }}</p>
           <div v-if="globalProjectionFailures.length" class="mt-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-warning" role="alert">
-            <p>以下项目的投影更新失败，请检查项目配置后重试：</p>
+            <p>{{ t('settings.harness.projectionFailures') }}</p>
             <ul class="mt-1 list-disc break-all pl-4 font-mono text-[10px]"><li v-for="id in globalProjectionFailures" :key="id">{{ id }}</li></ul>
           </div>
         </div>
@@ -286,15 +287,35 @@ async function testJev() {
       <section v-show="activeSection === 'pref-appearance'" id="pref-appearance" class="panel" role="tabpanel" aria-labelledby="pref-appearance-tab">
         <div class="panel-header">
           <div>
-            <h2 id="pref-appearance-title" class="panel-title">外观</h2>
-            <p class="panel-kicker">仅保存在此浏览器。</p>
+            <h2 id="pref-appearance-title" class="panel-title">{{ t('settings.appearance.title') }}</h2>
+            <p class="panel-kicker">{{ t('settings.appearance.kicker') }}</p>
           </div>
         </div>
         <div class="divide-y divide-hairline">
           <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div class="min-w-0">
-              <p id="pref-theme-label" class="text-[12.5px] font-medium text-foreground">主题</p>
-              <p class="mt-0.5 text-[11.5px] text-muted-foreground">浅色、深色或跟随系统。</p>
+              <p id="pref-language-label" class="flex items-center gap-1.5 text-[12.5px] font-medium text-foreground"><Languages class="size-3.5 text-muted-foreground" aria-hidden="true" />{{ t('settings.appearance.language') }}</p>
+              <p class="mt-0.5 text-[11.5px] text-muted-foreground">{{ t('settings.appearance.languageHint') }}</p>
+            </div>
+            <div class="segmented shrink-0" role="group" aria-labelledby="pref-language-label">
+              <button
+                v-for="code in locales"
+                :key="code"
+                type="button"
+                class="segmented-item"
+                :lang="code"
+                :data-locale="code"
+                :aria-pressed="preferences.locale === code"
+                @click="preferences.setLocale(code)"
+              >
+                {{ localeNames[code] }}
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <div class="min-w-0">
+              <p id="pref-theme-label" class="text-[12.5px] font-medium text-foreground">{{ t('settings.appearance.theme') }}</p>
+              <p class="mt-0.5 text-[11.5px] text-muted-foreground">{{ t('settings.appearance.themeHint') }}</p>
             </div>
             <div class="segmented shrink-0" role="group" aria-labelledby="pref-theme-label">
               <button
@@ -305,14 +326,14 @@ async function testJev() {
                 :aria-pressed="preferences.theme === item.value"
                 @click="preferences.setTheme(item.value)"
               >
-                <component :is="item.icon" class="mr-1 inline size-3" aria-hidden="true" />{{ item.label }}
+                <component :is="item.icon" class="mr-1 inline size-3" aria-hidden="true" />{{ t(item.labelKey) }}
               </button>
             </div>
           </div>
           <div class="flex items-center justify-between gap-6 px-4 py-3">
             <div class="min-w-0">
-              <p id="pref-compact-label" class="text-[12.5px] font-medium text-foreground">紧凑密度</p>
-              <p class="mt-0.5 text-[11.5px] text-muted-foreground">缩小页面、面板和表格间距。</p>
+              <p id="pref-compact-label" class="text-[12.5px] font-medium text-foreground">{{ t('settings.appearance.compact') }}</p>
+              <p class="mt-0.5 text-[11.5px] text-muted-foreground">{{ t('settings.appearance.compactHint') }}</p>
             </div>
             <Switch
               id="pref-compact"
@@ -328,66 +349,66 @@ async function testJev() {
       <section v-show="activeSection === 'pref-session'" id="pref-session" class="panel" role="tabpanel" aria-labelledby="pref-session-tab">
         <div class="panel-header">
           <div>
-            <h2 id="pref-session-title" class="panel-title">会话与边界</h2>
-            <p class="panel-kicker">当前浏览器会话的角色与观察模式。</p>
+            <h2 id="pref-session-title" class="panel-title">{{ t('settings.session.title') }}</h2>
+            <p class="panel-kicker">{{ t('settings.session.kicker') }}</p>
           </div>
-          <span :class="[pillClass, sessionToneClass]">{{ roleLabel }}</span>
+          <span :class="[pillClass, sessionToneClass]">{{ roleLabel(auth.session?.role) }}</span>
         </div>
         <dl class="divide-y divide-hairline text-[12.5px]">
           <div class="flex items-center justify-between gap-6 px-4 py-2.5">
-            <dt class="text-muted-foreground">认证状态</dt>
-            <dd class="text-right text-foreground">{{ auth.authenticated ? '已认证' : '未认证' }}</dd>
+            <dt class="text-muted-foreground">{{ t('settings.session.status') }}</dt>
+            <dd class="text-right text-foreground">{{ auth.authenticated ? t('settings.session.authenticated') : t('settings.session.anonymous') }}</dd>
           </div>
           <div class="flex items-center justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">治理项目</dt>
-            <dd class="min-w-0 truncate text-right text-foreground">{{ governance.activeProject?.name ?? '未选择' }}</dd>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.session.project') }}</dt>
+            <dd class="min-w-0 truncate text-right text-foreground">{{ governance.activeProject?.name ?? t('settings.session.noProject') }}</dd>
           </div>
         </dl>
         <div class="space-y-2.5 border-t border-hairline px-4 py-3">
           <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5 text-[11.5px] leading-relaxed text-warning">
             <ShieldAlert class="mr-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
-            Harness 全局默认与项目覆盖只定义期望配置；请在项目页分别核对宿主投影和 Pi/OpenCode 最新加载报告。Managed 只覆盖已接管的工具入口，不是 OS 沙箱。
+            {{ t('settings.session.boundary') }}
           </div>
-          <p class="text-[11.5px] leading-relaxed text-muted-foreground">本地数据库和凭据与同 UID 进程共享可访问域，不构成可信隔离。会话在退出或服务重启后失效。</p>
+          <p class="text-[11.5px] leading-relaxed text-muted-foreground">{{ t('settings.session.isolation') }}</p>
         </div>
         <div class="flex items-center justify-between gap-4 border-t border-hairline px-4 py-2.5">
-          <p class="text-[11.5px] text-muted-foreground">退出后需使用令牌重新登录。</p>
-          <Button variant="outline" size="sm" @click="auth.logout()"><LogOut class="size-3.5" aria-hidden="true" />退出登录</Button>
+          <p class="text-[11.5px] text-muted-foreground">{{ t('settings.session.logoutHint') }}</p>
+          <Button variant="outline" size="sm" @click="auth.logout()"><LogOut class="size-3.5" aria-hidden="true" />{{ t('app.logout') }}</Button>
         </div>
       </section>
 
       <section v-show="activeSection === 'pref-jev'" id="pref-jev" class="panel" role="tabpanel" aria-labelledby="pref-jev-tab">
         <div class="panel-header">
           <div>
-            <h2 id="pref-jev-title" class="panel-title">Jev 应用内设置</h2>
-            <p class="panel-kicker">{{ governance.activeProject ? `当前项目：${governance.activeProject.name}` : '配置当前项目的 Jev 评估服务。' }}</p>
+            <h2 id="pref-jev-title" class="panel-title">{{ t('settings.jev.title') }}</h2>
+            <p class="panel-kicker">{{ governance.activeProject ? t('settings.jev.currentProject', { name: governance.activeProject.name }) : t('settings.jev.kicker') }}</p>
           </div>
           <span :class="[pillClass, jevStateClass]" role="status">{{ jevStateLabel }}</span>
         </div>
         <div class="px-4 py-3">
-          <p v-if="!governance.activeProject" class="text-[12.5px] text-muted-foreground">请先到项目页选择项目。</p>
+          <p v-if="!governance.activeProject" class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.selectProject') }}</p>
           <template v-else>
-            <p v-if="jevLoading" class="text-[12.5px] text-muted-foreground">正在加载 Jev 配置…</p>
+            <p v-if="jevLoading" class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.loading') }}</p>
             <div v-else-if="!jev" class="flex items-center justify-between gap-4">
-              <p class="text-[12.5px] text-muted-foreground">尚未加载到配置。</p>
-              <Button variant="outline" size="sm" @click="loadJev(governance.activeProjectId)">重新加载</Button>
+              <p class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.notLoaded') }}</p>
+              <Button variant="outline" size="sm" @click="loadJev(governance.activeProjectId)">{{ t('common.reload') }}</Button>
             </div>
             <form v-else class="space-y-3" :aria-busy="jevSaving || jevTesting" @submit.prevent="saveJev">
-              <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-md border border-hairline bg-surface/40 px-3 py-2 sm:grid-cols-3" aria-label="已保存的 Jev 配置摘要">
+              <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-md border border-hairline bg-surface/40 px-3 py-2 sm:grid-cols-3" :aria-label="t('settings.jev.summary')">
                 <div class="min-w-0">
-                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">默认模型</dt>
-                  <dd class="truncate font-mono text-[11.5px] text-foreground">{{ jev.config?.defaultModel || '未设置' }}</dd>
+                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{{ t('settings.jev.defaultModel') }}</dt>
+                  <dd class="truncate font-mono text-[11.5px] text-foreground">{{ jev.config?.defaultModel || t('common.notSet') }}</dd>
                 </div>
                 <div>
-                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">凭据</dt>
-                  <dd class="text-[11.5px] text-foreground">{{ jev.hasApiKey ? '已保存' : jev.config ? '未保存' : '未配置' }}</dd>
+                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{{ t('settings.jev.credential') }}</dt>
+                  <dd class="text-[11.5px] text-foreground">{{ jev.hasApiKey ? t('settings.jev.credentialSaved') : jev.config ? t('settings.jev.credentialMissing') : t('common.notConfigured') }}</dd>
                 </div>
                 <div>
-                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">超时</dt>
-                  <dd class="text-[11.5px] text-foreground">{{ jev.config ? `${jev.config.timeoutMs} ms` : '默认 8000 ms' }}</dd>
+                  <dt class="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{{ t('settings.jev.timeout') }}</dt>
+                  <dd class="text-[11.5px] text-foreground">{{ jev.config ? t('settings.jev.timeoutValue', { ms: jev.config.timeoutMs }) : t('settings.jev.timeoutDefault') }}</dd>
                 </div>
               </dl>
-              <fieldset :disabled="jevSaving || jevTesting" class="grid gap-3 md:grid-cols-2" aria-label="Jev 连接配置">
+              <fieldset :disabled="jevSaving || jevTesting" class="grid gap-3 md:grid-cols-2" :aria-label="t('settings.jev.form')">
                 <label class="field">
                   <span class="field-label">Provider</span>
                   <select v-model="jevForm.provider" class="h-8 w-full rounded-md border border-input bg-background px-2 text-[12.5px]" @change="changeJevProvider">
@@ -400,18 +421,18 @@ async function testJev() {
                   <input v-model="jevForm.baseUrl" type="url" required autocomplete="off" class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-[11.5px]" />
                 </label>
                 <label class="field">
-                  <span class="field-label">默认模型</span>
+                  <span class="field-label">{{ t('settings.jev.defaultModel') }}</span>
                   <input v-model="jevForm.defaultModel" required autocomplete="off" spellcheck="false" class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-[11.5px]" />
                 </label>
                 <label class="field">
                   <span class="field-label">API key</span>
                   <input v-model="jevForm.apiKey" type="password" autocomplete="off" :required="!jev.config" aria-describedby="jev-key-hint" class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-[11.5px]" />
-                  <span id="jev-key-hint" class="mt-0.5 block text-[11px] text-muted-foreground">{{ jev.hasApiKey ? '已保存 API key；留空将保留现有密钥。' : jev.config ? '留空将保留当前密钥状态。' : '新配置必须填写 API key。' }}</span>
+                  <span id="jev-key-hint" class="mt-0.5 block text-[11px] text-muted-foreground">{{ jev.hasApiKey ? t('settings.jev.keyHintSaved') : jev.config ? t('settings.jev.keyHintKeep') : t('settings.jev.keyRequired') }}</span>
                 </label>
               </fieldset>
               <div class="flex flex-wrap items-center justify-end gap-2 border-t border-hairline pt-3">
-                <Button type="submit" size="sm" :disabled="jevSaving || jevTesting">{{ jevSaving ? '保存中…' : '保存配置' }}</Button>
-                <Button type="button" variant="outline" size="sm" :disabled="!jev.config || jevSaving || jevTesting" @click="testJev">{{ jevTesting ? '测试中…' : '测试已保存配置' }}</Button>
+                <Button type="submit" size="sm" :disabled="jevSaving || jevTesting">{{ jevSaving ? t('common.saving') : t('settings.jev.save') }}</Button>
+                <Button type="button" variant="outline" size="sm" :disabled="!jev.config || jevSaving || jevTesting" @click="testJev">{{ jevTesting ? t('settings.jev.testing') : t('settings.jev.test') }}</Button>
               </div>
             </form>
           </template>
@@ -425,33 +446,33 @@ async function testJev() {
       <section v-show="activeSection === 'pref-about'" id="pref-about" class="panel" role="tabpanel" aria-labelledby="pref-about-tab">
         <div class="panel-header">
           <div>
-            <h2 id="pref-about-title" class="panel-title">关于</h2>
-            <p class="panel-kicker">本地桌面治理工作区与项目信息。</p>
+            <h2 id="pref-about-title" class="panel-title">{{ t('settings.about.title') }}</h2>
+            <p class="panel-kicker">{{ t('settings.about.kicker') }}</p>
           </div>
         </div>
         <dl class="divide-y divide-hairline text-[12.5px]">
           <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">项目</dt>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.about.project') }}</dt>
             <dd class="text-right font-medium text-foreground">Amos Console</dd>
           </div>
           <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">简介</dt>
-            <dd class="max-w-[26rem] text-right leading-relaxed text-foreground">用于本地规则、提案、版本与治理审计的桌面工作区。</dd>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.about.summary') }}</dt>
+            <dd class="max-w-[26rem] text-right leading-relaxed text-foreground">{{ t('settings.about.summaryText') }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">版本</dt>
-            <dd class="tabular min-w-0 text-right text-foreground">开发测试版 · <span class="font-mono text-[11.5px]">{{ developmentCommit }}</span></dd>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.about.version') }}</dt>
+            <dd class="tabular min-w-0 text-right text-foreground">{{ t('settings.about.build') }} · <span class="font-mono text-[11.5px]">{{ developmentCommit }}</span></dd>
           </div>
           <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">开源协议</dt>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.about.license') }}</dt>
             <dd class="text-right text-foreground">Apache License 2.0</dd>
           </div>
           <div class="flex items-baseline justify-between gap-6 px-4 py-2.5">
-            <dt class="shrink-0 text-muted-foreground">项目仓库</dt>
+            <dt class="shrink-0 text-muted-foreground">{{ t('settings.about.repository') }}</dt>
             <dd class="min-w-0 truncate text-right font-mono text-[11.5px] text-foreground">github.com/g2nnyS/project-amos</dd>
           </div>
         </dl>
-        <p class="border-t border-hairline px-4 py-2.5 text-[10.5px] text-muted-foreground">版权所有 © 2026 Amos maintainers</p>
+        <p class="border-t border-hairline px-4 py-2.5 text-[10.5px] text-muted-foreground">{{ t('settings.about.copyright') }}</p>
       </section>
     </div>
   </div>
@@ -474,4 +495,3 @@ async function testJev() {
   background: hsl(var(--card));
 }
 </style>
-

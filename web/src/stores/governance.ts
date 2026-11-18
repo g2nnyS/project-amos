@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../lib/api.js'
 import { readStoredJson, writeStoredJson, removeStored } from '../lib/storage.js'
+import { t } from '../i18n/index.js'
 import type { CreateProjectInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
 
 const KEY = 'amos:console:activeProjectId'
@@ -27,7 +28,7 @@ export const useGovernanceStore = defineStore('governance', () => {
   async function refreshProjects() {
     const current = epoch
     try { const result = await api.projects(); if (current !== epoch) return; projects.value = result; if (activeProjectId.value && !result.some(p => p.id === activeProjectId.value)) { activeProjectId.value = null; resetProject(); save(null) } }
-    catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : '加载项目失败。'; throw e } }
+    catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : t('store.loadProjectsFailed'); throw e } }
   }
   async function refreshProject() {
     const id = activeProjectId.value, current = epoch
@@ -47,11 +48,11 @@ export const useGovernanceStore = defineStore('governance', () => {
       if (current !== epoch || id !== activeProjectId.value) return
       policy.value = p; proposals.value = ps; versions.value = vs; runtime.value = run
       config.value = cfg; tightenings.value = tight; probes.value = probe ?? []; rollouts.value = roll ?? []
-    } catch (e) { if (current === epoch) { resetProject(); error.value = e instanceof Error ? e.message : '加载项目失败。'; throw e } }
+    } catch (e) { if (current === epoch) { resetProject(); error.value = e instanceof Error ? e.message : t('store.loadProjectsFailed'); throw e } }
     finally { if (current === epoch) loading.value = false }
   }
   async function selectProject(id: string | null) {
-    if (id !== null && !projects.value.some(p => p.id === id)) throw new Error('项目不存在。')
+    if (id !== null && !projects.value.some(p => p.id === id)) throw new Error(t('store.projectMissing'))
     epoch++; activeProjectId.value = id; resetProject(); save(id); error.value = null; loading.value = false
     await refreshProject()
   }
@@ -62,19 +63,19 @@ export const useGovernanceStore = defineStore('governance', () => {
       projects.value = list; status.value = runtime; globalConfig.value = global
       const id = list.find(p => p.id === preferred)?.id ?? list[0]?.id ?? null
       activeProjectId.value = id; save(id); resetProject(); await refreshProject()
-    } catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : '初始化失败。'; throw e } }
+    } catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : t('store.initFailed'); throw e } }
     finally { if (current === epoch) loading.value = false }
   }
   async function createProject(input: CreateProjectInput): Promise<Project> {
     const current = epoch; const project = await api.createProject(input)
-    if (current !== epoch) throw new Error('项目上下文已更改。')
+    if (current !== epoch) throw new Error(t('store.projectChanged'))
     try { await refreshProjects() }
     catch {
       // Creation already succeeded; keep the new project visible instead of reporting a write failure.
-      if (current !== epoch) throw new Error('项目上下文已更改。')
+      if (current !== epoch) throw new Error(t('store.projectChanged'))
       if (!projects.value.some(p => p.id === project.id)) projects.value = [...projects.value, project]
     }
-    if (current !== epoch) throw new Error('项目上下文已更改。')
+    if (current !== epoch) throw new Error(t('store.projectChanged'))
     try { await selectProject(project.id) } catch { /* Project exists; refresh errors surface through store.error and can be retried. */ }
     return project
   }

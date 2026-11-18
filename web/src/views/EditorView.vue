@@ -11,6 +11,7 @@ import { useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
 import type { Candidate, Proposal, ValidationResult } from '@/types'
 
 const governance = useGovernanceStore()
@@ -57,7 +58,7 @@ function beforeUnload(event: BeforeUnloadEvent) {
 }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
-onBeforeRouteLeave(() => !dirty.value || window.confirm('草稿仅保存在内存中，离开将丢失未提交的修改。继续吗？'))
+onBeforeRouteLeave(() => !dirty.value || window.confirm(t('editor.confirmLeave')))
 
 function install(candidate: Candidate, version: number) {
   draft.value = clone(candidate)
@@ -71,7 +72,7 @@ function install(candidate: Candidate, version: number) {
 async function load(source: 'current' | 'seed' | 'history') {
   const project = governance.activeProjectId
   if (!project || busy.value) return
-  if (dirty.value && !window.confirm('替换当前草稿？未提交的修改将丢失。')) return
+  if (dirty.value && !window.confirm(t('editor.confirmReplace'))) return
   const run = ++epoch
   busy.value = true
   error.value = ''
@@ -81,16 +82,16 @@ async function load(source: 'current' | 'seed' | 'history') {
       if (run === epoch) install(candidate, governance.policy?.version ?? 0)
     } else if (source === 'history') {
       const version = Number(route.query.baseVersion)
-      if (!Number.isSafeInteger(version) || version < 1) { error.value = '历史基准版本无效。'; return }
+      if (!Number.isSafeInteger(version) || version < 1) { error.value = t('editor.invalidHistory'); return }
       const policy = await api.version(project, version)
       if (run === epoch) install(policy.candidate, governance.policy?.version ?? 0)
     } else if (governance.policy) {
       install(governance.policy.candidate, governance.policy.version)
     } else {
-      error.value = '当前项目尚无已发布策略，请从仓库种子开始。'
+      error.value = t('editor.noPolicy')
     }
   } catch (e) {
-    if (run === epoch) error.value = e instanceof Error ? e.message : '加载候选失败，请检查连接或项目权限。'
+    if (run === epoch) error.value = e instanceof Error ? e.message : t('editor.loadFailed')
   } finally {
     if (run === epoch) busy.value = false
   }
@@ -101,8 +102,8 @@ async function importFile(event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file || !governance.activeProjectId) return
-  if (dirty.value && !window.confirm('替换当前草稿？未提交的修改将丢失。')) return
-  if (file.size > 60 * 1024) { error.value = '策略文件超过 60 KB。'; return }
+  if (dirty.value && !window.confirm(t('editor.confirmReplace'))) return
+  if (file.size > 60 * 1024) { error.value = t('editor.tooLarge'); return }
   const run = ++epoch
   busy.value = true
   try {
@@ -111,22 +112,22 @@ async function importFile(event: Event) {
     const result = await api.importYaml(governance.activeProjectId, text)
     if (run !== epoch) return
     validation.value = { valid: result.valid, issues: result.issues }
-    if (!result.valid) { error.value = '导入的候选未通过服务端校验。'; return }
+    if (!result.valid) { error.value = t('editor.importInvalid'); return }
     install(result.candidate, governance.policy?.version ?? 0)
-    toast('导入成功', 'YAML/JSON 已通过服务端校验。', 'success')
+    toast(t('editor.imported'), t('editor.importedNote'), 'success')
   } catch {
-    if (run === epoch) error.value = '无法导入策略文件，请检查 YAML/JSON 格式或连接。'
+    if (run === epoch) error.value = t('editor.importFailed')
   } finally {
     if (run === epoch) busy.value = false
   }
 }
 
 async function validate(): Promise<boolean> {
-  if (!draft.value || !governance.activeProjectId) { error.value = '请先选择项目并载入候选。'; return false }
-  if (issues.value.length) { error.value = issues.value[0] ?? '候选激活策略无效。'; return false }
+  if (!draft.value || !governance.activeProjectId) { error.value = t('editor.noDraft'); return false }
+  if (issues.value.length) { error.value = issues.value[0] ?? t('editor.invalidActivation'); return false }
   if (busy.value) return false
   let candidate: DraftCandidate
-  try { candidate = clone(draft.value) } catch { error.value = '无法准备候选，请重新载入来源。'; return false }
+  try { candidate = clone(draft.value) } catch { error.value = t('editor.prepareFailed'); return false }
   const run = epoch
   const project = governance.activeProjectId
   busy.value = true
@@ -134,12 +135,12 @@ async function validate(): Promise<boolean> {
   try {
     const result = await api.validate(project, candidate)
     if (run !== epoch) return false
-    if (JSON.stringify(candidate) !== JSON.stringify(draft.value)) { error.value = '校验期间草稿已更改，请重新校验。'; return false }
+    if (JSON.stringify(candidate) !== JSON.stringify(draft.value)) { error.value = t('editor.changedDuringValidation'); return false }
     validation.value = result
-    if (result.valid) toast('校验通过', '候选符合当前规则 schema。', 'success')
+    if (result.valid) toast(t('editor.validated'), t('editor.validatedNote'), 'success')
     return result.valid
   } catch {
-    if (run === epoch) error.value = '校验请求失败，请检查连接或项目权限。'
+    if (run === epoch) error.value = t('editor.validateFailed')
     return false
   } finally {
     if (run === epoch) busy.value = false
@@ -147,11 +148,11 @@ async function validate(): Promise<boolean> {
 }
 
 async function submit() {
-  if (!draft.value || !governance.activeProjectId) { error.value = '请先选择项目并载入候选。'; return }
+  if (!draft.value || !governance.activeProjectId) { error.value = t('editor.noDraft'); return }
   if (busy.value) return
-  if (!title.value.trim() || !rationale.value.trim() || !expires.value || !Number.isFinite(Date.parse(expires.value)) || Date.parse(expires.value) <= Date.now()) { error.value = '请填写标题、理由及未来的过期时间。'; return }
+  if (!title.value.trim() || !rationale.value.trim() || !expires.value || !Number.isFinite(Date.parse(expires.value)) || Date.parse(expires.value) <= Date.now()) { error.value = t('editor.missingFields'); return }
   if (!(await validate())) return
-  if (!window.confirm('提交后提案正文不可修改，且不会自动发布。是否继续？')) return
+  if (!window.confirm(t('editor.confirmSubmit'))) return
   if (!draft.value || !governance.activeProjectId) return
   const run = epoch
   const project = governance.activeProjectId
@@ -167,16 +168,16 @@ async function submit() {
       candidate: clone(draft.value)
     })
   } catch {
-    if (run === epoch) error.value = '提交失败。基准版本可能已过期，或请求未被接受；草稿仍保留。'
+    if (run === epoch) error.value = t('editor.submitFailed')
     return
   } finally {
     if (run === epoch) busy.value = false
   }
   if (run !== epoch) return
   reset()
-  toast('提案已创建', '请在提案列表中审阅。', 'success')
+  toast(t('editor.created'), t('editor.createdNote'), 'success')
   try { await governance.refreshProject() }
-  catch { toast('提案已创建，但刷新失败', '提案列表可能未更新，请稍后手动刷新。', 'error') }
+  catch { toast(t('editor.refreshFailed'), t('editor.refreshFailedNote'), 'error') }
   await router.push(`/proposals/${encodeURIComponent(proposal.id)}`)
 }
 
@@ -189,7 +190,7 @@ function addRule() {
 }
 
 function removeRule(index: number) {
-  if (!draft.value || !window.confirm('从候选中删除这条规则？')) return
+  if (!draft.value || !window.confirm(t('editor.confirmRemove'))) return
   const id = draft.value.rules[index]?.id
   draft.value.rules.splice(index, 1)
   if (id) {
@@ -211,33 +212,33 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
 
 <template>
   <div class="page space-y-4">
-    <PageHeader title="候选编辑" description="草稿仅保存在内存中。提交创建不可变提案，不会自动发布或授权工具执行。">
+    <PageHeader :title="t('editor.title')" :description="t('editor.description')">
       <template #actions>
-        <span v-if="dirty" class="inline-flex items-center gap-1 text-xs text-warning"><AlertCircle class="size-3.5" />未提交修改</span>
+        <span v-if="dirty" class="inline-flex items-center gap-1 text-xs text-warning"><AlertCircle class="size-3.5" />{{ t('editor.unsaved') }}</span>
         <Button v-if="draft" variant="outline" size="sm" :disabled="busy || !!issues.length" @click="validate">
-          <CheckCircle class="mr-1 size-3.5" />{{ busy ? '处理中…' : '校验候选' }}
+          <CheckCircle class="mr-1 size-3.5" />{{ busy ? t('common.processing') : t('editor.validate') }}
         </Button>
         <Button v-if="draft" size="sm" :disabled="busy || !!issues.length" @click="submit">
-          <Save class="mr-1 size-3.5" />{{ busy ? '处理中…' : '提交提案' }}
+          <Save class="mr-1 size-3.5" />{{ busy ? t('common.processing') : t('editor.submit') }}
         </Button>
       </template>
     </PageHeader>
 
-    <EmptyState v-if="!governance.activeProjectId" title="请选择项目" description="选择项目后才能起草候选。" />
+    <EmptyState v-if="!governance.activeProjectId" :title="t('common.selectProject')" :description="t('editor.emptyDescription')" />
     <template v-else>
       <section class="panel">
         <div class="panel-header">
           <div>
-            <h2 class="panel-title">候选来源</h2>
-            <p class="panel-kicker">{{ draft ? `基准版本 ${baseVersion} · 替换来源会丢弃当前草稿` : '从已发布策略、仓库种子或 JSON 开始' }}</p>
+            <h2 class="panel-title">{{ t('editor.sourceTitle') }}</h2>
+            <p class="panel-kicker">{{ draft ? t('editor.sourceLoaded', { version: baseVersion }) : t('editor.sourceEmpty') }}</p>
           </div>
         </div>
         <div class="panel-body flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" :disabled="busy || !governance.policy" @click="load('current')"><RotateCcw class="mr-1 size-3.5" />当前策略</Button>
-          <Button type="button" variant="outline" size="sm" :disabled="busy" @click="load('seed')">仓库种子</Button>
-          <Button v-if="route.query.baseVersion" type="button" variant="outline" size="sm" :disabled="busy" @click="load('history')">加载历史版本 {{ route.query.baseVersion }}</Button>
+          <Button type="button" variant="outline" size="sm" :disabled="busy || !governance.policy" @click="load('current')"><RotateCcw class="mr-1 size-3.5" />{{ t('editor.currentPolicy') }}</Button>
+          <Button type="button" variant="outline" size="sm" :disabled="busy" @click="load('seed')">{{ t('editor.seed') }}</Button>
+          <Button v-if="route.query.baseVersion" type="button" variant="outline" size="sm" :disabled="busy" @click="load('history')">{{ t('editor.history', { version: String(route.query.baseVersion) }) }}</Button>
           <label class="inline-flex h-8 cursor-pointer items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">
-            <FileUp class="mr-1 size-3.5" />导入 YAML/JSON
+            <FileUp class="mr-1 size-3.5" />{{ t('editor.import') }}
             <input type="file" accept=".yaml,.yml,.json,application/yaml,application/json" class="sr-only" :disabled="busy" @change="importFile" />
           </label>
         </div>
@@ -248,7 +249,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
       <section v-if="validation" class="panel p-4 text-xs" aria-live="polite">
         <p class="flex items-center gap-1.5 font-semibold" :class="validation.valid ? 'text-positive' : 'text-destructive'">
           <component :is="validation.valid ? CheckCircle : AlertCircle" class="size-4" />
-          {{ validation.valid ? '服务端校验通过' : '服务端校验未通过' }}
+          {{ validation.valid ? t('editor.validationPassed') : t('editor.validationFailed') }}
         </p>
         <ul v-if="!validation.valid" class="mt-2 space-y-1 text-muted-foreground">
           <li v-for="(issue, i) in validation.issues" :key="i" class="break-all">{{ issue.path }} · {{ issue.code }}</li>
@@ -259,48 +260,48 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
         <div class="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <section class="panel min-w-0">
             <div class="panel-header">
-              <h2 class="panel-title">规则 · {{ draft.rules.length }}</h2>
-              <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="addRule"><Plus class="mr-1 size-3.5" />添加</Button>
+              <h2 class="panel-title">{{ t('editor.rulesTitle', { count: draft.rules.length }) }}</h2>
+              <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="addRule"><Plus class="mr-1 size-3.5" />{{ t('common.add') }}</Button>
             </div>
             <ul class="p-2">
               <li v-for="(rule, i) in draft.rules" :key="i" class="flex items-center gap-1">
                 <button type="button" class="min-w-0 flex-1 rounded p-2 text-left text-xs hover:bg-accent" :class="selected === i ? 'bg-accent' : ''" @click="selected = i">
-                  <span class="block truncate font-medium">{{ rule.id || '无 ID' }}</span>
+                  <span class="block truncate font-medium">{{ rule.id || t('editor.noId') }}</span>
                   <span class="block truncate text-muted-foreground">{{ rule.dimension }} · {{ rule.on_hit }}</span>
                 </button>
-                <button type="button" class="rounded p-2 text-xs text-muted-foreground hover:text-destructive" :aria-label="`删除规则 ${rule.id}`" @click="removeRule(i)">删除</button>
+                <button type="button" class="rounded p-2 text-xs text-muted-foreground hover:text-destructive" :aria-label="t('editor.deleteRule', { id: rule.id })" @click="removeRule(i)">{{ t('common.delete') }}</button>
               </li>
             </ul>
           </section>
           <RuleForm v-if="selectedRule" :key="selected" :rule="selectedRule" />
-          <EmptyState v-else title="尚无规则" description="添加规则以继续。" />
+          <EmptyState v-else :title="t('editor.noRulesTitle')" :description="t('editor.noRulesDescription')" />
         </div>
 
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">项目激活策略</h2>
-              <p class="panel-kicker">包含与排除不可重叠；激活结果必须非空。</p>
+              <h2 class="panel-title">{{ t('editor.activationTitle') }}</h2>
+              <p class="panel-kicker">{{ t('editor.activationKicker') }}</p>
             </div>
           </div>
           <div class="panel-body space-y-3 text-xs">
             <label class="flex items-center gap-2">
               <input type="checkbox" :checked="draft.activation.includedRuleIds === null" @change="draft.activation.includedRuleIds = ($event.target as HTMLInputElement).checked ? null : []" />
-              包含所有规则
+              {{ t('editor.includeAll') }}
             </label>
             <div class="overflow-x-auto">
               <table class="data-table">
                 <thead>
-                  <tr><th scope="col">规则 ID</th><th v-if="draft.activation.includedRuleIds !== null" scope="col">包含</th><th scope="col">排除</th></tr>
+                  <tr><th scope="col">{{ t('ruleFields.id') }}</th><th v-if="draft.activation.includedRuleIds !== null" scope="col">{{ t('editor.include') }}</th><th scope="col">{{ t('editor.exclude') }}</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="rule in draft.rules" :key="rule.id">
                     <td>{{ rule.id }}</td>
                     <td v-if="draft.activation.includedRuleIds !== null">
-                      <input type="checkbox" :aria-label="`包含 ${rule.id}`" :checked="draft.activation.includedRuleIds.includes(rule.id)" @change="toggle(rule.id, 'includedRuleIds', ($event.target as HTMLInputElement).checked)" />
+                      <input type="checkbox" :aria-label="t('editor.includeRule', { id: rule.id })" :checked="draft.activation.includedRuleIds.includes(rule.id)" @change="toggle(rule.id, 'includedRuleIds', ($event.target as HTMLInputElement).checked)" />
                     </td>
                     <td>
-                      <input type="checkbox" :aria-label="`排除 ${rule.id}`" :checked="draft.activation.excludedRuleIds.includes(rule.id)" @change="toggle(rule.id, 'excludedRuleIds', ($event.target as HTMLInputElement).checked)" />
+                      <input type="checkbox" :aria-label="t('editor.excludeRule', { id: rule.id })" :checked="draft.activation.excludedRuleIds.includes(rule.id)" @change="toggle(rule.id, 'excludedRuleIds', ($event.target as HTMLInputElement).checked)" />
                     </td>
                   </tr>
                 </tbody>
@@ -312,20 +313,20 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
 
         <section class="panel">
           <div class="panel-header">
-            <h2 class="panel-title">提案信息</h2>
-            <span class="text-xs text-muted-foreground">基准版本 {{ baseVersion }}</span>
+            <h2 class="panel-title">{{ t('editor.proposalTitle') }}</h2>
+            <span class="text-xs text-muted-foreground">{{ t('editor.baseVersion', { version: baseVersion }) }}</span>
           </div>
           <div class="panel-body grid gap-4 text-xs lg:grid-cols-3">
             <label class="field lg:col-span-1">
-              <span class="field-label">标题</span>
+              <span class="field-label">{{ t('common.title') }}</span>
               <input v-model="title" class="control" maxlength="160" />
             </label>
             <label class="field lg:col-span-2">
-              <span class="field-label">理由</span>
+              <span class="field-label">{{ t('common.rationale') }}</span>
               <textarea v-model="rationale" class="control" rows="2" />
             </label>
             <label class="field lg:col-span-1">
-              <span class="field-label">提案过期时间（本地时间）</span>
+              <span class="field-label">{{ t('editor.expires') }}</span>
               <input v-model="expires" type="datetime-local" class="control" />
             </label>
           </div>

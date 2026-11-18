@@ -2,13 +2,14 @@
 import { RouterLink } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import EmptyState from '@/components/common/EmptyState.vue'
+import { t } from '@/i18n'
 </script>
 
 <template>
   <div class="page">
-    <EmptyState title="页面不存在" description="请从导航选择治理页面。">
+    <EmptyState :title="t('notFound.title')" :description="t('notFound.description')">
       <RouterLink to="/" class="inline-flex items-center gap-1 text-sm hover:underline">
-        <ArrowLeft class="size-4" />返回项目边界
+        <ArrowLeft class="size-4" />{{ t('notFound.back') }}
       </RouterLink>
     </EmptyState>
   </div>

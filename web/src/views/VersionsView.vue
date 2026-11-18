@@ -6,6 +6,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useGovernanceStore } from '@/stores/governance'
 import { formatDate } from '@/lib/format'
+import { t } from '@/i18n'
 
 const store = useGovernanceStore()
 const versions = computed(() => store.versions.slice().sort((a, b) => b.version - a.version))
@@ -13,40 +14,40 @@ const versions = computed(() => store.versions.slice().sort((a, b) => b.version 
 
 <template>
   <div class="page space-y-4">
-    <PageHeader title="版本历史" description="已批准的治理快照；发布不改变运行时配置，也不是工具调用授权。" />
-    <EmptyState v-if="!store.activeProjectId" title="请选择项目" description="选择项目后查看版本历史。" />
-    <div v-else-if="store.loading" class="panel p-5 text-sm" role="status">正在加载版本…</div>
+    <PageHeader :title="t('versions.title')" :description="t('versions.description')" />
+    <EmptyState v-if="!store.activeProjectId" :title="t('common.selectProject')" :description="t('versions.emptyProject')" />
+    <div v-else-if="store.loading" class="panel p-5 text-sm" role="status">{{ t('versions.loading') }}</div>
     <div v-else-if="store.error" class="panel p-5 text-sm text-destructive" role="alert">
-      加载失败：{{ store.error }} <button class="ml-2 underline" @click="store.refreshProject()">重试</button>
+      {{ t('common.loadFailed', { error: store.error }) }} <button class="ml-2 underline" @click="store.refreshProject()">{{ t('common.retry') }}</button>
     </div>
     <section v-else class="panel overflow-hidden">
       <div class="panel-header">
         <div>
-          <h2 class="panel-title">已发布版本</h2>
-          <p class="panel-kicker">共 {{ versions.length }} 个版本 · 当前本地版本 {{ store.policy?.version ?? '未发布' }}</p>
+          <h2 class="panel-title">{{ t('versions.listTitle') }}</h2>
+          <p class="panel-kicker">{{ t('versions.listKicker', { count: versions.length, version: store.policy?.version ?? t('common.notPublished') }) }}</p>
         </div>
       </div>
       <div v-if="!versions.length" class="p-8 text-center">
-        <EmptyState title="尚无已发布版本" description="批准提案后将创建版本。" />
+        <EmptyState :title="t('versions.emptyTitle')" :description="t('versions.emptyDescription')" />
       </div>
       <div v-else class="overflow-x-auto">
         <table class="data-table min-w-[720px]">
           <thead>
             <tr>
-              <th scope="col">版本</th>
-              <th scope="col">提案</th>
-              <th scope="col">上一版本</th>
-              <th scope="col">发布时间</th>
-              <th scope="col">审批人</th>
-              <th scope="col" class="num">规则数</th>
-              <th scope="col" class="num">已激活</th>
+              <th scope="col">{{ t('versions.columnVersion') }}</th>
+              <th scope="col">{{ t('versions.columnProposal') }}</th>
+              <th scope="col">{{ t('versions.columnPrevious') }}</th>
+              <th scope="col">{{ t('versions.columnPublished') }}</th>
+              <th scope="col">{{ t('versions.columnApprover') }}</th>
+              <th scope="col" class="num">{{ t('versions.columnRules') }}</th>
+              <th scope="col" class="num">{{ t('versions.columnActive') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="v in versions" :key="v.version">
               <td>
-                <RouterLink :to="`/versions/${v.version}`" class="font-medium underline-offset-4 hover:underline">版本 {{ v.version }}</RouterLink>
-                <span v-if="store.policy?.version === v.version" class="ml-2 text-[10px] text-info">当前</span>
+                <RouterLink :to="`/versions/${v.version}`" class="font-medium underline-offset-4 hover:underline">{{ t('common.version', { version: v.version }) }}</RouterLink>
+                <span v-if="store.policy?.version === v.version" class="ml-2 text-[10px] text-info">{{ t('common.current') }}</span>
               </td>
               <td class="break-all font-mono text-xs">{{ v.proposalId }}</td>
               <td>{{ v.previousVersion ?? '—' }}</td>
