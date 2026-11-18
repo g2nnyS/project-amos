@@ -16,6 +16,7 @@ npm run console
 npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 ```
 
+无界面运行：`npm run service` 只编译后端（`build:service`），以 `serve --api-only` 启动治理 API，无需构建 `web/` 或启动 Tauri；`dist/console/` 缺失时也能启动，`/` 返回 404。已构建时用 `npm run console:serve -- --api-only`。监听地址、Host/Origin 校验、状态目录和人类/Agent 令牌规则与控制台模式相同。
 服务仅接受 `http://127.0.0.1:<port>`，不要改用 localhost、局域网地址或反向代理。默认端口 4310；端口占用时用 `--port` 指定其他端口。前端使用 hash 路由，刷新治理页面不会依赖服务器开放任意 SPA 路径。
 若浏览器在另一台机器，可由人类在浏览器所在机器建立 `ssh -N -L 4310:127.0.0.1:4310 user@server` 隧道，再打开 `http://127.0.0.1:4310`；两端端口须一致以保留 Host/Origin 校验，不要为远程预览改成公网监听。
 默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。

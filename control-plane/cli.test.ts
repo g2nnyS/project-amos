@@ -24,6 +24,7 @@ import {
   readCredentialFile,
   resolveCliPaths,
   runCli,
+  startServe,
   type CliIo,
 } from './cli.ts';
 
@@ -192,6 +193,65 @@ test('serve prints only the loopback URL and credential instructions, never toke
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('serve --api-only runs the governance API without console assets', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    const missingStatic = join(dir, 'no-console');
+
+    await assert.rejects(
+      () => startServe({ dataDir, workspace, port: 0, rootDir: ROOT, staticDir: missingStatic }),
+      /listen_failed/,
+    );
+
+    const io = captureIo();
+    const code = await runCli(
+      ['serve', '--api-only', '--data-dir', dataDir, '--workspace', workspace, '--port', '0'],
+      io,
+      { waitForShutdown: false, rootDir: ROOT, staticDir: missingStatic },
+    );
+    assert.equal(code, 0);
+    assert.match(io.stdoutLines.join('\n'), /治理 API（无控制台界面）: http:\/\/127\.0\.0\.1:[0-9]+/);
+
+    const handle = await startServe({
+      dataDir,
+      workspace,
+      port: 0,
+      rootDir: ROOT,
+      apiOnly: true,
+      staticDir: missingStatic,
+    });
+    try {
+      const status = await fetch(`${handle.url}/api/status`);
+      assert.equal(status.status, 200);
+      assert.equal((await status.json() as { mode: string }).mode, 'managed-opt-in');
+
+      const agentToken = (await readFile(join(dataDir, AGENT_TOKEN_FILE), 'utf8')).trim();
+      const config = await fetch(`${handle.url}/api/config`, {
+        headers: { authorization: `Bearer ${agentToken}` },
+      });
+      assert.equal(config.status, 200);
+
+      const index = await fetch(`${handle.url}/`);
+      assert.equal(index.status, 404);
+      await index.arrayBuffer();
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('--api-only is a serve option only', async () => {
+  const io = captureIo();
+  const code = await runCli(['init', '--api-only'], io);
+  assert.equal(code, 2);
+  assert.match(io.stderrLines.join('\n'), /unknown_option/);
 });
 
 function captureIo(): CliIo & {

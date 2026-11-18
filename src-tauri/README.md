@@ -107,6 +107,8 @@ npm run build
 
 ```bash
 npm run console
+# 仅治理 API，不构建前端：
+npm run service
 ```
 
 ## 生产构建

@@ -123,6 +123,8 @@ npm test
 ```bash
 npm run console
 # 若已执行过构建，可直接运行：npm run console:serve
+# 无界面运行：只编译后端，提供治理 API，不加载控制台资源
+npm run service
 ```
 
 在浏览器打开服务输出的 `http://127.0.0.1:4310`（请使用 `127.0.0.1` 以保留 Host/Origin 校验）。在本机编辑器打开服务提示的 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` 粘贴登录（切勿将令牌发到聊天、URL 或日志）。创建项目、导入或编辑规则、提交提案并人工批准发布后，控制台会将 P1 快照原子写入 `<workspace>/.pi/activation.json`。完整参数与备份说明见 [本地治理控制台](docs/local-governance.md) 与 [前端说明](web/README.md)。

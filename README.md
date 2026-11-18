@@ -129,6 +129,8 @@ npm test
 ```bash
 npm run console
 # Or skip rebuilding if dist/ is already up to date: npm run console:serve
+# Headless: build only the backend and serve the governance API without console assets
+npm run service
 ```
 
 ### Desktop Application (Tauri)
