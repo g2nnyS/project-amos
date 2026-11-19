@@ -100,8 +100,6 @@ function refuseApiOnly(service: DiscoveredService): void {
  * never signals the reused service.
  */
 function runReused(service: DiscoveredService): void {
-  process.stdout.write(`${REUSED_STARTUP_LINE} ${service.url}\n`);
-
   let exiting = false;
   const finish = (): void => {
     if (exiting) {
@@ -121,6 +119,9 @@ function runReused(service: DiscoveredService): void {
   process.stdin.on('end', finish);
   process.stdin.on('error', () => undefined);
   process.stdin.resume();
+  // Announce readiness only after shutdown handlers are installed. The desktop
+  // host may close immediately after consuming this line.
+  process.stdout.write(`${REUSED_STARTUP_LINE} ${service.url}\n`);
 }
 
 /** Start and supervise an owned CLI service. */
