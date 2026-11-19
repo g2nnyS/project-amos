@@ -130,6 +130,8 @@ const enUS: Messages = {
     loginLede: 'Enter your password to unlock the local console. The app never stores your password in plain text.',
     newPassword: 'New password (12 to 1024 characters)',
     confirmPassword: 'Confirm password',
+    enrollmentToken: 'Human token',
+    enrollmentTokenHelp: 'Paste the token from the human.token file in the Amos state directory.',
     password: 'Password',
     setupSubmit: 'Set password',
     loginSubmit: 'Sign in',
