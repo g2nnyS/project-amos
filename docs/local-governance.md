@@ -19,11 +19,12 @@ npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 无界面运行：`npm run service` 只编译后端（`build:service`），以 `serve --api-only` 启动治理 API，无需构建 `web/` 或启动 Tauri；`dist/console/` 缺失时也能启动，`/` 返回 404。已构建时用 `npm run console:serve -- --api-only`。监听地址、Host/Origin 校验、状态目录和人类/Agent 令牌规则与控制台模式相同。
 服务仅接受 `http://127.0.0.1:<port>`，不要改用 localhost、局域网地址或反向代理。默认端口 4310；端口占用时用 `--port` 指定其他端口。前端使用 hash 路由，刷新治理页面不会依赖服务器开放任意 SPA 路径。
 若浏览器在另一台机器，可由人类在浏览器所在机器建立 `ssh -N -L 4310:127.0.0.1:4310 user@server` 隧道，再打开 `http://127.0.0.1:4310`；两端端口须一致以保留 Host/Origin 校验，不要为远程预览改成公网监听。
-默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。
-首次打开先设置并确认 12 至 1024 字符的登录密码。Tauri 桌面启动通过私有 IPC 启动器提供 10 分钟的一次性设置授权，无需手动输入 token；后续使用密码登录。应用不保存密码明文或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。Agent 使用独立 Bearer token，与桌面人类密码会话分离。
+默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。同一状态目录同一时间只允许一个 `serve` 实例，重复启动以 `service_already_running` 拒绝。运行中的 `service.lock` 和 `service.json` 分别用于协作式单实例互斥和 loopback 实例发现，不记录令牌，也不构成同 UID 安全边界；正常关闭会清理这两个文件。
+首次打开先设置并确认 12 至 1024 字符的登录密码。Tauri 桌面自己启动服务时，通过私有 IPC 启动器提供 10 分钟的一次性设置授权，无需手动输入 token；浏览器或 Tauri 复用已有服务时，首次设密需粘贴 `human.token` 中的人类令牌。后续使用密码登录。应用不保存密码明文或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。Agent 使用独立 Bearer token，与桌面人类密码会话分离。
 桌面登录只提供密码方式。登录不代替逐项治理审批。不要把凭据贴到聊天、URL 或日志。
 令牌文件须属当前用户且权限 0600，目录须为 0700；现有权限错误、符号链接或损坏状态会拒绝启动，不自动删除或重置。
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
+Tauri 启动时复用同状态目录中健康且带控制台的服务，关闭窗口不会停止该已有实例；桌面自己启动的服务仍随窗口关闭。纯 API 服务没有控制台资源，桌面会提示先停止该服务或改用 API/其他客户端，不会打开返回 404 的页面。
 
 1. 创建项目并填写规范化绝对 workspace；该路径用于策略绑定，不授权网页读取该目录。
 2. 导入仓库规则或从已发布版本开始，编辑确定性安全/工程规则、纯建议性工程规范/设计偏好（`expressivity: advisory_only`、`predicate: null`、`policy_class: engineering`）及激活/排除集合与动态注入配置（`injection.baselineRuleIds`、`injection.routes`），先校验再提交提案。

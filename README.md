@@ -145,7 +145,7 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-See [src-tauri/README.md](src-tauri/README.md) for setup instructions and architecture details.
+The desktop reuses a healthy console service from the same state directory and leaves that existing service running when the window closes. A second `serve` on the same state directory is rejected; see [Local Governance](docs/local-governance.md) and [src-tauri/README.md](src-tauri/README.md).
 
 **Bundle sizes:**
 - Linux AppImage: ~10 MB
