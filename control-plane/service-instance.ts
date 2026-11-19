@@ -15,18 +15,20 @@
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
+  constants,
   fchmodSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   renameSync,
   unlinkSync,
   writeSync,
   type Stats,
 } from 'node:fs';
-import { chmod, lstat, mkdir, readFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 export const SERVICE_LOCK_FILE = 'service.lock';
@@ -34,6 +36,8 @@ export const SERVICE_DESCRIPTOR_FILE = 'service.json';
 
 const DIRECTORY_MODE = 0o700;
 const RECORD_MODE = 0o600;
+const RECORD_OPEN_FLAGS =
+  constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const MAX_RECORD_BYTES = 4096;
 const MAX_LOCK_ATTEMPTS = 32;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 1500;
@@ -89,6 +93,10 @@ function currentUid(): number | null {
   return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
+function loopbackUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
 function isPrivateRecord(stat: Stats): boolean {
   const uid = currentUid();
   return (
@@ -97,6 +105,86 @@ function isPrivateRecord(stat: Stats): boolean {
     (uid === null || stat.uid === uid) &&
     (stat.mode & 0o777) === RECORD_MODE
   );
+}
+
+type PrivateRecord =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'rejected' }
+  | { readonly kind: 'invalid' }
+  | { readonly kind: 'ok'; readonly raw: string };
+
+/**
+ * Read a private record with a single open, then validate the opened object.
+ * Opening first means final-component symlinks are rejected by O_NOFOLLOW
+ * rather than by a separate pre-open path check. O_NONBLOCK keeps a FIFO or
+ * device at the record path from blocking the caller.
+ */
+function readPrivateRecord(
+  path: string,
+  accept: (stat: Stats) => boolean,
+): PrivateRecord {
+  let fd: number;
+  try {
+    fd = openSync(path, RECORD_OPEN_FLAGS);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { kind: 'missing' }
+      : { kind: 'rejected' };
+  }
+
+  try {
+    let stat: Stats;
+    try {
+      stat = fstatSync(fd);
+    } catch {
+      return { kind: 'invalid' };
+    }
+    if (!accept(stat)) {
+      return { kind: 'rejected' };
+    }
+    if (stat.size > MAX_RECORD_BYTES) {
+      return { kind: 'invalid' };
+    }
+    if (constants.O_NOFOLLOW === 0) {
+      let linkStat: Stats;
+      try {
+        linkStat = lstatSync(path);
+      } catch {
+        return { kind: 'rejected' };
+      }
+      if (
+        linkStat.isSymbolicLink() ||
+        linkStat.dev !== stat.dev ||
+        linkStat.ino !== stat.ino
+      ) {
+        return { kind: 'rejected' };
+      }
+    }
+
+    const buffer = Buffer.alloc(stat.size);
+    let read = 0;
+    try {
+      while (read < buffer.length) {
+        const count = readSync(fd, buffer, read, buffer.length - read, read);
+        if (count === 0) {
+          break;
+        }
+        read += count;
+      }
+    } catch {
+      return { kind: 'invalid' };
+    }
+    if (read !== buffer.length) {
+      return { kind: 'invalid' };
+    }
+    return { kind: 'ok', raw: buffer.toString('utf8') };
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* best effort */
+    }
+  }
 }
 
 /**
@@ -179,29 +267,19 @@ function removeTemp(path: string): void {
 }
 
 function readLockState(path: string): LockState {
-  let stat: Stats;
-  try {
-    stat = lstatSync(path);
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT'
-      ? { kind: 'missing' }
-      : { kind: 'protected' };
+  const result = readPrivateRecord(path, isPrivateRecord);
+  if (result.kind === 'missing') {
+    return { kind: 'missing' };
   }
-  if (!isPrivateRecord(stat)) {
+  if (result.kind === 'rejected') {
     return { kind: 'protected' };
   }
-  if (stat.size > MAX_RECORD_BYTES) {
-    return { kind: 'invalid' };
-  }
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
+  if (result.kind === 'invalid') {
     return { kind: 'invalid' };
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(result.raw);
   } catch {
     return { kind: 'invalid' };
   }
@@ -398,7 +476,7 @@ export async function publishServiceDescriptor(
     version: 1,
     instanceId: input.instanceId,
     pid,
-    url: `http://127.0.0.1:${input.port}`,
+    url: loopbackUrl(input.port),
     console: input.console,
   };
   const temp = writePrivateTemp(
@@ -423,17 +501,12 @@ export async function removeServiceDescriptor(
   instanceId: string,
 ): Promise<void> {
   const path = join(resolve(dataDirInput), SERVICE_DESCRIPTOR_FILE);
-  let stat: Stats;
-  try {
-    stat = lstatSync(path);
-  } catch {
-    return;
-  }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RECORD_BYTES) {
+  const result = readPrivateRecord(path, (stat) => stat.isFile());
+  if (result.kind !== 'ok') {
     return;
   }
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = JSON.parse(result.raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return;
     }
@@ -446,7 +519,13 @@ export async function removeServiceDescriptor(
   }
 }
 
-function parseDescriptor(value: unknown): ServiceDescriptor | null {
+interface ParsedDescriptor {
+  readonly instanceId: string;
+  readonly port: number;
+  readonly console: boolean;
+}
+
+function parseDescriptor(value: unknown): ParsedDescriptor | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return null;
   }
@@ -483,29 +562,27 @@ function parseDescriptor(value: unknown): ServiceDescriptor | null {
     return null;
   }
   const port = Number(match[1]);
-  if (port < 1 || port > 65535) {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
     return null;
   }
   if (typeof record.console !== 'boolean') {
     return null;
   }
   return {
-    version: 1,
     instanceId: record.instanceId,
-    pid: record.pid,
-    url: record.url,
+    port,
     console: record.console,
   };
 }
 
 async function probeStatus(
-  url: string,
+  port: number,
   timeoutMs: number,
 ): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${url}/api/status`, {
+    const response = await fetch(`${loopbackUrl(port)}/api/status`, {
       method: 'GET',
       headers: { accept: 'application/json' },
       redirect: 'error',
@@ -539,13 +616,11 @@ export async function discoverRunningService(
 ): Promise<DiscoveredService | null> {
   try {
     const path = join(resolve(dataDir), SERVICE_DESCRIPTOR_FILE);
-    const stat = await lstat(path);
-    if (!isPrivateRecord(stat) || stat.size > MAX_RECORD_BYTES) {
+    const result = readPrivateRecord(path, isPrivateRecord);
+    if (result.kind !== 'ok') {
       return null;
     }
-    const parsed = parseDescriptor(
-      JSON.parse(await readFile(path, 'utf8')) as unknown,
-    );
+    const parsed = parseDescriptor(JSON.parse(result.raw) as unknown);
     if (parsed === null) {
       return null;
     }
@@ -558,12 +633,12 @@ export async function discoverRunningService(
         ? Math.min(Math.floor(configured), MAX_DISCOVERY_TIMEOUT_MS)
         : DEFAULT_DISCOVERY_TIMEOUT_MS;
 
-    const liveInstanceId = await probeStatus(parsed.url, timeoutMs);
+    const liveInstanceId = await probeStatus(parsed.port, timeoutMs);
     if (liveInstanceId !== parsed.instanceId) {
       return null;
     }
     return {
-      url: parsed.url,
+      url: loopbackUrl(parsed.port),
       instanceId: parsed.instanceId,
       console: parsed.console,
     };

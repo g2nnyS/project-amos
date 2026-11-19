@@ -380,11 +380,12 @@ test('descriptor is owner-only, non-secret, and reflects console mode', async ()
     });
     try {
       const path = join(dataDir, SERVICE_DESCRIPTOR_FILE);
+      const raw = await readFile(path, 'utf8');
       const stat = await lstat(path);
       assert.equal(stat.mode & 0o777, 0o600);
       assert.equal(stat.isSymbolicLink(), false);
 
-      const descriptor = await readDescriptor(dataDir);
+      const descriptor = JSON.parse(raw) as DescriptorRecord;
       assert.deepEqual(Object.keys(descriptor).sort(), [
         'console',
         'instanceId',
@@ -405,7 +406,6 @@ test('descriptor is owner-only, non-secret, and reflects console mode', async ()
 
       const human = (await readFile(join(dataDir, HUMAN_TOKEN_FILE), 'utf8')).trim();
       const agent = (await readFile(join(dataDir, AGENT_TOKEN_FILE), 'utf8')).trim();
-      const raw = await readFile(path, 'utf8');
       assert.ok(!raw.includes(human));
       assert.ok(!raw.includes(agent));
     } finally {
