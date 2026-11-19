@@ -136,6 +136,8 @@ export interface GovernanceServerOptions {
   readonly seed?: Candidate | readonly unknown[] | null;
   /** Directory containing the closed asset-manifest.json and its flat assets. */
   readonly staticDir?: string;
+  /** Published service instance id; included in GET /api/status only when set. */
+  readonly instanceId?: string;
   readonly now?: () => number;
   readonly sessionTtlMs?: number;
   readonly anonymousSessionTtlMs?: number;
@@ -198,6 +200,7 @@ export function createGovernanceServer(
   const seed = normalizeSeed(options.seed);
   const observations = options.observations ?? null;
   const jevSettings = options.jevSettings ?? null;
+  const instanceId = options.instanceId;
   let staticAssets: ReadonlyMap<string, StaticAsset> = new Map();
 
   const server = createServer((req, res) => {
@@ -373,6 +376,7 @@ export function createGovernanceServer(
         enforcement: true,
         defaultEnabled: false,
         trustBoundary: false,
+        ...(instanceId === undefined ? {} : { instanceId }),
         ...(projectCount === null ? {} : { projectCount }),
       });
       return;

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { MAX_CANDIDATE_BYTES } from './compiler.ts';
 import type { Candidate, Project, Proposal } from './contracts.ts';
+import { startGovernanceServer } from './http.ts';
 import { ObservationLogs } from './observations.ts';
+import { createControlPlane } from './store.ts';
 import {
   createHarness,
   fetchJson,
@@ -308,6 +311,42 @@ test('Host is unique, numeric, and bound to the actual loopback port', async () 
     });
   } finally {
     await harness.close();
+  }
+});
+
+test('GET /api/status includes instanceId only when configured', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'amos-http-instance-'));
+  const schemaText = await readFile(
+    join(process.cwd(), 'constraints', 'schema.json'),
+    'utf8',
+  );
+  const service = createControlPlane({
+    databasePath: join(dir, 'governance.sqlite'),
+    rawSchema: schemaText,
+  });
+  const server = await startGovernanceServer({
+    service,
+    humanToken: TEST_HUMAN_TOKEN,
+    agentToken: TEST_AGENT_TOKEN,
+    rawSchema: JSON.parse(schemaText) as Record<string, unknown>,
+    port: 0,
+    instanceId: 'c'.repeat(64),
+  });
+  try {
+    const response = await fetch(`${server.url}/api/status`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      mode: 'managed-opt-in',
+      enforcement: true,
+      defaultEnabled: false,
+      trustBoundary: false,
+      instanceId: 'c'.repeat(64),
+      projectCount: 0,
+    });
+  } finally {
+    await server.close();
+    service.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

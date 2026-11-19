@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import {
   chmod,
   lstat,
@@ -16,6 +17,7 @@ import { createStaticDir } from './http-test-support.ts';
 
 import {
   AGENT_TOKEN_FILE,
+  CliError,
   HUMAN_TOKEN_FILE,
   assertStateOutsideWorkspace,
   defaultStateDir,
@@ -26,7 +28,13 @@ import {
   runCli,
   startServe,
   type CliIo,
+  type ServeHandle,
 } from './cli.ts';
+import {
+  SERVICE_DESCRIPTOR_FILE,
+  SERVICE_LOCK_FILE,
+  discoverRunningService,
+} from './service-instance.ts';
 
 const ROOT = process.cwd();
 
@@ -252,6 +260,326 @@ test('--api-only is a serve option only', async () => {
   const code = await runCli(['init', '--api-only'], io);
   assert.equal(code, 2);
   assert.match(io.stderrLines.join('\n'), /unknown_option/);
+});
+
+interface DescriptorRecord {
+  version: number;
+  instanceId: string;
+  pid: number;
+  url: string;
+  console: boolean;
+}
+
+async function readDescriptor(dataDir: string): Promise<DescriptorRecord> {
+  return JSON.parse(
+    await readFile(join(dataDir, SERVICE_DESCRIPTOR_FILE), 'utf8'),
+  ) as DescriptorRecord;
+}
+
+async function exitedPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+    stdio: 'ignore',
+  });
+  const pid = child.pid;
+  await new Promise<void>((resolveExit, rejectExit) => {
+    child.once('error', rejectExit);
+    child.once('exit', () => resolveExit());
+  });
+  assert.equal(typeof pid, 'number');
+  return pid!;
+}
+
+async function serveApi(dataDir: string, workspace: string): Promise<ServeHandle> {
+  return await startServe({
+    dataDir,
+    workspace,
+    port: 0,
+    rootDir: ROOT,
+    apiOnly: true,
+  });
+}
+
+test('serve takes a same-dataDir singleton lock and restarts immediately after close', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+
+    const first = await serveApi(dataDir, workspace);
+    try {
+      const lock = await lstat(join(dataDir, SERVICE_LOCK_FILE));
+      assert.equal(lock.mode & 0o777, 0o600);
+      assert.equal(lock.isSymbolicLink(), false);
+
+      await assert.rejects(
+        () => serveApi(dataDir, workspace),
+        (error: unknown) =>
+          error instanceof CliError && error.code === 'service_already_running',
+      );
+    } finally {
+      await first.close();
+    }
+
+    await first.close();
+    await assert.rejects(
+      () => lstat(join(dataDir, SERVICE_LOCK_FILE)),
+      { code: 'ENOENT' },
+    );
+
+    const second = await serveApi(dataDir, workspace);
+    await second.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('concurrent starts leave exactly one running service', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+
+    const results = await Promise.allSettled([
+      serveApi(dataDir, workspace),
+      serveApi(dataDir, workspace),
+    ]);
+    const running: ServeHandle[] = [];
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        running.push(result.value);
+      } else {
+        assert.equal(
+          result.reason instanceof CliError ? result.reason.code : null,
+          'service_already_running',
+        );
+      }
+    }
+    assert.equal(running.length, 1);
+    await running[0]!.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('descriptor is owner-only, non-secret, and reflects console mode', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    const staticDir = await createStaticDir(dir);
+
+    const api = await startServe({
+      dataDir,
+      workspace,
+      port: 0,
+      rootDir: ROOT,
+      apiOnly: true,
+    });
+    try {
+      const path = join(dataDir, SERVICE_DESCRIPTOR_FILE);
+      const stat = await lstat(path);
+      assert.equal(stat.mode & 0o777, 0o600);
+      assert.equal(stat.isSymbolicLink(), false);
+
+      const descriptor = await readDescriptor(dataDir);
+      assert.deepEqual(Object.keys(descriptor).sort(), [
+        'console',
+        'instanceId',
+        'pid',
+        'url',
+        'version',
+      ]);
+      assert.equal(descriptor.version, 1);
+      assert.match(descriptor.instanceId, /^[a-f0-9]{64}$/);
+      assert.equal(descriptor.pid, process.pid);
+      assert.equal(descriptor.url, api.url);
+      assert.equal(descriptor.console, false);
+
+      const status = await fetch(`${api.url}/api/status`);
+      assert.equal(status.status, 200);
+      const body = (await status.json()) as { instanceId?: string };
+      assert.equal(body.instanceId, descriptor.instanceId);
+
+      const human = (await readFile(join(dataDir, HUMAN_TOKEN_FILE), 'utf8')).trim();
+      const agent = (await readFile(join(dataDir, AGENT_TOKEN_FILE), 'utf8')).trim();
+      const raw = await readFile(path, 'utf8');
+      assert.ok(!raw.includes(human));
+      assert.ok(!raw.includes(agent));
+    } finally {
+      await api.close();
+    }
+    await assert.rejects(
+      () => lstat(join(dataDir, SERVICE_DESCRIPTOR_FILE)),
+      { code: 'ENOENT' },
+    );
+
+    const console = await startServe({
+      dataDir,
+      workspace,
+      port: 0,
+      rootDir: ROOT,
+      staticDir,
+    });
+    try {
+      assert.equal((await readDescriptor(dataDir)).console, true);
+    } finally {
+      await console.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('startup failure releases the lock for an immediate retry', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    const missingStatic = join(dir, 'no-console');
+
+    await assert.rejects(
+      () =>
+        startServe({
+          dataDir,
+          workspace,
+          port: 0,
+          rootDir: ROOT,
+          staticDir: missingStatic,
+        }),
+      /listen_failed/,
+    );
+    await assert.rejects(
+      () => lstat(join(dataDir, SERVICE_LOCK_FILE)),
+      { code: 'ENOENT' },
+    );
+    await assert.rejects(
+      () => lstat(join(dataDir, SERVICE_DESCRIPTOR_FILE)),
+      { code: 'ENOENT' },
+    );
+
+    const retry = await serveApi(dataDir, workspace);
+    await retry.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lock left by a dead process is reclaimed', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    await chmod(dataDir, 0o700);
+
+    const staleInstanceId = 'a'.repeat(64);
+    const lockPath = join(dataDir, SERVICE_LOCK_FILE);
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        version: 1,
+        instanceId: staleInstanceId,
+        pid: await exitedPid(),
+      }),
+      { mode: 0o600 },
+    );
+    await chmod(lockPath, 0o600);
+
+    const handle = await serveApi(dataDir, workspace);
+    try {
+      const current = JSON.parse(await readFile(lockPath, 'utf8')) as {
+        instanceId: string;
+      };
+      assert.match(current.instanceId, /^[a-f0-9]{64}$/);
+      assert.notEqual(current.instanceId, staleInstanceId);
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('descriptor publication replaces a symlink without following it', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    await chmod(dataDir, 0o700);
+
+    const victim = join(dir, 'victim.txt');
+    await writeFile(victim, 'do not touch\n', { mode: 0o600 });
+    const descriptorPath = join(dataDir, SERVICE_DESCRIPTOR_FILE);
+    await symlink(victim, descriptorPath);
+
+    const handle = await serveApi(dataDir, workspace);
+    try {
+      assert.equal(await readFile(victim, 'utf8'), 'do not touch\n');
+      const stat = await lstat(descriptorPath);
+      assert.equal(stat.isSymbolicLink(), false);
+      assert.equal(stat.mode & 0o777, 0o600);
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('discovery requires an owner-only descriptor and a matching live instance', async () => {
+  const dir = await makeTemp();
+  try {
+    const workspace = join(dir, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const dataDir = join(dir, 'state');
+    const handle = await serveApi(dataDir, workspace);
+    const path = join(dataDir, SERVICE_DESCRIPTOR_FILE);
+    const descriptor = await readDescriptor(dataDir);
+
+    assert.deepEqual(await discoverRunningService(dataDir), {
+      url: handle.url,
+      instanceId: descriptor.instanceId,
+      console: false,
+    });
+
+    await chmod(path, 0o644);
+    assert.equal(await discoverRunningService(dataDir), null);
+    await chmod(path, 0o600);
+
+    const invalidRecords: unknown[] = [
+      { ...descriptor, instanceId: 'b'.repeat(64) },
+      { ...descriptor, url: `http://192.0.2.1:${handle.port}` },
+      { ...descriptor, version: 2 },
+      { ...descriptor, pid: 0 },
+      { ...descriptor, console: 'yes' },
+    ];
+    for (const record of invalidRecords) {
+      await writeFile(path, JSON.stringify(record), { mode: 0o600 });
+      await chmod(path, 0o600);
+      assert.equal(await discoverRunningService(dataDir), null);
+    }
+
+    await writeFile(path, JSON.stringify(descriptor), { mode: 0o600 });
+    await chmod(path, 0o600);
+    await handle.close();
+    await assert.rejects(() => lstat(path), { code: 'ENOENT' });
+
+    await writeFile(path, JSON.stringify(descriptor), { mode: 0o600 });
+    await chmod(path, 0o600);
+    assert.equal(
+      await discoverRunningService(dataDir, { timeoutMs: 200 }),
+      null,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 function captureIo(): CliIo & {
