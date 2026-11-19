@@ -5,14 +5,18 @@ import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 const auth = useAuthStore()
-const password = ref(''), confirmation = ref('')
+const password = ref(''), confirmation = ref(''), token = ref('')
 const setupRequired = computed(() => auth.authentication?.setupRequired === true)
+const needsEnrollmentToken = computed(() => setupRequired.value && !auth.setupGranted)
 async function submit() {
   if (auth.loading) return
   if (setupRequired.value) {
     if (password.value.length < 12 || password.value.length > 1024) { auth.error = t('auth.errors.passwordLength'); return }
     if (password.value !== confirmation.value) { auth.error = t('auth.passwordMismatch'); return }
-    try { await auth.setup(password.value); password.value = ''; confirmation.value = '' } catch {}
+    try {
+      await auth.setup(password.value, needsEnrollmentToken.value ? { token: token.value } : undefined)
+      password.value = ''; confirmation.value = ''; token.value = ''
+    } catch {}
     return
   }
   try { await auth.loginWith({ method: 'password', password: password.value }); password.value = '' } catch {}
@@ -38,6 +42,11 @@ async function submit() {
               <label class="field">
                 <span class="field-label">{{ t('auth.confirmPassword') }}</span>
                 <input v-model="confirmation" type="password" autocomplete="new-password" required class="control login-control" />
+              </label>
+              <label v-if="needsEnrollmentToken" class="field">
+                <span class="field-label">{{ t('auth.enrollmentToken') }}</span>
+                <input v-model="token" type="password" autocomplete="off" required class="control login-control" />
+                <span class="field-hint">{{ t('auth.enrollmentTokenHelp') }}</span>
               </label>
             </template>
 

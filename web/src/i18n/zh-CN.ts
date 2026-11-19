@@ -130,6 +130,8 @@ const zhCN = {
     loginLede: '输入密码解锁本机控制台。应用不会保存密码明文。',
     newPassword: '新密码（12 至 1024 个字符）',
     confirmPassword: '确认密码',
+    enrollmentToken: '人类令牌',
+    enrollmentTokenHelp: '粘贴 Amos 状态目录中 human.token 文件里的令牌。',
     password: '密码',
     setupSubmit: '设置密码',
     loginSubmit: '登录',

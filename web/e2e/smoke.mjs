@@ -47,6 +47,7 @@ if (!existsSync(chromePath)) {
 await mkdir(root, { recursive: true })
 const runDir = await mkdtemp(path.join(root, 'amos-governance-e2e-'))
 const dataDir = path.join(runDir, 'state')
+const enrollmentDataDir = path.join(runDir, 'enrollment-state')
 const downloadDir = path.join(runDir, 'downloads')
 const profile = path.join(runDir, 'chromium-profile')
 await mkdir(downloadDir, { recursive: true })
@@ -945,6 +946,45 @@ try {
     assert.equal(csp.length, 0, `CSP violations: ${JSON.stringify(csp)}`)
   })
 
+  await check('first setup without a desktop grant enrolls with the human token', async () => {
+    await server.close()
+    tokenIndex = 0
+    server = await startServe({
+      rootDir: repoRoot,
+      dataDir: enrollmentDataDir,
+      workspace: repoRoot,
+      staticDir,
+      port: 0,
+      tokenFactory: () => (tokenIndex++ === 0 ? synthetic.human : synthetic.agent),
+    })
+
+    const target = await send('Target.createTarget', { url: 'about:blank' }, null)
+    const attached = await send('Target.attachToTarget', { targetId: target.targetId, flatten: true }, null)
+    session = attached.sessionId
+    await Promise.all([send('Page.enable'), send('Runtime.enable'), send('Network.enable'), send('Log.enable')])
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `window.__amosCspViolations = []; window.addEventListener('securitypolicyviolation', (event) => { window.__amosCspViolations.push({ directive: event.violatedDirective, blockedURI: event.blockedURI }); });`,
+    })
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true }); Object.defineProperty(Navigator.prototype, 'language', { get: () => 'zh-CN', configurable: true });`,
+    })
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    await send('Page.navigate', { url: `${server.url}/` })
+    await waitFor(`document.readyState === 'complete' && document.querySelector('h1')?.textContent.includes('设置登录密码')`)
+    await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2 && ${visible('input[autocomplete="off"]')}`)
+    assert.equal(await evaluate(`document.body.innerText.includes('人类令牌') && document.body.innerText.includes('human.token')`), true)
+    await screenshot('human-token-password-setup')
+
+    await setBySelector('input[autocomplete="new-password"]', password)
+    await setByLabel('确认密码', password)
+    await setByLabel('人类令牌', token)
+    await click('button', '设置密码')
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    const stored = await readFile(path.join(enrollmentDataDir, 'human-password.json'), 'utf8')
+    assert.equal(stored.includes(password), false)
+    assert.equal((await stat(path.join(enrollmentDataDir, 'human-password.json'))).mode & 0o777, 0o600)
+  })
+
   await check('no runtime console errors or failed same-origin responses', async () => {
     assert.deepEqual(evidence.consoleErrors, [], `console errors: ${evidence.consoleErrors.join(' | ')}`)
     assert.deepEqual(evidence.exceptions, [], `exceptions: ${evidence.exceptions.join(' | ')}`)
@@ -970,6 +1010,7 @@ try {
   if (provider) await new Promise((resolve) => provider.close(() => resolve())).catch(() => {})
   // Remove synthetic credentials and verified download contents from the temp run.
   await rm(dataDir, { recursive: true, force: true }).catch(() => {})
+  await rm(enrollmentDataDir, { recursive: true, force: true }).catch(() => {})
   await rm(downloadDir, { recursive: true, force: true }).catch(() => {})
   await rm(profile, { recursive: true, force: true }).catch(() => {})
   evidence.temporaryRunDirectory = runDir
