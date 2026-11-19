@@ -152,9 +152,10 @@ npm run tauri build -- --target aarch64-unknown-linux-gnu
 
 1. **启动阶段**
    - Tauri启动Rust进程
-   - Rust执行`spawn_control_plane()`
-   - 启动Node.js子进程：`node dist/control-plane/cli.js serve --port 0`
-   - 读取stdout获取实际服务URL（如`http://127.0.0.1:xxxxx`）
+   - Rust执行`spawn_control_plane()`，启动Node.js桌面启动器
+   - 启动器检查默认状态目录：已有健康控制台服务时复用其实例；没有时启动`node dist/control-plane/cli.js serve --port 0`
+   - 读取stdout获取实际服务URL（如`http://127.0.0.1:xxxxx`）及 owned/reused 模式
+   - 纯 API 服务不提供控制台资源，启动器会给出诊断并退出，不打开404页面
 
 2. **运行阶段**
    - Tauri窗口使用系统WebView加载服务URL
@@ -162,8 +163,8 @@ npm run tauri build -- --target aarch64-unknown-linux-gnu
    - 所有治理逻辑、策略评估、审计日志在Node.js后端执行
 
 3. **退出阶段**
-   - 窗口关闭时Tauri发送终止信号
-   - Node.js子进程正常退出
+   - 窗口关闭时Tauri关闭桌面启动器
+   - owned模式下，启动器终止本窗口启动的Node.js服务；reused模式下只退出启动器，已有服务继续运行
    - Tauri进程退出
 
 ## 资源打包

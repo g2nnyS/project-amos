@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindow, WebviewWi
 
 const URL_TIMEOUT: Duration = Duration::from_secs(15);
 const URL_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const LAUNCHER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(windows)]
 const NODE_BIN: &str = "node.exe";
@@ -47,7 +48,41 @@ struct ServiceState {
     process: Mutex<Option<Child>>,
     service_url: String,
     /// One-use, ten-minute first-password grant. Taken by the main window.
+    /// `None` when the launcher attached to an already running console, so the
+    /// web UI falls back to human-token enrollment.
     setup_grant: Mutex<Option<String>>,
+}
+
+/// Whether this desktop session owns the service process or attached to one
+/// that was already running.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceMode {
+    Owned,
+    Reused,
+}
+
+/// Parse the launcher's URL startup line. The owned launcher forwards the
+/// CLI's line; a reused session reports the existing console instead.
+fn classify_startup_line(line: &str) -> Option<(ServiceMode, String)> {
+    for (marker, mode) in [
+        ("已有控制台:", ServiceMode::Reused),
+        ("本地控制台:", ServiceMode::Owned),
+    ] {
+        let Some((_, rest)) = line.split_once(marker) else {
+            continue;
+        };
+        let Some(url) = rest.split_whitespace().next() else {
+            continue;
+        };
+        let Ok(parsed) = Url::parse(url) else {
+            continue;
+        };
+        if parsed.scheme() != "http" || parsed.host_str() != Some("127.0.0.1") {
+            continue;
+        }
+        return Some((mode, url.to_string()));
+    }
+    None
 }
 
 /// 32 cryptographic random bytes as lowercase hex, the shape the control plane
@@ -122,9 +157,13 @@ fn control_plane_paths(
     Ok((node_path, launcher_path, data_dir))
 }
 
-/// Spawn the desktop launcher, which in turn starts the CLI with a private IPC
-/// channel. The grant travels only in the launcher's environment.
-fn spawn_control_plane(app: &AppHandle, setup_grant: &str) -> Result<(Child, String), String> {
+/// Spawn the desktop launcher, which either starts the CLI with a private IPC
+/// channel or attaches to an existing console. The grant travels only in the
+/// launcher's environment; a reused session never receives it.
+fn spawn_control_plane(
+    app: &AppHandle,
+    setup_grant: &str,
+) -> Result<(Child, ServiceMode, String), String> {
     let (node_path, launcher_path, working_dir) = control_plane_paths(app)?;
 
     if !node_path.is_file() {
@@ -159,7 +198,7 @@ fn spawn_control_plane(app: &AppHandle, setup_grant: &str) -> Result<(Child, Str
     // (EPIPE) after the URL has been observed. Later lines are discarded; the
     // CLI also prints token file paths, which do not belong in application
     // logs. stderr stays inherited for diagnostics.
-    let (url_tx, url_rx) = mpsc::channel::<String>();
+    let (url_tx, url_rx) = mpsc::channel::<(ServiceMode, String)>();
     if let Err(error) = thread::Builder::new()
         .name("control-plane-stdout".to_string())
         .spawn(move || {
@@ -173,11 +212,9 @@ fn spawn_control_plane(app: &AppHandle, setup_grant: &str) -> Result<(Child, Str
                     Ok(_) => {
                         if let Some(pending) = sender.as_ref() {
                             let text = String::from_utf8_lossy(&line);
-                            if text.contains("本地控制台:") {
-                                if let Some(url) = text.split_whitespace().last() {
-                                    let _ = pending.send(url.to_string());
-                                    sender = None;
-                                }
+                            if let Some(startup) = classify_startup_line(&text) {
+                                let _ = pending.send(startup);
+                                sender = None;
                             }
                         }
                     }
@@ -193,7 +230,7 @@ fn spawn_control_plane(app: &AppHandle, setup_grant: &str) -> Result<(Child, Str
     let deadline = Instant::now() + URL_TIMEOUT;
     loop {
         match url_rx.recv_timeout(URL_POLL_INTERVAL) {
-            Ok(url) => return Ok((child, url)),
+            Ok((mode, url)) => return Ok((child, mode, url)),
             Err(RecvTimeoutError::Disconnected) => {
                 let detail = match child.try_wait() {
                     Ok(Some(status)) => format!(" ({})", status),
@@ -233,6 +270,30 @@ fn spawn_control_plane(app: &AppHandle, setup_grant: &str) -> Result<(Child, Str
             ));
         }
     }
+}
+
+/// Stop only the launcher. Closing its stdin asks an owned launcher to forward
+/// SIGTERM to its own service and exit; a reused launcher exits without touching
+/// the existing service. A launcher that does not exit is killed after a bounded
+/// wait.
+fn shutdown_launcher(child: &mut Child) {
+    drop(child.stdin.take());
+
+    let deadline = Instant::now() + LAUNCHER_SHUTDOWN_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// A navigable console document: exact loopback origin and path, no query,
@@ -296,12 +357,15 @@ fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
             let setup_grant = generate_setup_grant()?;
-            let (child, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
+            let (child, mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
 
             app.manage(ServiceState {
                 process: Mutex::new(Some(child)),
                 service_url: service_url.clone(),
-                setup_grant: Mutex::new(Some(setup_grant)),
+                setup_grant: Mutex::new(match mode {
+                    ServiceMode::Owned => Some(setup_grant),
+                    ServiceMode::Reused => None,
+                }),
             });
 
             let window_url =
@@ -329,10 +393,45 @@ fn main() {
         if let tauri::RunEvent::Exit = event {
             if let Ok(mut process) = app_handle.state::<ServiceState>().process.lock() {
                 if let Some(mut child) = process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    shutdown_launcher(&mut child);
                 }
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_owned_startup_line() {
+        assert_eq!(
+            classify_startup_line("Amos Governance 本地控制台: http://127.0.0.1:4310\n"),
+            Some((ServiceMode::Owned, "http://127.0.0.1:4310".to_string()))
+        );
+    }
+
+    #[test]
+    fn classifies_reused_startup_line() {
+        assert_eq!(
+            classify_startup_line("Amos Governance 已有控制台: http://127.0.0.1:51234\r\n"),
+            Some((ServiceMode::Reused, "http://127.0.0.1:51234".to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_api_only_and_foreign_startup_lines() {
+        assert_eq!(
+            classify_startup_line(
+                "Amos Governance 治理 API（无控制台界面）: http://127.0.0.1:4310\n"
+            ),
+            None
+        );
+        assert_eq!(
+            classify_startup_line("Amos Governance 已有控制台: https://example.com\n"),
+            None
+        );
+        assert_eq!(classify_startup_line("模式: managed opt-in"), None);
+    }
 }
