@@ -160,7 +160,7 @@ test('the actual sandbox layout isolates parent files, descriptors, environment,
     assert.equal(acceptedUnixConnections, unixBaseline);
     assert.equal(fs.readFileSync(extraFile, 'utf8'), 'extra-private-fixture');
     for (const file of forbidden) assert.equal(fs.readFileSync(file, 'utf8'), marker);
-    assert.equal(fs.readFileSync(target, 'utf8'), '');
+    assert.equal(fs.fstatSync(targetFd).size, 0);
   } finally {
     fs.closeSync(targetFd); fs.closeSync(nodeFd); fs.closeSync(probeFd); fs.closeSync(privateFd);
     for (const fd of libraryFds) fs.closeSync(fd);
