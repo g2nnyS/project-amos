@@ -19,7 +19,6 @@ import {
   fchmodSync,
   fstatSync,
   fsyncSync,
-  lstatSync,
   openSync,
   readFileSync,
   writeSync,
@@ -213,27 +212,47 @@ function applyRecord(record: unknown, pending: Set<string>): void {
 }
 
 function readJournalText(auditPath: string): string | null {
-  let stat;
+  const flags =
+    constants.O_RDONLY |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
+
+  let fd: number | undefined;
   try {
-    stat = lstatSync(auditPath);
+    // Open first and inspect the descriptor. A path that changes between a
+    // check and a read cannot make recovery consume a different journal.
+    fd = openSync(auditPath, flags);
+    const stat = fstatSync(fd);
+    if (stat.isDirectory()) {
+      // Construction tolerates a directory so authorization append can fail
+      // closed at execution time with `audit_unavailable`.
+      return null;
+    }
+    if (!stat.isFile()) {
+      throw new JournalError();
+    }
+    return readFileSync(fd, 'utf8');
   } catch (error) {
+    if (error instanceof JournalError) {
+      throw error;
+    }
     if (isErrno(error, 'ENOENT')) {
       return null;
     }
+    if (isErrno(error, 'ELOOP')) {
+      // O_NOFOLLOW: the journal path is a symbolic link, not a journal.
+      throw new JournalError();
+    }
     throw error;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Read-only handle; recovery state is already determined by the read.
+      }
+    }
   }
-  if (stat.isSymbolicLink()) {
-    throw new JournalError();
-  }
-  if (stat.isDirectory()) {
-    // Construction tolerates a directory so authorization append can fail
-    // closed at execution time with `audit_unavailable`.
-    return null;
-  }
-  if (!stat.isFile()) {
-    throw new JournalError();
-  }
-  return readFileSync(auditPath, 'utf8');
 }
 
 function appendLine(

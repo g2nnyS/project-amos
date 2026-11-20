@@ -7,7 +7,7 @@
  * falling back to a stale hand-written configuration.
  */
 
-import { lstatSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type { CalibrationEvidence, ReviewerPolicy } from '../../review/calibration.ts';
@@ -82,16 +82,31 @@ export function readHostProjection(directory: string): HostProjectionLoad {
   const workspace = resolve(directory);
   const path = join(workspace, '.pi', 'amos.managed.json');
   let raw: string;
+  let fd: number | undefined;
   try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size <= 0 || stat.size > MAX_PROJECTION_BYTES) {
+    // Validate the opened descriptor rather than the path: a swap between a
+    // path check and a path read cannot substitute different bytes.
+    fd = openSync(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_PROJECTION_BYTES) {
       return { status: 'error' };
     }
-    raw = readFileSync(path, 'utf8');
+    raw = readFileSync(fd, 'utf8');
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'ENOENT'
       ? { status: 'absent' }
       : { status: 'error' };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // A read-only handle close failure cannot change the projection result.
+      }
+    }
   }
 
   let value: unknown;

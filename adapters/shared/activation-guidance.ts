@@ -11,7 +11,7 @@
  * adapter can still record tool events and apply its separate workflow gate.
  */
 
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 
 import { createActivationRuntime, type ActivationRuntime } from '../../activation/runtime.ts';
 import { deepFreeze } from '../../activation/json.ts';
@@ -72,11 +72,29 @@ export function loadActivationRuntime(
     ) {
       return { status: 'error', code: 'activation_guidance_error' };
     }
-    const stat = statSync(snapshotPath);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ACTIVATION_SNAPSHOT_BYTES) {
-      return { status: 'error', code: 'activation_guidance_error' };
+    let fd: number | undefined;
+    let raw: string;
+    try {
+      // Validate the opened descriptor, so the bytes parsed are the bytes of
+      // the file whose size and type were checked.
+      fd = openSync(
+        snapshotPath,
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+      );
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ACTIVATION_SNAPSHOT_BYTES) {
+        return { status: 'error', code: 'activation_guidance_error' };
+      }
+      raw = readFileSync(fd, 'utf8');
+    } finally {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd);
+        } catch {
+          // A read-only handle close failure cannot change the snapshot result.
+        }
+      }
     }
-    const raw = readFileSync(snapshotPath, 'utf8');
     if (raw.length === 0) return { status: 'error', code: 'activation_guidance_error' };
     // The runtime verifier requires a deep-frozen snapshot identity. A parsed
     // file is a fresh mutable graph, so freeze the bounded copy first.
