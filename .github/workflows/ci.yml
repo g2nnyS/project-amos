@@ -67,6 +67,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The `dev` integration branch is the sanctioned head that does not
+          # follow the feature-branch convention: feature branches merge into
+          # `dev`, and the `dev` -> `master` pull request is the release path.
+          if [[ "$HEAD_REF" == "dev" ]]; then
+            echo "Integration branch 'dev' is exempt from the feature-branch naming convention."
+            exit 0
+          fi
+
           if [[ "$HEAD_REF" =~ ^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9][a-z0-9._-]*$ ]]; then
             echo "Branch name is valid: $HEAD_REF"
             exit 0

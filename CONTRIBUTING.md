@@ -35,6 +35,7 @@ Rules:
 - Keep it short and descriptive, for example `fix/pi-hook-throw` or `docs/security-review-evidence`.
 - Do not use a bare `main`, `master`, `dev`, or personal name as a feature branch.
 - Bot branches are **not** exempt. `dependabot/...` and `renovate/...` fail this check by design. If bot-generated PRs are adopted later, add a narrowly scoped, human-reviewed exception for the specific bot actor and prefix; do not pre-emptively allow broad prefixes.
+- The `dev` integration branch is exempt when it is the pull request head: feature branches carry the naming convention, `dev` integrates them, and the `dev` → `master` pull request is the release path. A bare `dev` used as a feature branch still violates the rule above.
 
 ### Parallel work and worktrees
 
