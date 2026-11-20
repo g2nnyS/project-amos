@@ -4,8 +4,13 @@
  *
  * It starts the real compiled CLI server (dist/control-plane/cli.js) with a
  * brand-new temporary data directory and synthetic in-process credentials, then
- * drives /usr/bin/chromium through the DevTools pipe protocol. No application
- * hooks, store injection, mocked API responses or reused user state are used.
+ * drives /usr/bin/chromium through the DevTools pipe protocol. The real UI,
+ * real password storage and real server sessions are exercised; API responses,
+ * stores and user state are never mocked.
+ *
+ * Desktop-only first-run setup is simulated by installing a minimal read-only
+ * `window.amosDesktop` bridge (isDesktop plus a single-use getSetupGrant) and a
+ * synthetic one-time setup grant, both of which exist only in this test process.
  *
  * Run from the repository root after `npm run build`:
  *   node web/e2e/smoke.mjs
@@ -16,19 +21,21 @@
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const cliModule = path.join(repoRoot, 'dist', 'control-plane', 'cli.js')
 const staticDir = path.join(repoRoot, 'dist', 'console')
+const runtimeReportModule = path.join(repoRoot, 'dist', 'adapters', 'shared', 'runtime-report.js')
 const chromePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium'
 const root = process.env.E2E_TMP_ROOT || '/tmp/opencode'
 
-if (!existsSync(cliModule) || !existsSync(path.join(staticDir, 'asset-manifest.json'))) {
+if (!existsSync(cliModule) || !existsSync(path.join(staticDir, 'asset-manifest.json')) || !existsSync(runtimeReportModule)) {
   console.error('SKIP: build output is missing; run `npm run build` from the repository root first.')
   process.exit(0)
 }
@@ -40,6 +47,7 @@ if (!existsSync(chromePath)) {
 await mkdir(root, { recursive: true })
 const runDir = await mkdtemp(path.join(root, 'amos-governance-e2e-'))
 const dataDir = path.join(runDir, 'state')
+const enrollmentDataDir = path.join(runDir, 'enrollment-state')
 const downloadDir = path.join(runDir, 'downloads')
 const profile = path.join(runDir, 'chromium-profile')
 await mkdir(downloadDir, { recursive: true })
@@ -94,10 +102,14 @@ try {
   const providerUrl = `http://127.0.0.1:${providerAddress.port}`
 
   const { startServe } = await import(cliModule)
+  const { writeHarnessRuntimeReport, PI_MANAGED_CAPABILITIES } =
+    await import(pathToFileURL(runtimeReportModule).href)
   const synthetic = {
     human: 'e2e-human-synthetic-token-0123456789abcdef',
     agent: 'e2e-agent-synthetic-token-0123456789abcdef',
   }
+  // One-time desktop setup authorization; only the hash is kept by the server.
+  const setupGrant = randomBytes(32).toString('hex')
   let tokenIndex = 0
   server = await startServe({
     rootDir: repoRoot,
@@ -105,6 +117,7 @@ try {
     workspace: repoRoot,
     staticDir,
     port: 0,
+    setupGrant,
     tokenFactory: () => (tokenIndex++ === 0 ? synthetic.human : synthetic.agent),
   })
   token = synthetic.human
@@ -278,24 +291,127 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', {
     source: `window.__amosCspViolations = []; window.addEventListener('securitypolicyviolation', (event) => { window.__amosCspViolations.push({ directive: event.violatedDirective, blockedURI: event.blockedURI }); });`,
   })
+  // Minimal synthetic desktop bridge: the production UI reads only isDesktop
+  // and a single-use getSetupGrant; neither value is written to evidence.
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => {
+      let grant = ${q(setupGrant)};
+      const bridge = Object.freeze({
+        isDesktop: true,
+        getSetupGrant: () => { const value = grant; grant = null; return Promise.resolve(value); },
+      });
+      Object.defineProperty(window, 'amosDesktop', { value: bridge, writable: false, configurable: false, enumerable: true });
+    })();`,
+  })
+  // The console follows the system language until a language is chosen in
+  // settings. Pin the synthetic system language so the Chinese assertions are
+  // deterministic on any host locale.
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true }); Object.defineProperty(Navigator.prototype, 'language', { get: () => 'zh-CN', configurable: true });`,
+  })
   await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir, eventsEnabled: true }, null)
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
   await send('Page.navigate', { url: `${server.url}/` })
   await waitFor(`document.readyState === 'complete' && ${visible('input[type=password]')}`)
 
+  const password = 'e2e-password-enrollment-0123456789'
   const projectOne = 'E2E Governance Alpha'
   const projectTwo = 'E2E Governance Beta'
   const workspace = path.join(runDir, 'amos-e2e-workspace')
   let exportedYaml = ''
 
-  await check('login with human token reaches the governance shell', async () => {
-    await evaluate(`(() => {
-      const el = document.querySelector('input[type=password]');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${q(token)});
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`)
-    await click('button', '登录')
-    await waitFor(`${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+  const harnesses = ['pi', 'opencode']
+  const activationPath = path.join(workspace, '.pi', 'activation.json')
+  const projectionPath = path.join(workspace, '.pi', 'amos.managed.json')
+  const legacyReportPath = path.join(workspace, '.pi', 'runtime.json')
+  const harnessReportPath = (harness) => path.join(workspace, '.pi', `runtime.${harness}.json`)
+
+  /** Read the real published projection and cross-check it with the activation artifact. */
+  async function readProjection() {
+    const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
+    const projection = JSON.parse(await readFile(projectionPath, 'utf8'))
+    assert.equal(artifact.format, 'amos-unified-rule-catalog')
+    assert.equal(artifact.project.workspace, workspace)
+    assert.equal(projection.format, 'amos-managed-host-projection')
+    assert.equal(projection.version, 2)
+    assert.equal(projection.workspace, workspace)
+    assert.equal(projection.projectId, artifact.project.projectId)
+    assert.equal(projection.activationDigest, artifact.activationDigest)
+    assert.equal(projection.epoch, artifact.project.epoch)
+    assert.equal(projection.policyVersion, artifact.project.projectConfigVersion)
+    assert.match(projection.configDigest, /^sha256:[a-f0-9]{64}$/)
+    return projection
+  }
+
+  /** The report mode a host actually loads from this projection. */
+  function projectionReportMode(projection) {
+    if (projection.managed?.enabled === true) return 'enforcing'
+    return projection.harness?.enabled === true ? 'log-only' : 'disabled'
+  }
+
+  function loadedCardLabel(mode) {
+    return mode === 'enforcing' ? '管理模式已生效' : mode === 'log-only' ? '仅记录模式已生效' : '停用模式已生效'
+  }
+
+  /**
+   * Write protocol-shaped reports through the production writer. These are
+   * receipts for the published projection, not a real Agent/harness run.
+   */
+  async function writeHarnessReports() {
+    const projection = await readProjection()
+    const mode = projectionReportMode(projection)
+    for (const harness of harnesses) {
+      const written = writeHarnessRuntimeReport({
+        directory: workspace,
+        projectId: projection.projectId,
+        activationDigest: projection.activationDigest,
+        epoch: projection.epoch,
+        policyVersion: projection.policyVersion,
+        loadedAt: new Date().toISOString(),
+        harness,
+        mode,
+        configDigest: projection.configDigest,
+      })
+      assert.equal(written, true, `runtime report write failed for ${harness}`)
+    }
+    return { projection, mode }
+  }
+
+  async function clearHarnessReports() {
+    await rm(legacyReportPath, { force: true })
+    for (const harness of harnesses) await rm(harnessReportPath(harness), { force: true })
+  }
+
+  const runtimeStatusApi = (projectId) =>
+    evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/runtime`)}).then(r => r.json())`)
+
+  const harnessCardText = (name) =>
+    `(Array.from(document.querySelectorAll('article')).find(e => e.querySelector('h3')?.textContent.trim() === ${q(name)})?.innerText ?? '')`
+
+  await check('first launch sets a desktop password through the one-time setup grant', async () => {
+    await waitFor(`document.querySelector('h1')?.textContent.includes('设置登录密码')`)
+    await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2`)
+    assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="current-password"]')`), false)
+    assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="off"]')`), false)
+    const bodyText = await evaluate('document.body.innerText')
+    assert.equal(/human\s*token/i.test(bodyText), false, 'setup page still mentions a human token')
+    assert.equal(/token\s*恢复/i.test(bodyText), false, 'setup page still offers token recovery')
+    await screenshot('desktop-password-setup')
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
+    await screenshot('mobile-password-setup')
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    await setBySelector('input[autocomplete="new-password"]', password)
+    await setByLabel('确认密码', password + '-mismatch')
+    await click('button', '设置密码')
+    await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
+    await setByLabel('确认密码', password)
+    await click('button', '设置密码')
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
+    assert.equal(stored.includes(password), false)
+    assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
+    assert.equal(await evaluate(`JSON.stringify(localStorage).includes(${q(password)}) || JSON.stringify(sessionStorage).includes(${q(password)})`), false)
   })
 
   await mkdir(workspace, { recursive: true })
@@ -306,7 +422,8 @@ try {
 
   await check('Jev settings save, reload and test through the browser', async () => {
     await nav('设置')
-    await waitFor(`${visible('form')} && document.body.innerText.includes('Jev 应用内设置')`)
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
+    await waitFor(`${visible('#pref-jev')}`)
     await setByLabel('Base URL', providerUrl)
     await setByLabel('默认模型', 'typesafe/jev-1.14')
     await setByLabel('API key', 'e2e-synthetic-jev-key')
@@ -321,37 +438,58 @@ try {
     assert.equal(saved.apiKey, 'e2e-synthetic-jev-key')
     if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600)
 
-    await nav('项目边界')
+    await nav('项目概况')
     await nav('设置')
-    await waitFor(`document.body.innerText.includes('已保存 API key；留空将保留现有密钥。')`)
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
+    await waitFor(`${visible('#pref-jev')} && document.body.innerText.includes('已保存 API key；留空将保留现有密钥。')`)
     await click('button', '测试已保存配置')
     await waitFor(`document.body.innerText.includes('Jev 连接成功，模型：typesafe/jev-1.14。')`)
     assert.deepEqual(providerRequests, [{ authorized: true, connectionTest: true }])
     assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
     await screenshot('desktop-jev-settings')
+    await evaluate(`document.querySelector('main.workspace').scrollTop = 0`)
+    await click('nav[aria-label="设置分区"] button', '助手默认设置')
+    await waitFor(`${visible('#pref-harness')}`)
+    await screenshot('desktop-settings-top')
+    await click('nav[aria-label="设置分区"] button', '关于')
+    await waitFor(`${visible('#pref-about')}`)
+    const aboutText = await evaluate(`document.querySelector('#pref-about').textContent`)
+    assert.match(aboutText, /开发测试版\s*·\s*[0-9a-f]{7}/i)
+    assert.ok(aboutText.includes('Apache License 2.0'))
+    assert.ok(aboutText.includes('github.com/g2nnyS/project-amos'))
+    await screenshot('desktop-settings-about')
+    await key('Home')
+    await waitFor(`${visible('#pref-harness')}`)
   })
 
   await check('seed candidate, add a project rule and validate on the server', async () => {
-    await nav('候选编辑')
-    await click('button', '仓库种子')
+    await nav('编辑草稿')
+    await click('button', '内置示例')
     await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
     // Repository rules are the global catalog. A project adds its own rule ID
     // instead of silently redefining the global deny table.
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
-    await setByLabel('说明 narrative', 'E2E project-specific smoke rule; never an execution authorization.')
-    await click('button', '校验候选')
-    await waitFor(`document.body.innerText.includes('服务端校验通过')`)
+    await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
   await check('submit immutable proposal from the editor', async () => {
     await setByLabel('标题', 'E2E smoke proposal')
     await setByLabel('理由', 'Synthetic smoke rationale; never an execution authorization.')
     const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('提案过期时间（本地时间）', expiry)
-    await click('button', '提交提案')
-    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('提案详情')`)
+    await setByLabel('申请过期时间（本地时间）', expiry)
+    await click('button', '提交审批')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
+  })
+
+  await check('new proposal is immediately visible in the shared proposal list', async () => {
+    await click('a', '返回申请列表')
+    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
+    await click('a', 'E2E smoke proposal')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
   })
 
   await check('approve and publish the proposal', async () => {
@@ -359,6 +497,11 @@ try {
     await waitFor(visible('[role="alertdialog"]'))
     await click('[role="alertdialog"] button', '确认')
     await waitFor(`document.body.innerText.includes('已批准')`)
+  })
+
+  await check('overview reflects the newly published current version', async () => {
+    await nav('项目概况')
+    await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
   await check('matrix filters update URL and search survives navigation back', async () => {
@@ -375,14 +518,14 @@ try {
     assert.ok(cell, 'no non-empty matrix cell')
     await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
     await waitFor(`(() => { const p = new URLSearchParams(location.hash.split('?')[1] || ''); return p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}; })()`)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选维度"]').value`), cell.dimension)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中裁决"]').value`), cell.hit)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
     const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
     assert.ok(id, 'filtered rule missing')
     await setBySelector('[aria-label="搜索规则"]', id)
     await waitFor(`new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(id)}`)
-    await nav('项目边界')
-    await waitFor(`location.hash === '#/' && document.querySelector('h1')?.textContent.includes('项目边界')`)
+    await nav('项目概况')
+    await waitFor(`location.hash === '#/boundary' && document.querySelector('h1')?.textContent.includes('项目概况')`)
     await evaluate('history.back()')
     await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(id)}`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('dimension')`), cell.dimension)
@@ -392,11 +535,11 @@ try {
   await check('rule inspector tabs, read-only raw data and Escape focus restoration', async () => {
     const rowButton = 'section:has(input[aria-label="搜索规则"]) tbody tr:first-child button'
     await click(rowButton)
-    const inspector = '[role="complementary"][aria-label="规则上下文检查器"]'
+    const inspector = '[role="complementary"][aria-label="规则检查器"]'
     await waitFor(visible(inspector))
     await waitFor(`document.activeElement?.getAttribute('aria-label') === '关闭检查器'`)
     await screenshot('desktop-rules-inspector-semantics')
-    for (const [label, expected] of [['语义', '说明 narrative'], ['执行', '命中裁决 on_hit'], ['证据', '探测 probe'], ['原始', null]]) {
+    for (const [label, expected] of [['内容', '说明'], ['执行', '命中后处理'], ['证据', '探测'], ['原始', null]]) {
       await click(`${inspector} [role="tab"]`, label)
       await waitFor(`Array.from(document.querySelectorAll(${q(inspector + ' [role="tab"]')})).some(e => e.textContent.includes(${q(label)}) && e.getAttribute('aria-selected') === 'true')`)
       if (expected) await waitFor(`document.querySelector(${q(inspector)})?.textContent.includes(${q(expected)})`)
@@ -412,11 +555,16 @@ try {
 
   await check('mobile rule inspector is accessible and does not cause global overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
-    const inspector = '[role="complementary"][aria-label="规则上下文检查器"]'
+    const inspector = '[role="dialog"][aria-labelledby="rule-inspector-title"]'
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
-      while (await evaluate(visible('[aria-label^="关闭提示"]'))) await click('[aria-label^="关闭提示"]')
+      while (await evaluate(`(() => {
+        const button = Array.from(document.querySelectorAll('[aria-label^="关闭提示"]')).find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none')
+        if (!button) return false
+        button.click()
+        return true
+      })()`)) await sleep(50)
       await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
       await waitFor(visible(inspector))
       const layout = await evaluate(`(() => { const e = document.querySelector(${q(inspector)}), r = e.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, client:document.documentElement.clientWidth, focused:document.activeElement?.getAttribute('aria-label') }; })()`)
@@ -459,46 +607,104 @@ try {
     assert.ok(exportedYaml.includes('format: amos-project-policy'), 'YAML export is not the versioned policy document')
   })
 
-  await check('published snapshot artifact exists and runtime status is honest', async () => {
-    const artifactPath = path.join(workspace, '.pi', 'activation.json')
-    assert.ok(existsSync(artifactPath), 'publish did not write the harness activation artifact')
-    const artifact = JSON.parse(await readFile(artifactPath, 'utf8'))
+  await check('published projection is v2 and agrees with the activation artifact', async () => {
+    assert.ok(existsSync(activationPath), 'publish did not write the harness activation artifact')
+    const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
     assert.equal(artifact.format, 'amos-unified-rule-catalog')
     assert.equal(artifact.project.workspace, workspace)
-    const projectId = artifact.project.projectId
-    let status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
+    const projection = await readProjection()
+    assert.equal(typeof projection.harness?.enabled, 'boolean')
+    assert.ok(projection.harness?.mode === 'log-only' || projection.harness?.mode === 'managed')
+    assert.equal(projection.managed?.enabled, projection.harness.enabled && projection.harness.mode === 'managed')
+
+    const status = await runtimeStatusApi(projection.projectId)
     assert.equal(status.status, 'never', `unexpected initial runtime status ${status.status}`)
-    // The Pi integration test and live probe prove the producer. This check
-    // exercises the console's real file/status UI contract with a report in the
-    // exact harness format, not a mocked API response.
-    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
+    assert.equal(status.projection.status, 'written')
+    assert.equal(status.runtime, null)
+  })
+
+  await check('v2 harness reports update the runtime API and per-harness cards', async () => {
+    const { projection, mode } = await writeHarnessReports()
+    for (const harness of harnesses) {
+      const report = JSON.parse(await readFile(harnessReportPath(harness), 'utf8'))
+      assert.equal(report.format, 'amos-harness-runtime')
+      assert.equal(report.version, 2)
+      assert.equal(report.harness, harness)
+      assert.equal(report.mode, mode)
+      assert.equal(report.projectId, projection.projectId)
+      assert.equal(report.activationDigest, projection.activationDigest)
+      assert.equal(report.epoch, projection.epoch)
+      assert.equal(report.policyVersion, projection.policyVersion)
+      assert.equal(report.configDigest, projection.configDigest)
+    }
+
+    const status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.status, 'loaded')
+    assert.equal(status.projection.status, 'written')
+    assert.equal(status.harnesses.pi.status, 'loaded')
+    assert.equal(status.harnesses.opencode.status, 'loaded')
+    assert.equal(status.harnesses.pi.runtime?.version, 2)
+    assert.equal(status.harnesses.opencode.runtime?.version, 2)
+    assert.equal(status.harnesses.pi.runtime?.configDigest, projection.configDigest)
+
+    await nav('项目概况')
+    const label = loadedCardLabel(mode)
+    await waitFor(`document.body.innerText.includes('配置已写入助手') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+    await waitFor(`document.body.innerText.includes(${q(projection.configDigest)})`)
+    await screenshot('desktop-runtime-loaded')
+  })
+
+  await check('legacy v1 fallback is identity-matched but unverified, and mismatched identity is stale', async () => {
+    const projection = await readProjection()
+    const legacyReport = (activationDigest) => ({
       format: 'amos-harness-runtime',
       version: 1,
-      projectId,
-      activationDigest: artifact.activationDigest,
-      epoch: artifact.project.epoch,
-      policyVersion: artifact.project.projectConfigVersion,
+      projectId: projection.projectId,
+      activationDigest,
+      epoch: projection.epoch,
+      policyVersion: projection.policyVersion,
       loadedAt: new Date().toISOString(),
       harness: 'pi',
       mode: 'enforcing',
-      capabilities: {
-        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
-        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
-        preCallStop: true,
-        injection: 'system-prompt-and-tool-result',
-        singleUseReview: true,
-      },
-    }))
-    await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
-    status = await evaluate(`fetch('/api/projects/${projectId}/runtime').then(r => r.json())`)
-    assert.equal(status.status, 'loaded')
+      capabilities: PI_MANAGED_CAPABILITIES,
+    })
+
+    await clearHarnessReports()
+    await writeFile(legacyReportPath, JSON.stringify(legacyReport(projection.activationDigest)))
+    // A v1 receipt has no comparable config digest. Matching identity is
+    // explicitly unverified, never fully loaded under a v2 expectation.
+    let status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.runtime?.version, 1, 'legacy v1 report was not readable')
+    assert.equal(status.harnesses.pi.runtime?.version, 1)
+    assert.equal(status.harnesses.pi.runtime?.configDigest, undefined)
+    assert.equal(status.harnesses.pi.status, 'loaded-unverified')
+    assert.equal(status.harnesses.opencode.status, 'never')
+    assert.equal(status.status, 'loaded-unverified')
+
+    await nav('版本')
+    await nav('项目概况')
+    await waitFor(`${harnessCardText('Pi')}.includes('已识别 · 配置待核对')`)
+
+    // Identity mismatch is still stale; the v1 fallback cannot mask a different policy.
+    await writeFile(legacyReportPath, JSON.stringify(legacyReport(`sha256:${'0'.repeat(64)}`)))
+    status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.harnesses.pi.status, 'stale')
+    assert.equal(status.harnesses.opencode.status, 'never')
+    assert.equal(status.status, 'stale')
+
+    await clearHarnessReports()
+    await writeHarnessReports()
+    const restored = await runtimeStatusApi(projection.projectId)
+    assert.equal(restored.status, 'loaded')
+    assert.equal(restored.harnesses.pi.status, 'loaded')
+    assert.equal(restored.harnesses.opencode.status, 'loaded')
+    assert.equal(restored.harnesses.pi.runtime?.mode, projectionReportMode(projection))
   })
 
   await check('imports the exported YAML through the same validation pipeline', async () => {
-    await nav('候选编辑')
-    await waitFor(`${visible('button')} && document.body.innerText.includes('候选来源')`)
-    await click('button', '当前策略')
+    await nav('编辑草稿')
+    await waitFor(`${visible('button')} && document.body.innerText.includes('从哪里开始')`)
+    await click('button', '当前规则')
     await waitFor(`document.body.innerText.includes('规则字段')`)
     const accepted = await evaluate(`(() => {
       const input = document.querySelector('input[type=file]');
@@ -511,18 +717,18 @@ try {
     })()`)
     assert.ok(accepted, 'file input missing')
     await waitFor(`document.body.innerText.includes('导入成功')`)
-    await click('button', '校验候选')
-    await waitFor(`document.body.innerText.includes('服务端校验通过')`)
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
-  await check('rollback creates a new proposal and publishes a new version', async () => {
+  await check('rollback marks the previous v2 reports stale until the latest projection is loaded', async () => {
     await nav('版本')
     await click('a', '版本 1')
     await waitFor(`document.body.innerText.includes('版本 1')`)
-    await click('button', '创建回滚提案')
+    await click('button', '回滚到这个版本')
     await waitFor(visible('[role="dialog"]'))
     await setByLabel('理由', 'Synthetic rollback rationale.')
-    await click('[role="dialog"] button', '创建提案')
+    await click('[role="dialog"] button', '提交申请')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
@@ -530,51 +736,108 @@ try {
     await waitFor(`document.body.innerText.includes('已批准')`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 2')`)
-    await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载旧版本')`)
-    const artifact = JSON.parse(await readFile(path.join(workspace, '.pi', 'activation.json'), 'utf8'))
-    await writeFile(path.join(workspace, '.pi', 'runtime.json'), JSON.stringify({
-      format: 'amos-harness-runtime',
-      version: 1,
-      projectId: artifact.project.projectId,
-      activationDigest: artifact.activationDigest,
-      epoch: artifact.project.epoch,
-      policyVersion: artifact.project.projectConfigVersion,
-      loadedAt: new Date().toISOString(),
-      harness: 'pi',
-      mode: 'enforcing',
-      capabilities: {
-        enforcedTools: ['read', 'write', 'edit', 'ls', 'find', 'grep'],
-        blockedUnsupportedTools: ['bash', 'powershell', 'custom'],
-        preCallStop: true,
-        injection: 'system-prompt-and-tool-result',
-        singleUseReview: true,
-      },
-    }))
+    await nav('项目概况')
+
+    const previous = JSON.parse(await readFile(harnessReportPath('pi'), 'utf8'))
+    const projection = await readProjection()
+    assert.ok(
+      previous.activationDigest !== projection.activationDigest ||
+      previous.epoch !== projection.epoch ||
+      previous.configDigest !== projection.configDigest,
+      'rollback did not change the projection the previous reports must match',
+    )
+    let status = await runtimeStatusApi(projection.projectId)
+    assert.equal(status.harnesses.pi.status, 'stale')
+    assert.equal(status.harnesses.opencode.status, 'stale')
+    assert.equal(status.status, 'stale')
+    await waitFor(`${harnessCardText('Pi')}.includes('配置已更新，待重新加载') && ${harnessCardText('OpenCode')}.includes('配置已更新，待重新加载')`)
+
+    const { projection: latest, mode } = await writeHarnessReports()
     await nav('版本')
-    await nav('项目边界')
-    await waitFor(`document.body.innerText.includes('已加载当前版本')`)
+    await nav('项目概况')
+    status = await runtimeStatusApi(latest.projectId)
+    assert.equal(status.status, 'loaded')
+    assert.equal(status.harnesses.pi.status, 'loaded')
+    assert.equal(status.harnesses.opencode.status, 'loaded')
+    const label = loadedCardLabel(mode)
+    await waitFor(`document.body.innerText.includes('配置已写入助手') && ${harnessCardText('Pi')}.includes(${q(label)}) && ${harnessCardText('OpenCode')}.includes(${q(label)})`)
+  })
+
+  await check('home switch moves the project between log-only and managing and the host projection follows', async () => {
+    const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(projectId, 'active project missing')
+    const modeSwitch = '#home-mode-switch'
+    const harnessRow = (id) => `(document.querySelector('[data-harness="${id}"]')?.innerText ?? '')`
+    const projectConfig = () => evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/config`)}).then(r => r.json())`)
+
+    await nav('首页')
+    await waitFor(`location.hash === '#/' && document.querySelector('h1')?.textContent.includes('首页') && document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'false'`)
+    await waitFor(`document.querySelector('#home-mode-title')?.textContent.includes('仅记录') && ${harnessRow('pi')}.includes('仅记录模式已生效')`)
+    await screenshot('desktop-home-log-only')
+
+    await click(modeSwitch)
+    await waitFor(`document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'true' && document.querySelector('#home-mode-title')?.textContent.includes('正在管理') && document.body.innerText.includes('已切换为正在管理')`)
+    let config = await projectConfig()
+    assert.equal(config.harness.mode, 'managed')
+    assert.equal(config.effectiveHarness.enabled, true)
+    assert.equal(config.effectiveHarness.mode, 'managed')
+    let projection = await readProjection()
+    assert.equal(projection.harness?.mode, 'managed')
+    assert.equal(projection.managed?.enabled, true)
+    // Receipts for the previous projection stay stale until the harnesses reload.
+    await waitFor(`${harnessRow('pi')}.includes('配置已更新，待重新加载') && document.body.innerText.includes('Pi 还在用旧配置')`)
+    assert.equal((await writeHarnessReports()).mode, 'enforcing')
+    await click('button[aria-label="刷新状态"]')
+    await waitFor(`${harnessRow('pi')}.includes('管理模式已生效') && ${harnessRow('opencode')}.includes('管理模式已生效') && document.body.innerText.includes('已加载当前配置')`)
+    await screenshot('desktop-home-managed')
+
+    await click(modeSwitch)
+    await waitFor(`document.querySelector(${q(modeSwitch)})?.getAttribute('aria-checked') === 'false' && document.querySelector('#home-mode-title')?.textContent.includes('仅记录')`)
+    config = await projectConfig()
+    assert.equal(config.harness.mode, 'log-only')
+    projection = await readProjection()
+    assert.equal(projection.managed?.enabled, false)
+    assert.equal((await writeHarnessReports()).mode, 'log-only')
+    await click('button[aria-label="刷新状态"]')
+    await waitFor(`${harnessRow('pi')}.includes('仅记录模式已生效') && ${harnessRow('opencode')}.includes('仅记录模式已生效') && document.body.innerText.includes('Pi 和 OpenCode 已加载当前配置。')`)
+
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await sleep(400)
+      const layout = await evaluate(`(() => { const main = document.querySelector('main.workspace'); return { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, mainScroll: main.scrollWidth, mainClient: main.clientWidth }; })()`)
+      assert.ok(layout.scroll <= layout.client && layout.mainScroll <= layout.mainClient, `mobile home overflow: ${JSON.stringify(layout)}`)
+      await screenshot('mobile-home')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+  })
+
+  await check('history editing binds the proposal to the current published base', async () => {
+    await evaluate(`location.hash = '#/editor?baseVersion=1'`)
+    await waitFor(`location.hash === '#/editor?baseVersion=1' && ${visible('button')}`)
+    await click('button', '加载历史版本 1')
+    await waitFor(`document.body.innerText.includes('规则字段') && Array.from(document.querySelectorAll('.panel-kicker')).some(e => e.textContent.includes('基于版本 2'))`)
   })
 
   await check('simulation binds historical version provenance and clears changed input', async () => {
     const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(projectId, 'active project missing')
-    await nav('动作模拟')
+    await nav('模拟测试')
     await waitFor(`document.querySelector('form select') && Array.from(document.querySelectorAll('form select option')).some(o => o.value === '1')`)
-    await setByLabel('工具 tool', 'read')
-    await setByLabel('操作 operation', 'file_read')
-    await setByLabel('目标 target', `${workspace}/example.txt`)
+    await setByLabel('工具', 'read')
+    await setByLabel('操作', 'file_read')
+    await setByLabel('对象', `${workspace}/example.txt`)
     await setByLabel('已发布版本', '1')
-    await click('button', '模拟裁决')
-    await waitFor(`document.body.textContent.includes('评估来源 · 本地治理版本 1')`)
+    await click('button', '开始模拟')
+    await waitFor(`document.body.textContent.includes('评估依据 · 本地版本 1')`)
     const validProvenance = await evaluate(`(() => {
-      const source = Array.from(document.querySelectorAll('p')).find(p => p.textContent.includes('评估来源 · 本地治理版本 1'))?.parentElement;
+      const source = Array.from(document.querySelectorAll('p')).find(p => p.textContent.includes('评估依据 · 本地版本 1'))?.parentElement;
       const text = source?.textContent ?? '';
-      return text.includes(${q(projectOne)}) && text.includes(${q(projectId)}) && /本地快照摘要：\\s*(?:sha256:)?[a-f0-9]{64}/i.test(text);
+      return text.includes(${q(projectOne)}) && text.includes(${q(projectId)}) && /本地快照指纹：\\s*(?:sha256:)?[a-f0-9]{64}/i.test(text);
     })()`)
     assert.equal(validProvenance, true, 'historical project/version/digest provenance missing')
-    await setByLabel('目标 target', `${workspace}/other.txt`)
-    await waitFor(`!document.body.textContent.includes('评估来源 · 本地治理版本 1') && document.body.textContent.includes('提交动作后显示假设裁决')`)
+    await setByLabel('对象', `${workspace}/other.txt`)
+    await waitFor(`!document.body.textContent.includes('评估依据 · 本地版本 1') && document.body.textContent.includes('输入操作并模拟后，这里会显示预计的处理结果')`)
   })
 
   await check('project list and version data are fenced per project', async () => {
@@ -582,8 +845,12 @@ try {
     await waitFor(`document.body.innerText.includes(${q(projectTwo)})`)
     await nav('版本')
     await waitFor(`document.body.innerText.includes('尚无已发布版本')`)
-    await nav('提案')
-    await waitFor(`document.body.innerText.includes('尚无提案')`)
+    await nav('申请')
+    await waitFor(`document.body.innerText.includes('尚无申请')`)
+    const secondId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(secondId, 'second project id missing')
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('nav[aria-label="主导航"]')} && document.querySelector('#project-select')?.value === ${q(secondId)}`)
     const firstId = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o=>o.textContent.includes(${q(projectOne)}))?.value`)
     assert.ok(firstId, 'first project option missing')
     await setBySelector('#project-select', firstId)
@@ -591,37 +858,84 @@ try {
     await waitFor(`document.body.innerText.includes('版本 2')`)
   })
 
-  await check('logout clears the session and relogin retains server projects', async () => {
+  await check('logout clears the session and password relogin retains server projects', async () => {
     await click('[aria-label="退出登录"]')
     await waitFor(visible('input[type=password]'))
     const sessionAfterLogout = await evaluate(`fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s => s.authenticated)`)
     assert.equal(sessionAfterLogout, false, 'server session remained authenticated after logout')
-    await evaluate(`(() => {
-      const el = document.querySelector('input[type=password]');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${q(token)});
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`)
+    await setBySelector('input[autocomplete="current-password"]', password)
     await click('button', '登录')
     await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
   })
 
-  await check('desktop shell and dark/light preferences', async () => {
+  await check('language switch translates the console, persists across reload and switches back', async () => {
+    await nav('设置')
+    await click('nav[aria-label="设置分区"] button', '外观与语言')
+    await waitFor(visible('#pref-appearance'))
+    await click('#pref-appearance button[data-locale="en-US"]')
+    await waitFor(`document.documentElement.lang === 'en-US' && document.querySelector('h1')?.textContent.includes('Settings') && !!document.querySelector('nav[aria-label="Main navigation"] a[aria-label="Home"]')`)
+    assert.equal(await evaluate(`document.querySelector('#pref-appearance button[data-locale="en-US"]')?.getAttribute('aria-pressed')`), 'true')
+    await screenshot('desktop-settings-english')
+    // A stored choice wins over the (Chinese) system language after reload.
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`document.documentElement.lang === 'en-US' && ${visible('nav[aria-label="Main navigation"]')}`)
+    await click('nav[aria-label="Main navigation"] a[aria-label="Home"]')
+    await waitFor(`location.hash === '#/' && document.querySelector('#home-mode-title')?.textContent.includes('Log only') && document.querySelector('#home-mode-switch')?.getAttribute('aria-label') === 'Managed mode'`)
+    await screenshot('desktop-home-english')
+    const cjk = await evaluate(`/[\u4e00-\u9fff]/.test(document.body.innerText)`)
+    assert.equal(cjk, false, 'English home page still shows Chinese text')
+    await click('nav[aria-label="Main navigation"] a[aria-label="Settings"]')
+    await click('nav[aria-label="Settings sections"] button', 'Appearance')
+    await waitFor(visible('#pref-appearance'))
+    await click('#pref-appearance button[data-locale="zh-CN"]')
+    await waitFor(`document.documentElement.lang === 'zh-CN' && document.querySelector('h1')?.textContent.includes('设置') && !!document.querySelector('nav[aria-label="主导航"] a[aria-label="首页"]')`)
+  })
+
+  await check('desktop shell, theme and density persist across reload', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
     await sleep(400)
     assert.equal(await evaluate(`${visible('aside')}`), true, 'desktop sidebar hidden')
     assert.equal(await evaluate(`${visible('[aria-label="打开导航"]')}`), false, 'mobile trigger visible on desktop')
     await nav('设置')
+    await click('nav[aria-label="设置分区"] button', '外观')
     await click('button', '深色')
     await waitFor(`document.documentElement.classList.contains('dark')`)
+    await screenshot('desktop-dark')
+    await nav('首页')
+    await waitFor(visible('#home-mode-switch'))
+    await screenshot('desktop-home-dark')
+    await nav('设置')
+    await click('nav[aria-label="设置分区"] button', '外观')
+    await click('#pref-compact')
+    await waitFor(`document.querySelector('.app-shell')?.dataset.density === 'compact' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'true'`)
+    await screenshot('desktop-dark-compact')
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('nav[aria-label="设置分区"]')} && document.documentElement.classList.contains('dark')`)
+    await click('nav[aria-label="设置分区"] button', '外观')
+    await waitFor(`document.documentElement.classList.contains('dark') && document.querySelector('.app-shell')?.dataset.density === 'compact' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'true'`)
     await click('button', '浅色')
     await waitFor(`document.documentElement.classList.contains('light')`)
+    await click('#pref-compact')
+    await waitFor(`document.querySelector('.app-shell')?.dataset.density === 'comfortable' && document.querySelector('#pref-compact')?.getAttribute('aria-checked') === 'false'`)
+    await screenshot('desktop-light')
   })
 
-  await check('390px mobile navigation has no global horizontal overflow', async () => {
+  await check('390px mobile navigation, themes and density have no overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     await sleep(500)
     assert.equal(await evaluate(`${visible('aside')}`), false, 'desktop sidebar visible at 390px')
     assert.equal(await evaluate(`${visible('[aria-label="打开导航"]')}`), true, 'mobile navigation trigger missing')
+    await screenshot('mobile-light')
+    await click('nav[aria-label="设置分区"] button', '外观')
+    await click('button', '深色')
+    await click('#pref-compact')
+    await waitFor(`document.documentElement.classList.contains('dark') && document.querySelector('.app-shell')?.dataset.density === 'compact'`)
+    await screenshot('mobile-dark-compact')
+    const compactWidth = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
+    assert.ok(compactWidth.scroll <= compactWidth.client, `mobile dark compact overflow: ${JSON.stringify(compactWidth)}`)
+    await click('button', '浅色')
+    await click('#pref-compact')
+    await waitFor(`document.documentElement.classList.contains('light') && document.querySelector('.app-shell')?.dataset.density === 'comfortable'`)
     await click('[aria-label="打开导航"]')
     await waitFor(visible('[role="dialog"]'))
     const widths = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
@@ -630,6 +944,45 @@ try {
     const csp = await evaluate(`window.__amosCspViolations ?? []`)
     evidence.cspViolations.push(...csp)
     assert.equal(csp.length, 0, `CSP violations: ${JSON.stringify(csp)}`)
+  })
+
+  await check('first setup without a desktop grant enrolls with the human token', async () => {
+    await server.close()
+    tokenIndex = 0
+    server = await startServe({
+      rootDir: repoRoot,
+      dataDir: enrollmentDataDir,
+      workspace: repoRoot,
+      staticDir,
+      port: 0,
+      tokenFactory: () => (tokenIndex++ === 0 ? synthetic.human : synthetic.agent),
+    })
+
+    const target = await send('Target.createTarget', { url: 'about:blank' }, null)
+    const attached = await send('Target.attachToTarget', { targetId: target.targetId, flatten: true }, null)
+    session = attached.sessionId
+    await Promise.all([send('Page.enable'), send('Runtime.enable'), send('Network.enable'), send('Log.enable')])
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `window.__amosCspViolations = []; window.addEventListener('securitypolicyviolation', (event) => { window.__amosCspViolations.push({ directive: event.violatedDirective, blockedURI: event.blockedURI }); });`,
+    })
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true }); Object.defineProperty(Navigator.prototype, 'language', { get: () => 'zh-CN', configurable: true });`,
+    })
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    await send('Page.navigate', { url: `${server.url}/` })
+    await waitFor(`document.readyState === 'complete' && document.querySelector('h1')?.textContent.includes('设置登录密码')`)
+    await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2 && ${visible('input[autocomplete="off"]')}`)
+    assert.equal(await evaluate(`document.body.innerText.includes('人类令牌') && document.body.innerText.includes('human.token')`), true)
+    await screenshot('human-token-password-setup')
+
+    await setBySelector('input[autocomplete="new-password"]', password)
+    await setByLabel('确认密码', password)
+    await setByLabel('人类令牌', token)
+    await click('button', '设置密码')
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    const stored = await readFile(path.join(enrollmentDataDir, 'human-password.json'), 'utf8')
+    assert.equal(stored.includes(password), false)
+    assert.equal((await stat(path.join(enrollmentDataDir, 'human-password.json'))).mode & 0o777, 0o600)
   })
 
   await check('no runtime console errors or failed same-origin responses', async () => {
@@ -657,6 +1010,7 @@ try {
   if (provider) await new Promise((resolve) => provider.close(() => resolve())).catch(() => {})
   // Remove synthetic credentials and verified download contents from the temp run.
   await rm(dataDir, { recursive: true, force: true }).catch(() => {})
+  await rm(enrollmentDataDir, { recursive: true, force: true }).catch(() => {})
   await rm(downloadDir, { recursive: true, force: true }).catch(() => {})
   await rm(profile, { recursive: true, force: true }).catch(() => {})
   evidence.temporaryRunDirectory = runDir

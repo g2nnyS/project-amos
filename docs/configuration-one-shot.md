@@ -37,15 +37,23 @@ activation:
   includedRuleIds: null      # null = 选中全局 + 项目规则；显式数组 = 只选这些
   excludedRuleIds: []
 injection:
-  baselineRuleIds: []
-  routes: []                 # 可选 task/path 路由
-rules:                       # 项目候选中的规则定义
+  baselineRuleIds:           # 无信号命中或回退时优先选中的激活规则 ID
+    - ts-strict-esm
+    - ts-rebuild
+  routes:                    # 可选：按 area/pathHint/taskTag/keyword 触发 add/suppress
+    - match:
+        area: engine
+        pathHint: engine/**
+      add: [engine-pure, engine-precedence]
+      suppress: []
+      specificity: 10
+rules:                       # 项目候选中的规则定义（含硬规则与纯工程规范/设计偏好）
   - id: ...
     dimension: ...
     level: 1
-    expressivity: deterministic
-    predicate: [...]
-    narrative: ...
+    expressivity: deterministic|advisory_only
+    predicate: [...]|null
+    narrative: ...           # 动态注入 <amos-guidance> 的工程规范/偏好或硬规则说明
     on_hit: deny|confirm|log
     scope: project|session
     ttl: null|ISO
@@ -72,6 +80,11 @@ rules:                       # 项目候选中的规则定义
   `target_outside_glob` 模式中，编译时展开为项目 workspace。
 - `level` 只影响 advisory 排序/审计优先级，不改变
   `deny > confirm > log > allow`。
+- 纯工程规范/设计偏好规则设置 `expressivity: advisory_only`、`predicate: null`、
+  `enforcement: advisory`、`policy_class: engineering`；编译时从 `dimension`
+  派生默认 `areas`/`keywords`（内置 7 个 guidance pack 则带显式 `taskTags`、
+  `languages`、`pathHints` 映射），也可通过 `injection.routes` 按 `area`、
+  `pathHint`、`taskTag`、`keyword` 精确路由或抑制已激活规则。
 
 ## 3. 控制台启动
 
@@ -87,8 +100,10 @@ npm run console:serve     # 127.0.0.1:4310；可用 --data-dir/--workspace/--por
 - 项目 workspace 必须是已存在的绝对路径；发布时写入
   `<workspace>/.pi/activation.json`。写入失败不会回滚数据库版本，控制台
   runtime 状态会显示 `never`/`stale`，不会伪装成已生效。
-- `GET /api/projects/:id/runtime` 读取 `<workspace>/.pi/runtime.json`；
-  状态：`loaded`/`stale`/`never`/`invalid`/`unpublished`。
+- `GET /api/projects/:id/runtime` 分别读取 `<workspace>/.pi/runtime.pi.json` 与
+  `.pi/runtime.opencode.json`；专属回执缺失时按 Harness 回退到旧版 `.pi/runtime.json`。
+  状态：`loaded`/`loaded-unverified`/`stale`/`never`/`invalid`/`unpublished`；
+  `loaded-unverified` 表示身份匹配、配置摘要尚待核验。
 
 ## 4. Pi managed 配置
 
@@ -134,8 +149,9 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
 - `auditPath` 必须在工作区外；否则配置错误、阻断。
 - 受管工具：`read`/`write`/`edit`/`ls`/`find`/`grep`；bash/powershell/
   自定义工具在 managed 模式阻断（覆盖缺口），不静默放行。
-- 会话启动/首次工具调用加载快照并写 `.pi/runtime.json`；执行与注入使用
-  同一个 `ActivationRuntime`。新发布只由后续会话加载，不热切换。
+- 会话启动/首次工具调用加载快照并写回执：v2 投影使用 `.pi/runtime.pi.json`，
+  旧投影使用 `.pi/runtime.json`；执行与注入使用同一个 `ActivationRuntime`。
+  新发布只由后续会话加载，不热切换。
 
 ## 5. 真实探针
 

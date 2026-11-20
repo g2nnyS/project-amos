@@ -16,15 +16,18 @@ npm run console
 npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 ```
 
+无界面运行：`npm run service` 只编译后端（`build:service`），以 `serve --api-only` 启动治理 API，无需构建 `web/` 或启动 Tauri；`dist/console/` 缺失时也能启动，`/` 返回 404。已构建时用 `npm run console:serve -- --api-only`。监听地址、Host/Origin 校验、状态目录和人类/Agent 令牌规则与控制台模式相同。
 服务仅接受 `http://127.0.0.1:<port>`，不要改用 localhost、局域网地址或反向代理。默认端口 4310；端口占用时用 `--port` 指定其他端口。前端使用 hash 路由，刷新治理页面不会依赖服务器开放任意 SPA 路径。
 若浏览器在另一台机器，可由人类在浏览器所在机器建立 `ssh -N -L 4310:127.0.0.1:4310 user@server` 隧道，再打开 `http://127.0.0.1:4310`；两端端口须一致以保留 Host/Origin 校验，不要为远程预览改成公网监听。
-默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token` 和 `agent.token`。
-启动时会创建缺失状态并只显示令牌文件路径。用本机编辑器打开 `human.token`，将内容粘贴进登录表单；不要把令牌贴到聊天、URL 或日志。
+默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，含 `governance.sqlite`、`human.token`、`agent.token`；设置密码后另有 `human-password.json`。同一状态目录同一时间只允许一个 `serve` 实例，重复启动以 `service_already_running` 拒绝。运行中的 `service.lock` 和 `service.json` 分别用于协作式单实例互斥和 loopback 实例发现，不记录令牌，也不构成同 UID 安全边界；正常关闭会清理这两个文件。
+首次打开先设置并确认 12 至 1024 字符的登录密码。Tauri 桌面自己启动服务时，通过私有 IPC 启动器提供 10 分钟的一次性设置授权，无需手动输入 token；浏览器或 Tauri 复用已有服务时，首次设密需粘贴 `human.token` 中的人类令牌。后续使用密码登录。应用不保存密码明文或启动授权，服务仅持久化随机盐和 scrypt 验证摘要（N=131072、r=8、p=1），不会覆盖已有密码。Agent 使用独立 Bearer token，与桌面人类密码会话分离。
+桌面登录只提供密码方式。登录不代替逐项治理审批。不要把凭据贴到聊天、URL 或日志。
 令牌文件须属当前用户且权限 0600，目录须为 0700；现有权限错误、符号链接或损坏状态会拒绝启动，不自动删除或重置。
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
+Tauri 启动时复用同状态目录中健康且带控制台的服务，关闭窗口不会停止该已有实例；桌面自己启动的服务仍随窗口关闭。纯 API 服务没有控制台资源，桌面会提示先停止该服务或改用 API/其他客户端，不会打开返回 404 的页面。
 
 1. 创建项目并填写规范化绝对 workspace；该路径用于策略绑定，不授权网页读取该目录。
-2. 导入仓库规则或从已发布版本开始，编辑规则及激活/排除集合，先校验再提交提案。
+2. 导入仓库规则或从已发布版本开始，编辑确定性安全/工程规则、纯建议性工程规范/设计偏好（`expressivity: advisory_only`、`predicate: null`、`policy_class: engineering`）及激活/排除集合与动态注入配置（`injection.baselineRuleIds`、`injection.routes`），先校验再提交提案。
 3. 审阅当前/候选差异，批准并发布或拒绝；不可修改已提交正文，修订须新提案。
 4. 在版本页导出已批准的有效规则 YAML 或完整版本 JSON；回滚生成新提案，不回退版本号。
 5. 治理审计记录状态变化，不复制规则正文或自由文本审批备注。规则和提案详情包含敏感策略信息，仅供本机有权限用户查看。
@@ -56,7 +59,7 @@ npm run console:serve -- --audit-log /absolute/path/to/opencode.jsonl
 - 回滚复用历史候选生成新提案，经批准产生递增新版本，不移动指针回旧版本。
 - 提案过期与规则 TTL 分开；TTL 仍由注入时钟的引擎判断，不自动发布版本。
 - 初次提案 `baseVersion = 0`，已发布版本从 1 递增；项目未发布时仍是 `currentVersion = null`。HTTP 接受初始 null 为 0，未填提案期限时默认 7 天。
-- 新快照使用独立版本化格式，不改变 `storage/snapshot.ts` 的历史 digest 合同。enforcement 包含全部选中的 deterministic 规则（包括 ci/server 元数据），advisory 包含 advisory_only；不得声称 metadata 是运行授权。
+- 新快照使用独立版本化格式，不改变 `storage/snapshot.ts` 的历史 digest 合同。enforcement 包含全部选中的 deterministic 规则（包括 ci/server 元数据），advisory 包含 advisory_only；发布同时编译 P1 `amos-unified-rule-catalog` v2 快照（含已激活硬规则配对 narrative 与 `advisory_only` 工程规范/设计偏好投影）并写入 `<workspace>/.pi/activation.json`；不得声称 metadata 是运行授权。
 - snapshot digest 绑定 project、workspace、版本、schema/compiler、激活集、编译内容；分开 enforcement/advisory digest。导出为派生产物，不参与 DB/文件跨域事务。
 - YAML 导出保留原候选的 `${SESSION_WORKSPACE}` 供旧适配器解析；新快照保存已展开内容。两种 digest 不可互换。模拟使用独立引擎默认值（未命中为 allow），不同于既有 log-only 记录器的显式 default-deny，均不代表工具执行许可。
 
@@ -104,8 +107,9 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 
 | 方法 | 路径 | 请求/响应 |
 | --- | --- | --- |
-| GET | `/api/session` | `{authenticated, role?, csrfToken, expiresAt?}`；建立短期匿名 CSRF 会话 |
-| POST | `/api/login` | `{token}` → 新 human 会话；轮换会话 ID 和 CSRF |
+| GET | `/api/session` | `{authenticated, role?, csrfToken, expiresAt?, auth:{setupRequired,methods,systemLabel?}}`；建立短期匿名 CSRF 会话 |
+| POST | `/api/setup` | `{password,setupGrant?或token?或proof?}`；受信首次设置；已有密码返回 409 |
+| POST | `/api/login` | `{method:"password",password}`、`{method:"system",proof}` 或 `{token}` → 新 human 会话；轮换会话 ID 和 CSRF |
 | POST | `/api/logout` | 撤销服务端会话 |
 | GET | `/api/status` | `{mode:'log-only', enforcement:false, trustBoundary:false}` 与可选计数 |
 | GET/POST | `/api/projects` | 列表 / `{name,workspace}` 创建尚未配置项目 |

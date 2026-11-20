@@ -584,7 +584,12 @@ async function main(): Promise<number> {
     third.session.dispose();
 
     const status = readRuntimeStatus(workspace, published);
-    if (status.status !== 'loaded') throw new Error(`runtime_status_${status.status}`);
+    // The local probe has no expected configuration digest, so a v1 receipt or
+    // a receipt without a comparable digest is as verified as this check can
+    // be. HTTP status still requires a fully verified `loaded`.
+    if (status.status !== 'loaded' && status.status !== 'loaded-unverified') {
+      throw new Error(`runtime_status_${status.status}`);
+    }
     const runtimeApi = await call('GET', `/api/projects/${project.id}/runtime`);
     if (runtimeApi.status !== 'loaded') {
       throw new Error(`runtime_http_status_${String(runtimeApi.status)}`);

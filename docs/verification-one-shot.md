@@ -49,8 +49,9 @@ node web/e2e/smoke.mjs
   校验通过；
 - 回滚创建版本 2；规则矩阵/检查器/移动端/筛选/导出/登录失效均通过。
 
-浏览器 runtime 报告由 e2e 按真实 `.pi/runtime.json` 文件协议写入，用于
-验证控制台读取/展示；报告生产者由下一节真实 Harness 证据覆盖。
+本节历史浏览器记录使用 `.pi/runtime.json` 旧协议回执。当前 e2e 还使用生产写入器
+覆盖按 Harness 区分的 v2 回执，以及身份匹配但配置摘要待核验的旧协议回执；
+报告生产者由下一节真实 Harness 证据覆盖。
 
 ## 3. 真实 Pi Harness（faux 模型）
 

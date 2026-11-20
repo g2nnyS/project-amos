@@ -336,8 +336,10 @@ or a security boundary.
   channel, `--auto` may accept `once` without a human, a saved `always` may still be
   asked again after tightening, and direct shell APIs cannot be claimed as mediated. The
   gate remains an engineering guardrail, not a security boundary.
-- Pi allows at most one repair continuation per session. OpenCode V2 exposes no true
-  settle/merge block, so its completion feedback is advisory only.
+- Pi allows at most one repair continuation per session at `agent_before_settle`. OpenCode
+  V2 implements the same single-repair continuation through the `experimental.idle` hook;
+  both are advisory (soft-block) and do not hard-prevent completion. `experimental.idle`
+  is an experimental API that may change in a future release.
 - The gate does not provide complete mediation. Disabled extensions, alternate entry
   points, `pi.exec`, MCP/extension code, repository scripts, and safe-command trust in git
   or npm configuration remain outside it.

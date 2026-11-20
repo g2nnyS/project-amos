@@ -18,11 +18,14 @@ import {
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
+import { PasswordStore, PasswordError } from './password.ts';
+import { verifySystemProof } from './system-auth.ts';
 
 import { parse as parseYaml } from 'yaml';
 
 import {
   AuthManager,
+  constantTimeEqual,
   readSessionCookie,
   serializeClearedSessionCookie,
   serializeSessionCookie,
@@ -40,6 +43,7 @@ import type {
   DecideProposalInput,
   RuleRecord,
 } from './contracts.ts';
+import { MAX_CANDIDATE_BYTES } from './compiler.ts';
 import {
   parsePolicyDocument,
   serializePolicyDocument,
@@ -74,6 +78,16 @@ export const HUMAN_ACTOR: Actor = Object.freeze({ id: 'human', role: 'human' });
 export const AGENT_ACTOR: Actor = Object.freeze({ id: 'agent', role: 'agent' });
 
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024;
+/**
+ * Candidate routes align with the compiler's candidate ceiling and add a
+ * bounded allowance for the request envelope (proposal metadata and JSON
+ * framing). An explicit `maxBodyBytes` still overrides this for every route.
+ */
+const CANDIDATE_BODY_ENVELOPE_BYTES = 64 * 1024;
+const DEFAULT_CANDIDATE_MAX_BODY_BYTES = Math.max(
+  DEFAULT_MAX_BODY_BYTES,
+  MAX_CANDIDATE_BYTES + CANDIDATE_BODY_ENVELOPE_BYTES,
+);
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 1000;
 const MAX_TOKEN_LENGTH = 1024;
 const MAX_TEXT_FIELD_LENGTH = 4096;
@@ -113,12 +127,17 @@ export interface GovernanceServerOptions {
   readonly service: ControlPlane;
   readonly humanToken: string;
   readonly agentToken: string;
+  readonly passwords?: PasswordStore;
+  readonly setupGrant?: string;
+  readonly systemAuth?: { readonly secret: string; readonly label: string };
   /** Raw or parsed constraints/schema.json; served at GET /api/schema. */
   readonly rawSchema: string | Record<string, unknown>;
   /** Fixed repository candidate served by GET /api/seed; never auto-approved. */
   readonly seed?: Candidate | readonly unknown[] | null;
   /** Directory containing the closed asset-manifest.json and its flat assets. */
   readonly staticDir?: string;
+  /** Published service instance id; included in GET /api/status only when set. */
+  readonly instanceId?: string;
   readonly now?: () => number;
   readonly sessionTtlMs?: number;
   readonly anonymousSessionTtlMs?: number;
@@ -149,6 +168,16 @@ export function createGovernanceServer(
   options: GovernanceServerOptions,
 ): GovernanceServer {
   const service = options.service;
+  let setupGrant = options.setupGrant;
+  const grantExpiresAt = (options.now ?? Date.now)() + 10 * 60_000;
+  const passwordStore = options.passwords;
+  function authView(session: SessionState) {
+    return { ...sessionView(session), auth: {
+      setupRequired: passwordStore !== undefined && !passwordStore.configured,
+      methods: [...(passwordStore?.configured ? ['password'] : []), 'token', ...(options.systemAuth ? ['system'] : [])],
+      ...(options.systemAuth ? { systemLabel: options.systemAuth.label } : {}),
+    } };
+  }
   const auth = new AuthManager({
     humanToken: options.humanToken,
     agentToken: options.agentToken,
@@ -161,6 +190,8 @@ export function createGovernanceServer(
   });
   const now = options.now ?? Date.now;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const candidateMaxBodyBytes =
+    options.maxBodyBytes ?? DEFAULT_CANDIDATE_MAX_BODY_BYTES;
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const staticDir =
@@ -169,6 +200,7 @@ export function createGovernanceServer(
   const seed = normalizeSeed(options.seed);
   const observations = options.observations ?? null;
   const jevSettings = options.jevSettings ?? null;
+  const instanceId = options.instanceId;
   let staticAssets: ReadonlyMap<string, StaticAsset> = new Map();
 
   const server = createServer((req, res) => {
@@ -290,7 +322,14 @@ export function createGovernanceServer(
         session = auth.createAnonymousSession();
         setSessionCookie(res, session);
       }
-      sendJson(res, 200, sessionView(session));
+      sendJson(res, 200, authView(session));
+      return;
+    }
+
+    if (resource === 'setup') {
+      requirePath(segments, 2);
+      requireMethod(method, 'POST');
+      await handleLogin(req, res, port, true);
       return;
     }
 
@@ -308,6 +347,21 @@ export function createGovernanceServer(
       return;
     }
 
+    if (resource === 'config') {
+      requirePath(segments, 2);
+      if (method === 'GET') {
+        requireAnyActor(req);
+        sendJson(res, 200, service.getGlobalConfig());
+        return;
+      }
+      requireMethod(method, 'POST');
+      const actor = requireHumanActor(req);
+      requireBrowserMutation(req, port);
+      const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+      sendJson(res, 200, service.updateGlobalConfig(body, actor));
+      return;
+    }
+
     if (resource === 'status') {
       requirePath(segments, 2);
       requireMethod(method, 'GET');
@@ -322,6 +376,7 @@ export function createGovernanceServer(
         enforcement: true,
         defaultEnabled: false,
         trustBoundary: false,
+        ...(instanceId === undefined ? {} : { instanceId }),
         ...(projectCount === null ? {} : { projectCount }),
       });
       return;
@@ -362,6 +417,14 @@ export function createGovernanceServer(
       requireMethod(method, 'GET');
       requireAnyActor(req);
       sendJson(res, 200, service.listAudit(parseAuditQuery(url)));
+      return;
+    }
+
+    if (resource === 'harnesses') {
+      requirePath(segments, 2);
+      requireMethod(method, 'GET');
+      requireAnyActor(req);
+      sendJson(res, 200, service.discoverHarnesses());
       return;
     }
 
@@ -471,7 +534,9 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         const actor = requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         const input = parseProposalInput(body, now());
         sendJson(res, 201, service.createProposal(id, input, actor));
         return;
@@ -670,7 +735,9 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         sendJson(res, 200, service.validateCandidate(id, candidateFromBody(body)));
         return;
       }
@@ -743,6 +810,7 @@ export function createGovernanceServer(
     req: IncomingMessage,
     res: ServerResponse,
     port: number,
+    setup = false,
   ): Promise<void> {
     if (headerValues(req, 'authorization').length > 0) {
       throw new HttpError(401, 'browser_session_required');
@@ -756,15 +824,8 @@ export function createGovernanceServer(
     requireCsrf(req, session);
     requireJsonContentType(req);
     const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
-    const token = body.token;
-    if (
-      typeof token !== 'string' ||
-      token.length === 0 ||
-      token.length > MAX_TOKEN_LENGTH
-    ) {
-      throw new HttpError(401, 'invalid_credentials');
-    }
-
+    if (setup && !passwordStore) throw new HttpError(404, 'not_found');
+    if (setup && passwordStore?.configured) throw new HttpError(409, 'setup_already_complete');
     const key = loginKey(req);
     const limit = auth.checkLoginAllowed(key);
     if (!limit.allowed) {
@@ -773,15 +834,28 @@ export function createGovernanceServer(
       });
     }
 
-    if (!auth.verifyHumanToken(token)) {
-      auth.recordLoginFailure(key);
-      throw new HttpError(401, 'invalid_credentials');
+    // Reserve the attempt before asynchronous password work; one KDF runs at a time.
+    auth.recordLoginFailure(key);
+    const tokenValid = typeof body.token === 'string' && body.token.length <= MAX_TOKEN_LENGTH && auth.verifyHumanToken(body.token);
+    const systemValid = options.systemAuth !== undefined && verifySystemProof(options.systemAuth.secret, session.csrfToken, body.proof, now());
+    if (setup) {
+      const grantValid = typeof setupGrant === 'string' && now() < grantExpiresAt &&
+        typeof body.setupGrant === 'string' && body.setupGrant.length === setupGrant.length && constantTimeEqual(body.setupGrant, setupGrant);
+      if (session.role !== 'human' && !grantValid && !tokenValid && !systemValid) throw new HttpError(403, 'enrollment_required');
+      await passwordStore!.setup(body.password);
+      setupGrant = undefined;
+    } else {
+      let valid = false;
+      if (body.method === 'password') valid = await checkPasswordCredential(passwordStore, body.password);
+      else if (body.method === 'system') valid = systemValid;
+      else if (body.method === undefined || body.method === 'token') valid = tokenValid;
+      if (!valid) throw new HttpError(401, 'invalid_credentials');
     }
-
-    auth.resetLoginFailures(key);
-    const rotated = auth.createHumanSession(session.id);
+    // Async verification must not revive a logged-out or expired session, or reuse a proof.
+    if (auth.getSession(session.id) !== session) throw new HttpError(401, 'unauthenticated');
+    const rotated = finalizeHumanSession(auth, session, key);
     setSessionCookie(res, rotated);
-    sendJson(res, 200, sessionView(rotated));
+    sendJson(res, 200, authView(rotated));
   }
 
   async function handleLogout(
@@ -954,6 +1028,9 @@ export function createGovernanceServer(
         headers: error.headers,
       };
     }
+    if (error instanceof PasswordError) {
+      return { status: error.code === 'password_busy' ? 429 : error.code === 'setup_already_complete' ? 409 : 400, code: error.code, headers: {} };
+    }
     if (error instanceof DomainError || isDomainError(error)) {
       // DomainError messages equal their stable code; never copy anything else.
       return { status: error.status, code: error.code, headers: {} };
@@ -1106,6 +1183,30 @@ export async function startGovernanceServer(
     port,
     url: `http://127.0.0.1:${port}`,
   };
+}
+
+/**
+ * Password-method credential check for the human login route, isolated at
+ * module level so the route handler stays a plain dispatch over one call.
+ */
+async function checkPasswordCredential(
+  passwordStore: PasswordStore | undefined,
+  password: unknown,
+): Promise<boolean> {
+  return passwordStore !== undefined && (await passwordStore.verify(password));
+}
+
+/**
+ * Clears failed-attempt accounting and rotates the session once credentials
+ * have been accepted.
+ */
+function finalizeHumanSession(
+  auth: AuthManager,
+  session: SessionState,
+  loginKey: string,
+): SessionState {
+  auth.resetLoginFailures(loginKey);
+  return auth.createHumanSession(session.id);
 }
 
 function normalizeSchemaDocument(

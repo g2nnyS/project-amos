@@ -106,6 +106,32 @@ function templateFor(rule: ReturnType<typeof makeRule>) {
   };
 }
 
+function readTighteningState(
+  databasePath: string,
+  projectId: string,
+): { readonly epoch: number; readonly snapshot_json: string } {
+  const db = new DatabaseSync(databasePath);
+  try {
+    const row = db
+      .prepare('SELECT epoch, snapshot_json FROM tightening_state WHERE project_id = ?')
+      .get(projectId) as { epoch?: unknown; snapshot_json?: unknown } | undefined;
+    assert.equal(typeof row?.epoch, 'number');
+    assert.equal(typeof row?.snapshot_json, 'string');
+    return {
+      epoch: row!.epoch as number,
+      snapshot_json: row!.snapshot_json as string,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+function expiredEventCount(cp: ControlPlane, projectId: string): number {
+  return cp
+    .listAudit({ projectId, limit: 200 })
+    .items.filter((event) => event.kind === 'temporary_tightening_expired').length;
+}
+
 test('project configuration defaults are stored and only humans can change them', (t) => {
   const clock = createTestClock(START);
   const fixture = open(t, clock);
@@ -134,7 +160,140 @@ test('project configuration defaults are stored and only humans can change them'
     human(),
   );
   assert.equal(updated.managed.enabled, true);
+  assert.equal(updated.harness.mode, 'managed');
+  assert.equal(updated.effectiveHarness.mode, 'managed');
   assert.equal(fixture.cp.getProjectConfig(project.id).managed.enabled, true);
+});
+
+test('global defaults resolve project inheritance and re-emit only host configuration', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const inherited = createProject(fixture.cp, join(fixture.workspace, 'inherited'));
+  const { base } = publishFixture(fixture, project.id);
+
+  assert.deepEqual(fixture.cp.getGlobalConfig(), {
+    enabled: true,
+    mode: 'log-only',
+    advisoryInjection: false,
+  });
+  assert.deepEqual(fixture.cp.getProjectConfig(project.id).harness, {
+    enabled: null,
+    mode: null,
+    advisoryInjection: null,
+  });
+  expectDomainError(
+    () => fixture.cp.updateGlobalConfig({ mode: 'managed' }, agent()),
+    'forbidden',
+  );
+
+  const first = fixture.cp.updateGlobalConfig(
+    { mode: 'managed', advisoryInjection: true },
+    human(),
+  );
+  assert.deepEqual(first.projectionFailures, []);
+  let config = fixture.cp.getProjectConfig(project.id);
+  assert.equal(config.effectiveHarness.mode, 'managed');
+  assert.equal(config.effectiveHarness.advisoryInjection, true);
+  let projection = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as {
+    version: number;
+    activationDigest: string;
+    epoch: number;
+    configDigest: string;
+    harness: { enabled: boolean; mode: string; advisoryInjection: boolean };
+    managed: { enabled: boolean };
+  };
+  assert.equal(projection.version, 2);
+  assert.equal(projection.activationDigest, base.snapshot.activationDigest);
+  assert.equal(projection.epoch, base.snapshot.activationSnapshot.epoch);
+  assert.equal(projection.managed.enabled, true);
+  assert.deepEqual(projection.harness, {
+    enabled: true,
+    mode: 'managed',
+    advisoryInjection: true,
+  });
+
+  fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { enabled: true, mode: 'log-only', advisoryInjection: null } },
+    human(),
+  );
+  const second = fixture.cp.updateGlobalConfig(
+    { enabled: false, mode: 'managed', advisoryInjection: false },
+    human(),
+  );
+  assert.deepEqual(second.projectionFailures, []);
+  config = fixture.cp.getProjectConfig(project.id);
+  assert.deepEqual(config.effectiveHarness, {
+    enabled: true,
+    mode: 'log-only',
+    advisoryInjection: false,
+  });
+  assert.equal(fixture.cp.getProjectConfig(inherited.id).effectiveHarness.enabled, false);
+  assert.equal(existsSync(join(inherited.workspace, '.pi', 'amos.managed.json')), false);
+  projection = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as typeof projection;
+  assert.equal(projection.activationDigest, base.snapshot.activationDigest);
+  assert.equal(projection.epoch, base.snapshot.activationSnapshot.epoch);
+  assert.equal(projection.managed.enabled, false);
+
+  for (const harness of ['pi', 'opencode'] as const) {
+    assert.equal(writeHarnessRuntimeReport({
+      directory: fixture.workspace,
+      projectId: project.id,
+      activationDigest: projection.activationDigest,
+      epoch: projection.epoch,
+      policyVersion: base.snapshot.activationSnapshot.project.projectConfigVersion,
+      loadedAt: new Date(clock.now()).toISOString(),
+      harness,
+      mode: 'log-only',
+      configDigest: projection.configDigest,
+      capabilities: {},
+    }), true);
+  }
+  const runtime = fixture.cp.getRuntimeStatus(project.id);
+  assert.equal(runtime.harnesses.pi.status, 'loaded');
+  assert.equal(runtime.harnesses.opencode.status, 'loaded');
+  assert.equal(runtime.harnesses.pi.runtime?.mode, 'log-only');
+  assert.equal(runtime.projection.status, 'written');
+  assert.equal(fixture.cp.listAudit({}).items.some((event) => event.kind === 'global_config_updated'), true);
+});
+
+test('global fanout reports independent projection write failures', (t) => {
+  const clock = createTestClock(START);
+  const root = makeTempDir(t);
+  const auditDir = join(root, 'audit');
+  mkdirSync(auditDir, { recursive: true });
+  const firstWorkspace = join(root, 'first');
+  const secondWorkspace = join(root, 'second');
+  mkdirSync(firstWorkspace, { recursive: true });
+  mkdirSync(secondWorkspace, { recursive: true });
+  let failingProject = '';
+  const cp = createControlPlane({
+    databasePath: join(root, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+    writeArtifacts(input) {
+      if (input.projectId === failingProject) throw new Error('fixture write failure');
+      writeProjectArtifacts(input);
+    },
+  });
+  t.after(() => cp.close());
+  const first = createProject(cp, firstWorkspace);
+  const second = createProject(cp, secondWorkspace);
+  failingProject = first.id;
+  publishFixture({ cp, databasePath: '', workspace: firstWorkspace, auditDir, clock }, first.id);
+  publishFixture({ cp, databasePath: '', workspace: secondWorkspace, auditDir, clock }, second.id);
+
+  const result = cp.updateGlobalConfig({ advisoryInjection: true }, human());
+  assert.deepEqual(result.projectionFailures, [first.id]);
+  assert.equal(existsSync(join(secondWorkspace, '.pi', 'amos.managed.json')), true);
+  assert.equal(cp.getRuntimeStatus(first.id).projection.status, 'missing');
 });
 
 test('publish atomically writes the activation snapshot and managed host projection', (t) => {
@@ -217,6 +376,9 @@ test('preauthorized tightening applies, persists, re-emits, expires, and survive
       activationDigest: applied.activationDigest ?? '',
       epoch: applied.epoch,
       policyVersion: applied.policyVersion ?? '',
+      configDigest: (JSON.parse(
+        readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+      ) as { configDigest: string }).configDigest,
       loadedAt: new Date(clock.now()).toISOString(),
     }),
     true,
@@ -379,6 +541,476 @@ test('staggered tightening expiry keeps the snapshot chain recoverable', (t) => 
   const fullyExpired = restarted.expireTemporaryTightenings(project.id, agent());
   assert.equal(fullyExpired.active.length, 0);
   assert.equal(fullyExpired.expired.length, 3);
+});
+
+test('a project configuration change persists an already-expired tightening before projecting', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const { tighteningRule } = publishFixture(fixture, project.id);
+  const initial = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: initial.tightening.quota,
+        templates: [templateFor(tighteningRule)],
+      },
+    },
+    human(),
+  );
+
+  const action = {
+    tool: 'write',
+    operation: 'file_write',
+    target: `${fixture.workspace}/src/x.ts`,
+  };
+  const applied = fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-write', ttlMs: 10_000 },
+    agent(),
+  );
+  assert.equal(applied.epoch, 2);
+  assert.equal(fixture.cp.simulate(project.id, { action }).verdict, 'deny');
+
+  clock.advance(11_000);
+  // The new configuration removes the template; expiry must still be settled
+  // against the configuration that authorized the active application.
+  const updated = fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: false,
+        quota: initial.tightening.quota,
+        templates: [],
+      },
+    },
+    human(),
+  );
+  assert.equal(updated.tightening.enabled, false);
+
+  const state = readTighteningState(fixture.databasePath, project.id);
+  assert.equal(state.epoch, 3);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
+  assert.equal(fixture.cp.simulate(project.id, { action }).verdict, 'allow');
+
+  const managed = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as { epoch: number; kind: string; activationDigest: string };
+  assert.equal(managed.epoch, 3);
+  assert.equal(managed.kind, 'tightening');
+  assert.equal(
+    managed.activationDigest,
+    (JSON.parse(state.snapshot_json) as { activationDigest: string }).activationDigest,
+  );
+
+  // A second save with nothing newly due must neither bump the epoch nor add
+  // another expiry record.
+  fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { advisoryInjection: null } },
+    human(),
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
+});
+
+test('a global configuration change settles due tightenings per project before projecting', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const { tighteningRule } = publishFixture(fixture, project.id);
+  const initial = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: initial.tightening.quota,
+        templates: [templateFor(tighteningRule)],
+      },
+    },
+    human(),
+  );
+
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-write', ttlMs: 10_000 },
+    agent(),
+  );
+  clock.advance(11_000);
+
+  const result = fixture.cp.updateGlobalConfig(
+    { advisoryInjection: true },
+    human(),
+  );
+  assert.deepEqual(result.projectionFailures, []);
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
+
+  const managed = JSON.parse(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as { epoch: number; kind: string };
+  assert.equal(managed.epoch, 3);
+  assert.equal(managed.kind, 'tightening');
+
+  fixture.cp.updateGlobalConfig({ advisoryInjection: false }, human());
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
+});
+
+test('staggered expiry through configuration saves increments the epoch once per batch', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const active = makeRule('active-read', {
+    predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
+  });
+  const shortRule = makeRule('tighten-write', {
+    dimension: 'filesystem',
+    level: 1,
+    predicate: [{ op: 'op_in', args: { operations: ['file_write'] } }],
+    on_hit: 'deny',
+  });
+  const longRule = makeRule('tighten-delete', {
+    dimension: 'filesystem',
+    level: 1,
+    predicate: [{ op: 'op_in', args: { operations: ['file_delete'] } }],
+    on_hit: 'confirm',
+  });
+  const proposal = fixture.cp.createProposal(
+    project.id,
+    {
+      title: 'Publish active rule only',
+      rationale: 'Two preauthorized tightening templates.',
+      baseVersion: 0,
+      expiresAt: futureIso(clock),
+      candidate: makeCandidate([active, shortRule, longRule], {
+        includedRuleIds: [active.id],
+      }),
+    },
+    human(),
+  );
+  fixture.cp.decideProposal(
+    proposal.id,
+    { decision: 'approve', note: 'fixture approval', expectedDigest: proposal.digest },
+    human(),
+  );
+  const initial = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: initial.tightening.quota,
+        templates: [
+          {
+            id: 'template-short',
+            ruleRef: { id: shortRule.id, version: 1 },
+            ruleDigest: tighteningRuleDigest(shortRule as unknown as Record<string, unknown>),
+            maxTtlMs: 120_000,
+            maxApplications: 3,
+            windowMs: 3_600_000,
+          },
+          {
+            id: 'template-long',
+            ruleRef: { id: longRule.id, version: 1 },
+            ruleDigest: tighteningRuleDigest(longRule as unknown as Record<string, unknown>),
+            maxTtlMs: 120_000,
+            maxApplications: 3,
+            windowMs: 3_600_000,
+          },
+        ],
+      },
+    },
+    human(),
+  );
+
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-short', ttlMs: 10_000 },
+    agent(),
+  );
+  clock.advance(5_000);
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-long', ttlMs: 60_000 },
+    agent(),
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+
+  clock.advance(6_000);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { enabled: null } },
+    human(),
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 4);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
+  let status = fixture.cp.listTemporaryTightenings(project.id);
+  assert.equal(status.active.length, 1);
+  assert.equal(status.active[0]?.templateId, 'template-long');
+
+  clock.advance(55_000);
+  fixture.cp.updateGlobalConfig({ advisoryInjection: true }, human());
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 5);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 2);
+  status = fixture.cp.listTemporaryTightenings(project.id);
+  assert.equal(status.active.length, 0);
+
+  fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { advisoryInjection: null } },
+    human(),
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 5);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 2);
+});
+
+test('global fanout keeps a failed settled projection visible as missing', (t) => {
+  const clock = createTestClock(START);
+  const root = makeTempDir(t);
+  const auditDir = join(root, 'audit');
+  mkdirSync(auditDir, { recursive: true });
+  const firstWorkspace = join(root, 'first');
+  const secondWorkspace = join(root, 'second');
+  mkdirSync(firstWorkspace, { recursive: true });
+  mkdirSync(secondWorkspace, { recursive: true });
+  let failingProject = '';
+  const cp = createControlPlane({
+    databasePath: join(root, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+    writeArtifacts(input) {
+      if (input.projectId === failingProject) throw new Error('fixture write failure');
+      writeProjectArtifacts(input);
+    },
+  });
+  t.after(() => cp.close());
+  const first = createProject(cp, firstWorkspace);
+  const second = createProject(cp, secondWorkspace);
+  failingProject = first.id;
+  const firstPublished = publishFixture(
+    { cp, databasePath: '', workspace: firstWorkspace, auditDir, clock },
+    first.id,
+  );
+  const secondPublished = publishFixture(
+    { cp, databasePath: '', workspace: secondWorkspace, auditDir, clock },
+    second.id,
+  );
+
+  for (const [project, tighteningRule] of [
+    [first, firstPublished.tighteningRule],
+    [second, secondPublished.tighteningRule],
+  ] as const) {
+    const initial = cp.getProjectConfig(project.id);
+    cp.updateProjectConfig(
+      project.id,
+      {
+        tightening: {
+          enabled: true,
+          quota: initial.tightening.quota,
+          templates: [templateFor(tighteningRule)],
+        },
+      },
+      human(),
+    );
+    cp.applyTemporaryTightening(
+      project.id,
+      { templateId: 'template-write', ttlMs: 10_000 },
+      agent(),
+    );
+  }
+  clock.advance(11_000);
+
+  const result = cp.updateGlobalConfig({ advisoryInjection: true }, human());
+  assert.deepEqual(result.projectionFailures, [first.id]);
+  assert.equal(
+    readTighteningState(join(root, 'governance.sqlite'), first.id).epoch,
+    3,
+  );
+  assert.equal(
+    readTighteningState(join(root, 'governance.sqlite'), second.id).epoch,
+    3,
+  );
+  const status = cp.getRuntimeStatus(first.id);
+  assert.equal(status.projection.status, 'missing');
+  assert.notEqual(status.status, 'loaded');
+  const secondProjection = JSON.parse(
+    readFileSync(join(secondWorkspace, '.pi', 'amos.managed.json'), 'utf8'),
+  ) as { epoch: number; kind: string };
+  assert.equal(secondProjection.epoch, 3);
+  assert.equal(secondProjection.kind, 'tightening');
+});
+
+test('a backward clock during configuration change neither settles nor extends the TTL', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  const project = createProject(fixture.cp, fixture.workspace);
+  const { tighteningRule } = publishFixture(fixture, project.id);
+  const initial = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: initial.tightening.quota,
+        templates: [templateFor(tighteningRule)],
+      },
+    },
+    human(),
+  );
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-write', ttlMs: 10_000 },
+    agent(),
+  );
+  const projectionBefore = readFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    'utf8',
+  );
+  const auditBefore = fixture.cp.listAudit({ projectId: project.id, limit: 200 }).items.length;
+  const configBefore = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.close();
+
+  const backward = createTestClock(new Date(Date.parse(START) - 1_000).toISOString());
+  const regressed = createControlPlane({
+    databasePath: fixture.databasePath,
+    rawSchema: readSchema(),
+    now: backward.now,
+    managedAuditDir: fixture.auditDir,
+    writeArtifacts: writeProjectArtifacts,
+  });
+  expectDomainError(
+    () =>
+      regressed.updateProjectConfig(
+        project.id,
+        { harness: { enabled: true } },
+        human(),
+      ),
+    'clock_regression',
+  );
+  assert.equal(
+    regressed.getProjectConfig(project.id).harness.enabled,
+    configBefore.harness.enabled,
+  );
+  assert.equal(
+    regressed.listAudit({ projectId: project.id, limit: 200 }).items.length,
+    auditBefore,
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 2);
+  assert.equal(expiredEventCount(regressed, project.id), 0);
+  assert.equal(
+    readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+    projectionBefore,
+  );
+  expectDomainError(
+    () => regressed.listTemporaryTightenings(project.id),
+    'clock_regression',
+  );
+  regressed.close();
+
+  const forward = createControlPlane({
+    databasePath: fixture.databasePath,
+    rawSchema: readSchema(),
+    now: () => Date.parse(START) + 11_000,
+    managedAuditDir: fixture.auditDir,
+    writeArtifacts: writeProjectArtifacts,
+  });
+  t.after(() => forward.close());
+  forward.updateProjectConfig(
+    project.id,
+    { harness: { advisoryInjection: null } },
+    human(),
+  );
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+  assert.equal(expiredEventCount(forward, project.id), 1);
+});
+
+test('a settlement write failure rolls back the project configuration change atomically', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const { tighteningRule } = publishFixture(fixture, project.id);
+  const initial = fixture.cp.getProjectConfig(project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: initial.tightening.quota,
+        templates: [templateFor(tighteningRule)],
+      },
+    },
+    human(),
+  );
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-write', ttlMs: 10_000 },
+    agent(),
+  );
+  const projectionBefore = readFileSync(
+    join(fixture.workspace, '.pi', 'amos.managed.json'),
+    'utf8',
+  );
+  const auditBefore = fixture.cp.listAudit({ projectId: project.id, limit: 200 }).items.length;
+  clock.advance(11_000);
+
+  const db = new DatabaseSync(fixture.databasePath);
+  db.exec(`
+    CREATE TRIGGER fixture_fail_retire
+    BEFORE UPDATE ON temporary_tightenings
+    WHEN NEW.retired_at IS NOT NULL
+    BEGIN
+      SELECT RAISE(ABORT, 'fixture settlement failure');
+    END;
+  `);
+  try {
+    expectDomainError(
+      () =>
+        fixture.cp.updateProjectConfig(
+          project.id,
+          { harness: { enabled: true } },
+          human(),
+        ),
+      'internal_error',
+    );
+    assert.equal(fixture.cp.getProjectConfig(project.id).harness.enabled, null);
+    assert.equal(
+      fixture.cp.listAudit({ projectId: project.id, limit: 200 }).items.length,
+      auditBefore,
+    );
+    assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 2);
+    assert.equal(expiredEventCount(fixture.cp, project.id), 0);
+    assert.equal(
+      readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
+      projectionBefore,
+    );
+    const retired = db
+      .prepare(
+        'SELECT COUNT(*) AS count FROM temporary_tightenings WHERE project_id = ? AND retired_at IS NOT NULL',
+      )
+      .get(project.id) as { count?: unknown };
+    assert.equal(Number(retired.count ?? 0), 0);
+  } finally {
+    db.exec('DROP TRIGGER fixture_fail_retire');
+    db.close();
+  }
+
+  const updated = fixture.cp.updateProjectConfig(
+    project.id,
+    { harness: { enabled: true } },
+    human(),
+  );
+  assert.equal(updated.harness.enabled, true);
+  assert.equal(readTighteningState(fixture.databasePath, project.id).epoch, 3);
+  assert.equal(expiredEventCount(fixture.cp, project.id), 1);
 });
 
 test('tightening rejects unapproved templates, missing enablement, and excessive TTL', (t) => {

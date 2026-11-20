@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertProtectedAssets } from './protected-assets.ts';
 
-test('protected placements reject workspace overlap, symlinks, and inode aliases', () => {
+const runtimeManifestUnsupported = process.platform !== 'linux' ? 'protected asset probe requires Linux runtime manifest files' : false;
+
+test('protected placements reject workspace overlap, symlinks, and inode aliases', { skip: runtimeManifestUnsupported }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amos-assets-'));
   const work = path.join(dir, 'work'); fs.mkdirSync(work);
   const secret = path.join(dir, 'secret'); fs.writeFileSync(secret, 'fixture');
@@ -25,7 +27,7 @@ test('protected placements reject workspace overlap, symlinks, and inode aliases
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('external hardlink alias of Node runtime cannot be a protected asset', (t) => {
+test('external hardlink alias of Node runtime cannot be a protected asset', { skip: runtimeManifestUnsupported }, (t) => {
   // Prefer the project filesystem: /tmp is often a different device than Node.
   const dir = fs.mkdtempSync(path.join(process.cwd(), '.amos-assets-'));
   const work = path.join(dir, 'work'); fs.mkdirSync(work);

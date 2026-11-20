@@ -1,9 +1,10 @@
 /**
  * Best-effort local load report for the governance console.
  *
- * The report is written only after a harness has loaded and bound an
- * activation snapshot. It is an observation of the same-UID workspace, not
- * remote attestation, and a write failure never changes a tool verdict.
+ * Reports describe the actual loaded mode and configuration. Enforcement is
+ * reported only after activation verification and gate readiness. These are
+ * same-UID observations, not remote attestation; write failures never change
+ * a tool verdict.
  */
 
 import {
@@ -46,7 +47,9 @@ export interface HarnessRuntimeReportInput {
   readonly loadedAt: string;
   readonly lastToolAt?: string;
   readonly harness?: 'pi' | 'opencode';
-  readonly capabilities?: HarnessRuntimeCapabilities;
+  readonly mode?: 'enforcing' | 'log-only' | 'disabled';
+  readonly configDigest?: string;
+  readonly capabilities?: HarnessRuntimeCapabilities | Readonly<Record<string, unknown>>;
 }
 
 export const OPENCODE_MANAGED_CAPABILITIES: HarnessRuntimeCapabilities = Object.freeze({
@@ -57,7 +60,7 @@ export const OPENCODE_MANAGED_CAPABILITIES: HarnessRuntimeCapabilities = Object.
   singleUseReview: true,
 });
 
-/** Atomically replace `.pi/runtime.json`; never follows a symlink. */
+/** Atomically replace the harness-specific report; never follows a symlink. */
 export function writeHarnessRuntimeReport(
   input: HarnessRuntimeReportInput,
 ): boolean {
@@ -76,7 +79,9 @@ export function writeHarnessRuntimeReport(
     } else if (existing.isSymbolicLink() || !existing.isDirectory()) {
       return false;
     }
-    const target = join(pi, 'runtime.json');
+    const harness = input.harness ?? 'pi';
+    const version = input.configDigest === undefined ? 1 : 2;
+    const target = join(pi, version === 2 ? `runtime.${harness}.json` : 'runtime.json');
     try {
       const current = lstatSync(target);
       if (current.isSymbolicLink() || !current.isFile()) return false;
@@ -85,16 +90,19 @@ export function writeHarnessRuntimeReport(
     }
     const body = `${JSON.stringify({
       format: HARNESS_RUNTIME_FORMAT,
-      version: 1,
+      version,
       projectId: input.projectId,
       activationDigest: input.activationDigest,
       epoch: input.epoch,
       policyVersion: input.policyVersion,
       loadedAt: input.loadedAt,
       ...(input.lastToolAt === undefined ? {} : { lastToolAt: input.lastToolAt }),
-      harness: input.harness ?? 'pi',
-      mode: 'enforcing',
-      capabilities: input.capabilities ?? (input.harness === 'opencode' ? OPENCODE_MANAGED_CAPABILITIES : PI_MANAGED_CAPABILITIES),
+      harness,
+      mode: input.mode ?? 'enforcing',
+      ...(input.configDigest === undefined ? {} : { configDigest: input.configDigest }),
+      capabilities: input.capabilities ?? ((input.mode ?? 'enforcing') === 'enforcing'
+        ? (harness === 'opencode' ? OPENCODE_MANAGED_CAPABILITIES : PI_MANAGED_CAPABILITIES)
+        : {}),
     })}\n`;
     const temp = join(pi, `.runtime-${randomBytes(12).toString('hex')}.tmp`);
     let fd: number | null = null;

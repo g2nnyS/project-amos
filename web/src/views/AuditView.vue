@@ -6,6 +6,8 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { formatDate } from '@/lib/format'
+import { t } from '@/i18n'
+import { auditEventLabel } from '@/i18n/labels'
 import { useGovernanceStore } from '@/stores/governance'
 import type { AuditPage } from '@/types'
 
@@ -17,16 +19,6 @@ const loading = ref(false)
 const cursors = ref<(number | undefined)[]>([undefined])
 const index = ref(0)
 let generation = 0
-
-const labels: Record<string, string> = {
-  project_created: '创建项目',
-  proposal_created: '创建提案',
-  proposal_approved: '批准提案',
-  proposal_rejected: '拒绝提案',
-  proposal_withdrawn: '撤回提案',
-  proposal_expired: '提案过期',
-  version_published: '发布版本'
-}
 
 async function load() {
   const ticket = ++generation
@@ -44,7 +36,7 @@ async function load() {
     })
     if (ticket === generation) result.value = page
   } catch (e) {
-    if (ticket === generation) error.value = e instanceof Error ? e.message : '加载审计失败。'
+    if (ticket === generation) error.value = e instanceof Error ? e.message : t('audit.loadError')
   } finally {
     if (ticket === generation) loading.value = false
   }
@@ -65,42 +57,48 @@ function previous() {
 </script>
 
 <template>
-  <div class="page">
-    <PageHeader title="治理审计" description="实际治理状态变化的元数据，不包含规则正文、命令或审批自由文本。">
+  <div class="page space-y-4">
+    <PageHeader :title="t('audit.title')" :description="t('audit.description')">
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="loading" @click="load"><ScrollText class="mr-1 size-3.5" />刷新</Button>
+        <Button variant="outline" size="sm" :disabled="loading" @click="load"><ScrollText class="mr-1 size-3.5" />{{ t('common.refresh') }}</Button>
       </template>
     </PageHeader>
 
     <section class="panel overflow-hidden">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">{{ t('audit.listTitle') }}</h2>
+          <p class="panel-kicker">{{ t('audit.listKicker') }}</p>
+        </div>
+      </div>
       <div class="filterbar">
-        <label for="audit-scope" class="text-xs text-muted-foreground">范围</label>
+        <label for="audit-scope" class="text-xs text-muted-foreground">{{ t('audit.scope') }}</label>
         <select id="audit-scope" v-model="scope" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
-          <option value="project">当前项目</option>
-          <option value="all">全部项目</option>
+          <option value="project">{{ t('audit.scopeProject') }}</option>
+          <option value="all">{{ t('audit.scopeAll') }}</option>
         </select>
-        <span class="ml-auto text-xs text-muted-foreground">按事件 ID 倒序 · 每页 25 条</span>
+        <span class="ml-auto text-xs text-muted-foreground">{{ t('audit.order') }}</span>
       </div>
 
       <div v-if="scope === 'project' && !store.activeProjectId" class="p-6">
-        <EmptyState title="请选择项目" description="请选择项目或切换至全部项目。" />
+        <EmptyState :title="t('common.selectProject')" :description="t('audit.emptyProject')" />
       </div>
-      <div v-else-if="loading" role="status" class="p-6 text-sm">正在加载审计记录…</div>
+      <div v-else-if="loading" role="status" class="p-6 text-sm">{{ t('audit.loading') }}</div>
       <div v-else-if="error" role="alert" class="p-6 text-sm text-destructive">
-        加载失败：{{ error }} <button class="ml-2 underline" @click="load">重试</button>
+        {{ t('common.loadFailed', { error }) }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button>
       </div>
       <div v-else-if="result && !result.items.length" class="p-8">
-        <EmptyState title="暂无审计记录" description="此范围暂无治理事件。" />
+        <EmptyState :title="t('audit.emptyTitle')" :description="t('audit.emptyDescription')" />
       </div>
       <div v-else-if="result" class="divide-y divide-border">
         <article v-for="event in result.items" :key="event.id" class="p-4">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <span class="font-medium text-foreground">{{ labels[event.kind] ?? event.kind }}</span>
+            <span class="font-medium text-foreground">{{ auditEventLabel(event.kind) }}</span>
             <span class="text-muted-foreground">#{{ event.id }} · {{ formatDate(event.createdAt) }}</span>
             <span class="text-muted-foreground">{{ event.actor.id }} · {{ event.actor.role }}</span>
           </div>
           <p class="mt-2 break-all text-xs text-muted-foreground">
-            项目 {{ event.projectId ?? '—' }} · 提案 {{ event.proposalId ?? '—' }} · 版本 {{ event.version ?? '—' }}
+            {{ t('audit.refs', { project: event.projectId ?? '—', proposal: event.proposalId ?? '—', version: event.version ?? '—' }) }}
           </p>
           <dl v-if="Object.keys(event.metadata).length" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
             <div v-for="(value, key) in event.metadata" :key="key" class="break-all">
@@ -110,11 +108,11 @@ function previous() {
           </dl>
         </article>
       </div>
-      <div v-if="result" class="flex items-center justify-between border-t border-border p-3 text-xs text-muted-foreground">
-        <span>第 {{ index + 1 }} 页 · {{ result.items.length }} 条</span>
+      <div v-if="result" class="flex items-center justify-between border-t border-hairline p-3 text-xs text-muted-foreground">
+        <span>{{ t('audit.page', { page: index + 1, count: result.items.length }) }}</span>
         <div class="flex gap-2">
-          <Button variant="outline" size="sm" :disabled="index === 0 || loading" @click="previous">上一页</Button>
-          <Button variant="outline" size="sm" :disabled="result.nextCursor === null || loading" @click="next">下一页</Button>
+          <Button variant="outline" size="sm" :disabled="index === 0 || loading" @click="previous">{{ t('common.previousPage') }}</Button>
+          <Button variant="outline" size="sm" :disabled="result.nextCursor === null || loading" @click="next">{{ t('common.nextPage') }}</Button>
         </div>
       </div>
     </section>

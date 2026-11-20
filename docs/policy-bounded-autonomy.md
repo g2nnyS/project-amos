@@ -90,7 +90,11 @@ The package build includes `worker.ts` explicitly through the source-directory
 glob. A custom focused TypeScript file-list build must include it too: its
 runtime `new URL('./worker.js', import.meta.url)` is not a static import dependency.
 Tests for unsupported Linux/loader/bubblewrap configurations report a skip, not
-evidence of confinement. The real execution, isolation and physical crash probes
+evidence of confinement. Journal and protected-asset host tests require Linux but
+do not require bubblewrap. On macOS and other non-Linux platforms, these tests
+report explicit skips; pure authorization and audit tests still run, along with a
+bootstrap rejection check that verifies no executor calls or file effects occur.
+The real execution, isolation and physical crash probes
 ran without skips on the development host; this is not a portability guarantee.
 The isolation probe uses the production mount builder with a temporary runtime
 tree containing both allowlisted libraries and an unlisted private file/Unix

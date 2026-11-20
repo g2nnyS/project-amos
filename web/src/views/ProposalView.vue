@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { ArrowLeft, ShieldAlert } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import CandidateView from '@/components/governance/CandidateView.vue'
 import ConfirmAction from '@/components/governance/ConfirmAction.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -12,6 +13,7 @@ import { formatDate } from '@/lib/format'
 import { useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import { t } from '@/i18n'
 import type { Candidate, Proposal } from '@/types'
 
 const store = useGovernanceStore()
@@ -32,7 +34,6 @@ const baseline = computed<Candidate>(() => store.policy?.candidate ?? { rules: [
 const stale = computed(() => !!proposal.value && proposal.value.baseVersion !== (store.policy?.version ?? 0))
 const expired = computed(() => !!proposal.value && Date.parse(proposal.value.expiresAt) <= Date.now())
 const pending = computed(() => proposal.value?.status === 'pending' && !expired.value)
-const labels: Record<string, string> = { pending: '待审批', approved: '已批准', rejected: '已拒绝', withdrawn: '已撤回', expired: '已过期' }
 const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'approved', rejected: 'rejected', withdrawn: 'withdrawn', expired: 'expired' }
 
 async function load() {
@@ -50,10 +51,10 @@ async function load() {
   try {
     const result = await api.proposal(proposalId)
     if (ticket !== generation) return
-    if (result.projectId !== project) throw new Error('该提案不属于当前项目。')
+    if (result.projectId !== project) throw new Error(t('proposal.wrongProject'))
     proposal.value = result
   } catch (e) {
-    if (ticket === generation) error.value = e instanceof Error ? e.message : '加载提案失败。'
+    if (ticket === generation) error.value = e instanceof Error ? e.message : t('proposal.loadError')
   } finally {
     if (ticket === generation) loading.value = false
   }
@@ -68,101 +69,105 @@ async function submit() {
   const ticket = generation
   if (!current || !selected || !project || busy.value || !pending.value || (selected === 'approve' && stale.value)) return
   busy.value = true
+  error.value = ''
+  let result: Proposal
   try {
-    const result = selected === 'withdraw'
+    result = selected === 'withdraw'
       ? await api.withdraw(current.id)
       : await api.decide(current.id, { decision: selected, note: note.value.trim(), expectedDigest: current.digest })
-    if (ticket !== generation || project !== store.activeProjectId) return
-    proposal.value = result
-    action.value = null
-    toast('操作已完成', selected === 'approve' ? '已发布治理版本；这不授权工具调用。' : '提案状态已更新。', 'success')
-    await store.refreshProject()
   } catch (e) {
     if (ticket === generation) {
-      const message = e instanceof Error ? e.message : '操作失败。'
+      const message = e instanceof Error ? e.message : t('proposal.failedFallback')
       error.value = message
-      toast('操作失败', message, 'error')
+      toast(t('proposal.failed'), message, 'error')
     }
+    return
   } finally {
     if (ticket === generation) busy.value = false
   }
+  if (ticket !== generation || project !== store.activeProjectId) return
+  proposal.value = result
+  action.value = null
+  toast(t('proposal.done'), selected === 'approve' ? t('proposal.publishedNote') : t('proposal.updatedNote'), 'success')
+  try { await store.refreshProject() }
+  catch { if (ticket === generation) toast(t('proposal.refreshFailed'), t('proposal.refreshFailedNote'), 'error') }
 }
 </script>
 
 <template>
-  <div class="page">
-    <PageHeader title="提案详情" description="审批绑定候选摘要和基准版本；发布不是工具执行授权。">
+  <div class="page space-y-4">
+    <PageHeader :title="t('proposal.title')" :description="t('proposal.description')">
       <template #actions>
-        <RouterLink to="/proposals" class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft class="size-3.5" />返回提案</RouterLink>
+        <RouterLink to="/proposals" class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft class="size-3.5" />{{ t('proposal.back') }}</RouterLink>
       </template>
     </PageHeader>
 
-    <div v-if="!store.activeProjectId" class="panel p-5 text-sm">请先选择项目。</div>
-    <div v-else-if="loading" class="panel p-5 text-sm" role="status">正在加载提案…</div>
-    <div v-else-if="!proposal" class="panel p-5 text-sm text-destructive" role="alert">{{ error || '无法加载提案。' }} <button class="ml-2 underline" @click="load">重试</button></div>
+    <EmptyState v-if="!store.activeProjectId" :title="t('common.selectProject')" :description="t('proposals.emptyProject')" />
+    <div v-else-if="loading" class="panel p-5 text-sm" role="status">{{ t('proposals.loading') }}</div>
+    <div v-else-if="!proposal" class="panel p-5 text-sm text-destructive" role="alert">{{ error || t('proposal.loadFailed') }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button></div>
 
     <template v-else>
-      <div v-if="error" role="alert" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive">{{ error }}</div>
+      <div v-if="error" role="alert" class="panel p-5 text-sm text-destructive">{{ error }}</div>
 
-      <section class="panel mb-4">
+      <section class="panel">
         <div class="panel-header">
           <div>
             <h2 class="text-base font-semibold">{{ proposal.title }}</h2>
-            <p class="panel-kicker">提案 ID {{ proposal.id }}</p>
+            <p class="panel-kicker">{{ t('proposal.id', { id: proposal.id }) }}</p>
           </div>
           <StatusBadge :status="badgeStatus[proposal.status]" />
         </div>
         <div class="panel-body grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
-          <div><dt class="text-[11px] text-muted-foreground">作者</dt><dd>{{ proposal.author.id }} · {{ proposal.author.role }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">基准 / 当前版本</dt><dd>{{ proposal.baseVersion }} / {{ store.policy?.version ?? 0 }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">候选 digest</dt><dd class="break-all font-mono">{{ proposal.digest }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">创建 / 到期</dt><dd>{{ formatDate(proposal.createdAt) }} / {{ formatDate(proposal.expiresAt) }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">发布 / 恢复来源版本</dt><dd>{{ proposal.publishedVersion ?? '—' }} / {{ proposal.restoreFromVersion ?? '—' }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">审批结果</dt><dd>{{ proposal.decision ? (proposal.decision.decision === 'approve' ? '已批准' : '已拒绝') : '—' }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.author') }}</dt><dd>{{ proposal.author.id }} · {{ proposal.author.role }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.versions') }}</dt><dd>{{ proposal.baseVersion }} / {{ store.policy?.version ?? 0 }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.digest') }}</dt><dd class="break-all font-mono">{{ proposal.digest }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.dates') }}</dt><dd>{{ formatDate(proposal.createdAt) }} / {{ formatDate(proposal.expiresAt) }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.published') }}</dt><dd>{{ proposal.publishedVersion ?? '—' }} / {{ proposal.restoreFromVersion ?? '—' }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.decision') }}</dt><dd>{{ proposal.decision ? (proposal.decision.decision === 'approve' ? t('proposal.approved') : t('proposal.rejected')) : '—' }}</dd></div>
         </div>
         <div class="border-t border-hairline p-4">
-          <p class="text-[11px] font-semibold text-muted-foreground">理由</p>
+          <p class="text-[11px] font-semibold text-muted-foreground">{{ t('common.rationale') }}</p>
           <p class="mt-1.5 whitespace-pre-wrap text-sm">{{ proposal.rationale }}</p>
         </div>
         <div v-if="proposal.decision" class="border-t border-hairline p-4 text-xs text-muted-foreground">
-          <span class="font-medium text-foreground">{{ proposal.decision.decision === 'approve' ? '批准' : '拒绝' }}</span>
+          <span class="font-medium text-foreground">{{ proposal.decision.decision === 'approve' ? t('proposal.approve') : t('proposal.reject') }}</span>
           · {{ proposal.decision.actor.id }} · {{ formatDate(proposal.decision.decidedAt) }}
-          <p v-if="proposal.decision.note" class="mt-1">备注：{{ proposal.decision.note }}</p>
+          <p v-if="proposal.decision.note" class="mt-1">{{ t('proposal.note', { note: proposal.decision.note }) }}</p>
         </div>
       </section>
 
-      <div v-if="stale && proposal.status === 'pending'" class="mb-4 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
+      <div v-if="stale && proposal.status === 'pending'" class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
         <ShieldAlert class="mt-0.5 size-4" />
-        <span>基准版本已变化，不能批准。请基于当前策略创建新提案。</span>
+        <span>{{ t('proposal.staleWarning') }}</span>
       </div>
 
-      <div v-if="store.loading" class="panel mb-4 p-4 text-sm" role="status">正在加载当前策略以比较…</div>
-      <div v-else-if="store.error" class="panel mb-4 p-4 text-sm text-destructive" role="alert">
-        当前策略加载失败，无法安全比较或批准。<button class="ml-2 underline" @click="store.refreshProject()">重试</button>
+      <div v-if="store.loading" class="panel p-5 text-sm" role="status">{{ t('proposal.comparing') }}</div>
+      <div v-else-if="store.error" class="panel p-5 text-sm text-destructive" role="alert">
+        {{ t('proposal.compareFailed') }}<button class="ml-2 underline" @click="store.refreshProject()">{{ t('common.retry') }}</button>
       </div>
       <CandidateView v-else :candidate="proposal.candidate" :before="baseline" />
 
-      <section v-if="pending" class="panel mt-4">
+      <section v-if="pending" class="panel">
         <div class="panel-header">
           <div>
-            <h2 class="panel-title">审批操作</h2>
-            <p class="panel-kicker">批准创建新治理版本，不改变运行时配置，不授权单次工具调用。</p>
+            <h2 class="panel-title">{{ t('proposal.actionsTitle') }}</h2>
+            <p class="panel-kicker">{{ t('proposal.actionsKicker') }}</p>
           </div>
         </div>
         <div class="panel-body space-y-3">
           <label for="decision-note" class="field text-xs">
-            <span class="field-label">审批备注</span>
+            <span class="field-label">{{ t('proposal.decisionNote') }}</span>
             <textarea id="decision-note" v-model="note" rows="2" class="w-full rounded-md border border-input bg-background p-2 text-sm" />
           </label>
           <div class="flex flex-wrap gap-2">
-            <Button v-if="auth.session?.role === 'human'" size="sm" :disabled="busy || stale || store.loading || !!store.error" @click="action = 'approve'">批准并发布</Button>
-            <Button v-if="auth.session?.role === 'human'" size="sm" variant="outline" :disabled="busy" @click="action = 'reject'">拒绝</Button>
-            <Button size="sm" variant="outline" :disabled="busy" @click="action = 'withdraw'">撤回</Button>
+            <Button v-if="auth.session?.role === 'human'" size="sm" :disabled="busy || stale || store.loading || !!store.error" @click="action = 'approve'">{{ t('proposal.approvePublish') }}</Button>
+            <Button v-if="auth.session?.role === 'human'" size="sm" variant="outline" :disabled="busy" @click="action = 'reject'">{{ t('proposal.reject') }}</Button>
+            <Button size="sm" variant="outline" :disabled="busy" @click="action = 'withdraw'">{{ t('proposal.withdraw') }}</Button>
           </div>
         </div>
       </section>
 
-      <ConfirmAction :open="action !== null" :busy="busy" :title="action === 'approve' ? '批准并发布？' : action === 'reject' ? '拒绝提案？' : '撤回提案？'" :description="action === 'approve' ? '将以此摘要绑定的候选创建新的治理版本，不授权工具执行。' : action === 'reject' ? '拒绝后提案不可修改或恢复。' : '撤回后提案不可恢复。'" @update:open="value => { if (!value && !busy) action = null }" @confirm="submit" />
+      <ConfirmAction :open="action !== null" :busy="busy" :variant="action === 'approve' ? 'default' : 'destructive'" :title="action === 'approve' ? t('proposal.approveTitle') : action === 'reject' ? t('proposal.rejectTitle') : t('proposal.withdrawTitle')" :description="action === 'approve' ? t('proposal.approveDescription') : action === 'reject' ? t('proposal.rejectDescription') : t('proposal.withdrawDescription')" @update:open="value => { if (!value && !busy) action = null }" @confirm="submit" />
     </template>
   </div>
 </template>

@@ -1,5 +1,6 @@
 /**
- * Local governance CLI: initialize private state and serve the loopback console.
+ * Local governance CLI: initialize private state and serve the loopback
+ * governance API, with the console assets unless `--api-only` is given.
  *
  * The command never prints token values and never writes rules, harness
  * configuration, or runtime snapshots. State defaults outside the workspace so
@@ -36,6 +37,13 @@ import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
 import { JevSettingsStore } from './jev-settings.ts';
 import { ObservationLogs } from './observations.ts';
+import { PasswordStore } from './password.ts';
+import {
+  acquireServiceLock,
+  publishServiceDescriptor,
+  removeServiceDescriptor,
+  ServiceInstanceError,
+} from './service-instance.ts';
 import { createControlPlane } from './store.ts';
 
 export const DEFAULT_PORT = 4310;
@@ -471,8 +479,12 @@ export interface ServeOptions extends CliPathOptions {
   readonly auditLogs?: readonly string[];
   readonly tokenFactory?: () => string;
   readonly now?: () => number;
+  /** Serve only the governance API; console assets are neither required nor loaded. */
+  readonly apiOnly?: boolean;
   /** Test injection; defaults to dist/console from the checkout root. */
   readonly staticDir?: string;
+  /** Test injection for the one-time desktop setup grant; ignored unless 64 hex. */
+  readonly setupGrant?: string;
 }
 
 export interface ServeHandle {
@@ -484,99 +496,180 @@ export interface ServeHandle {
 
 export async function startServe(options: ServeOptions = {}): Promise<ServeHandle> {
   const paths = resolveCliPaths(options);
-  const tokens = await initializeState(paths, {
-    tokenFactory: options.tokenFactory,
-    now: options.now,
-  });
-  const managedAuditDir = join(paths.dataDir, 'managed-audit');
-  await ensurePrivateDirectory(managedAuditDir);
+  assertStateOutsideWorkspace(paths.dataDir, paths.workspace);
 
-  const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
-  let rawSchema: Record<string, unknown>;
+  let lock: Awaited<ReturnType<typeof acquireServiceLock>>;
   try {
-    const parsed: unknown = JSON.parse(rawSchemaText);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new Error('invalid schema shape');
-    }
-    rawSchema = parsed as Record<string, unknown>;
-  } catch {
-    throw new CliError('schema_invalid');
+    lock = await acquireServiceLock(paths.dataDir);
+  } catch (error) {
+    throw serviceCliError(error);
   }
 
-  const seed = await loadSeedRules(paths.rulesPath);
-  const rulesYaml = await readFile(paths.rulesPath, 'utf8');
-  let guidanceSource: string | undefined;
+  let service: ControlPlane | null = null;
+  let server: GovernanceServer | null = null;
   try {
-    guidanceSource = await readFile(paths.guidancePath, 'utf8');
-  } catch {
-    guidanceSource = undefined;
-  }
-  const auditLogs = (options.auditLogs ?? []).map((path) => {
-    if (!isAbsolute(path)) {
-      throw new CliError('audit_log_must_be_absolute');
-    }
-    return path;
-  });
-
-  const service = createControlPlane({
-    databasePath: paths.databasePath,
-    rawSchema,
-    rulesYaml,
-    ...(guidanceSource === undefined ? {} : { guidanceSource }),
-    writeArtifacts: writeProjectArtifacts,
-    managedAuditDir,
-    ...(options.now === undefined ? {} : { now: options.now }),
-  });
-
-  const observations =
-    auditLogs.length === 0
-      ? null
-      : new ObservationLogs({
-          paths: auditLogs,
-          rules: seed.map((rule) => ({
-            id: rule.id,
-            level: rule.level,
-            ...(typeof rule.on_hit === 'string' ? { on_hit: rule.on_hit } : {}),
-          })),
-          maxBytesPerFile: 2 * 1024 * 1024,
-          maxLinesPerFile: 5000,
-        });
-
-  let server: GovernanceServer;
-  try {
-    server = createGovernanceServer({
-      service,
-      humanToken: tokens.humanToken,
-      agentToken: tokens.agentToken,
-      rawSchema,
-      seed,
-      staticDir: options.staticDir ?? paths.staticDir,
-      ...(options.now === undefined ? {} : { now: options.now }),
-      observations,
-      jevSettings: new JevSettingsStore(paths.dataDir),
+    const tokens = await initializeState(paths, {
+      tokenFactory: options.tokenFactory,
+      now: options.now,
     });
-  } catch {
-    service.close();
-    throw new CliError('server_configuration_failed');
-  }
+    const passwords = await PasswordStore.load(join(paths.dataDir, 'human-password.json'));
+    const env = options.env ?? process.env;
+    // Only the desktop's inherited private channel enables launch/native credentials.
+    const desktop = typeof process.send === 'function';
+    const systemAuth = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SYSTEM_AUTH_SECRET ?? '') && env.AMOS_SYSTEM_AUTH_LABEL
+      ? { secret: env.AMOS_SYSTEM_AUTH_SECRET!, label: env.AMOS_SYSTEM_AUTH_LABEL } : undefined;
+    const setupGrant = /^[a-f0-9]{64}$/.test(options.setupGrant ?? '')
+      ? options.setupGrant
+      : desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
+    const managedAuditDir = join(paths.dataDir, 'managed-audit');
+    await ensurePrivateDirectory(managedAuditDir);
 
-  let port: number;
-  try {
-    port = await server.listen(options.port ?? DEFAULT_PORT);
-  } catch {
-    service.close();
-    throw new CliError('listen_failed');
-  }
+    const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
+    let rawSchema: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(rawSchemaText);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('invalid schema shape');
+      }
+      rawSchema = parsed as Record<string, unknown>;
+    } catch {
+      throw new CliError('schema_invalid');
+    }
 
-  return {
-    url: `http://127.0.0.1:${port}`,
-    port,
-    paths,
-    close: async () => {
-      await server.close();
-      service.close();
-    },
-  };
+    const seed = await loadSeedRules(paths.rulesPath);
+    const rulesYaml = await readFile(paths.rulesPath, 'utf8');
+    let guidanceSource: string | undefined;
+    try {
+      guidanceSource = await readFile(paths.guidancePath, 'utf8');
+    } catch {
+      guidanceSource = undefined;
+    }
+    const auditLogs = (options.auditLogs ?? []).map((path) => {
+      if (!isAbsolute(path)) {
+        throw new CliError('audit_log_must_be_absolute');
+      }
+      return path;
+    });
+
+    service = createControlPlane({
+      databasePath: paths.databasePath,
+      rawSchema,
+      rulesYaml,
+      ...(guidanceSource === undefined ? {} : { guidanceSource }),
+      writeArtifacts: writeProjectArtifacts,
+      managedAuditDir,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+    const controlPlane = service;
+
+    const observations =
+      auditLogs.length === 0
+        ? null
+        : new ObservationLogs({
+            paths: auditLogs,
+            rules: seed.map((rule) => ({
+              id: rule.id,
+              level: rule.level,
+              ...(typeof rule.on_hit === 'string' ? { on_hit: rule.on_hit } : {}),
+            })),
+            maxBytesPerFile: 2 * 1024 * 1024,
+            maxLinesPerFile: 5000,
+          });
+
+    let createdServer: GovernanceServer;
+    try {
+      createdServer = createGovernanceServer({
+        service: controlPlane,
+        instanceId: lock.instanceId,
+        humanToken: tokens.humanToken,
+        agentToken: tokens.agentToken,
+        passwords,
+        ...(systemAuth ? { systemAuth } : {}),
+        ...(setupGrant ? { setupGrant } : {}),
+        rawSchema,
+        seed,
+        ...(options.apiOnly === true ? {} : { staticDir: options.staticDir ?? paths.staticDir }),
+        ...(options.now === undefined ? {} : { now: options.now }),
+        observations,
+        jevSettings: new JevSettingsStore(paths.dataDir),
+      });
+    } catch {
+      controlPlane.close();
+      throw new CliError('server_configuration_failed');
+    }
+    server = createdServer;
+    const governanceServer = createdServer;
+
+    let port: number;
+    try {
+      port = await governanceServer.listen(options.port ?? DEFAULT_PORT);
+    } catch {
+      throw new CliError('listen_failed');
+    }
+    if (!lock.isHeld()) {
+      throw new CliError('service_lock_lost');
+    }
+    await publishServiceDescriptor(paths.dataDir, {
+      instanceId: lock.instanceId,
+      port,
+      console: options.apiOnly !== true,
+    });
+    if (!lock.isHeld()) {
+      throw new CliError('service_lock_lost');
+    }
+
+    const runningServer = governanceServer;
+    const runningService = controlPlane;
+    let closed = false;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      port,
+      paths,
+      close: async () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        try {
+          await removeServiceDescriptor(paths.dataDir, lock.instanceId);
+        } finally {
+          try {
+            await runningServer.close();
+          } finally {
+            runningService.close();
+            await lock.release();
+          }
+        }
+      },
+    };
+  } catch (error) {
+    await removeServiceDescriptor(paths.dataDir, lock.instanceId).catch(() => undefined);
+    if (server !== null) {
+      await server.close().catch(() => undefined);
+    }
+    if (service !== null) {
+      try {
+        service.close();
+      } catch {
+        /* best effort */
+      }
+    }
+    await lock.release().catch(() => undefined);
+    if (error instanceof CliError) {
+      throw error;
+    }
+    if (error instanceof ServiceInstanceError) {
+      throw new CliError(error.code);
+    }
+    throw error;
+  }
+}
+
+function serviceCliError(error: unknown): CliError {
+  if (error instanceof ServiceInstanceError) {
+    return new CliError(error.code);
+  }
+  return new CliError('service_instance_failed');
 }
 
 export interface CliIo {
@@ -595,6 +688,7 @@ interface ParsedArgs {
   readonly workspace?: string;
   readonly port?: number;
   readonly auditLogs: readonly string[];
+  readonly apiOnly: boolean;
   readonly help: boolean;
 }
 
@@ -618,12 +712,17 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let workspace: string | undefined;
   let port: number | undefined;
   const auditLogs: string[] = [];
+  let apiOnly = false;
   let help = false;
 
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index] ?? '';
     if (arg === '--help' || arg === '-h') {
       help = true;
+      continue;
+    }
+    if (arg === '--api-only' && command === 'serve') {
+      apiOnly = true;
       continue;
     }
     const equals = arg.indexOf('=');
@@ -659,14 +758,16 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     throw new CliError('unknown_option');
   }
 
-  return { command, dataDir, workspace, port, auditLogs, help };
+  return { command, dataDir, workspace, port, auditLogs, apiOnly, help };
 }
 
 function usage(): string {
   return [
     '用法:',
     '  amos-governance init [--data-dir <dir>] [--workspace <dir>]',
-    '  amos-governance serve [--data-dir <dir>] [--workspace <dir>] [--port <port>] [--audit-log <file>]...',
+    '  amos-governance serve [--data-dir <dir>] [--workspace <dir>] [--port <port>] [--audit-log <file>]... [--api-only]',
+    '',
+    '--api-only 只提供治理 API，不加载 dist/console 控制台资源。',
     '',
     `默认状态目录: ${defaultStateDir()}`,
   ].join('\n');
@@ -730,6 +831,7 @@ export async function runCli(
       workspace: parsed.workspace,
       port: parsed.port,
       auditLogs: parsed.auditLogs,
+      apiOnly: parsed.apiOnly,
       rootDir: options.rootDir,
       env: options.env,
       staticDir: options.staticDir,
@@ -739,11 +841,19 @@ export async function runCli(
     return 1;
   }
 
-  io.stdout(`Amos Governance 本地控制台: ${handle.url}`);
+  io.stdout(
+    parsed.apiOnly
+      ? `Amos Governance 治理 API（无控制台界面）: ${handle.url}`
+      : `Amos Governance 本地控制台: ${handle.url}`,
+  );
   io.stdout('模式: managed opt-in（显式启用后 Harness 工具调用可被阻断）；默认关闭，不是 OS 沙箱或受信执行边界。');
   io.stdout(`人类令牌文件: ${handle.paths.humanTokenPath}`);
   io.stdout(`Agent 令牌文件: ${handle.paths.agentTokenPath}`);
-  io.stdout('令牌内容不会显示；浏览器使用人类令牌登录，Agent 使用 Bearer 令牌。');
+  io.stdout(
+    parsed.apiOnly
+      ? '令牌内容不会显示；人类客户端使用人类令牌建立会话，Agent 使用 Bearer 令牌。'
+      : '令牌内容不会显示；浏览器使用人类令牌登录，Agent 使用 Bearer 令牌。',
+  );
 
   if (options.waitForShutdown === false) {
     await handle.close();

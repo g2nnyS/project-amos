@@ -46,7 +46,10 @@ import {
   loadActivationGuidance,
   loadActivationRuntime,
 } from "../shared/activation-guidance.ts";
-import { readHostProjection } from "../shared/host-projection.ts";
+import {
+  readHostProjection,
+  type HostProjectionLoad,
+} from "../shared/host-projection.ts";
 import {
   OPENCODE_MANAGED_CAPABILITIES,
   writeHarnessRuntimeReport,
@@ -127,6 +130,19 @@ type InstructionEntry = {
   value: string;
 };
 
+type IdleEvent = {
+  sessionID?: unknown;
+  background?: unknown;
+};
+
+type SyntheticInput = {
+  sessionID: string;
+  text: string;
+  description?: string;
+  delivery?: "steer" | "queue";
+  resume?: boolean;
+};
+
 interface HookDomain<Events extends Record<string, unknown>> {
   hook<Name extends keyof Events & string>(
     name: Name,
@@ -144,7 +160,12 @@ interface SessionDomain {
       name: "context",
       callback: (event: ContextEvent) => void | Promise<void>,
     ): Promise<Registration>;
+    (
+      name: "experimental.idle",
+      callback: (event: IdleEvent) => void | Promise<void>,
+    ): Promise<Registration>;
   };
+  synthetic?: (input: SyntheticInput) => Promise<unknown>;
   instructions?: {
     entry?: {
       put?: (input: InstructionEntry) => Promise<unknown>;
@@ -239,7 +260,7 @@ type GateState = {
   config: WorkflowGateConfig | null;
   /** Gate parsing/setup failure makes gated shell actions fail closed. */
   configError: boolean;
-  /** Completion review is unavailable, but shell governance still works. */
+  /** Completion review cannot run (Jev configuration error); shell governance still works. */
   jevError: boolean;
   /** Action assessment config is unavailable, so gated shell actions fail closed. */
   actionAssessmentError: boolean;
@@ -314,8 +335,9 @@ type ActivationGuidanceState =
 function readActivationGuidanceConfig(
   options: Record<string, unknown>,
   directory: string,
+  hostLoad: HostProjectionLoad = readHostProjection(directory),
 ): ActivationGuidanceState {
-  const projection = readHostProjection(directory);
+  const projection = hostLoad;
   if (projection.status === "error") return { status: "error" };
   if (projection.status === "ready") {
     return {
@@ -693,7 +715,7 @@ function buildReviewFeedback(input: {
   readonly jevReason: string | null;
 }): string {
   const lines = [
-    "Amos workflow review (advisory only; OpenCode V2 exposes no settle or merge block here): attention required.",
+    "Amos workflow review (advisory; OpenCode V2 requests at most one repair continuation via the experimental.idle hook): attention required.",
   ];
   if (input.checks.length > 0) {
     lines.push(`- checks: ${input.checks.join(", ")}`);
@@ -721,21 +743,32 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       const options = ctx.options ?? {};
       const config = readConfig(options, ctx.location.directory);
       const hostProjection = readHostProjection(config.directory);
+      const adapterEnabled =
+        hostProjection.status === "ready" ? hostProjection.projection.harness.enabled : true;
+      const advisoryAllowed =
+        adapterEnabled &&
+        (hostProjection.status !== "ready" || hostProjection.projection.harness.advisoryInjection);
+      const runtimeConfigDigest =
+        hostProjection.status === "ready" && hostProjection.projection.version === 2
+          ? hostProjection.projection.configDigest
+          : null;
 
       let auditErrorLogged = false;
-      const recorder = createLogOnlyRecorder({
-        rulesPath: config.rulesPath,
-        schemaPath: config.schemaPath,
-        logPath: config.logPath,
-        sessionWorkspace: config.directory,
-        onDiagnostic: () => {
-          if (auditErrorLogged) return;
-          auditErrorLogged = true;
-          console.error(
-            "Amos OpenCode adapter: audit write failed; the tool call was not blocked.",
-          );
-        },
-      });
+      const recorder = adapterEnabled
+        ? createLogOnlyRecorder({
+            rulesPath: config.rulesPath,
+            schemaPath: config.schemaPath,
+            logPath: config.logPath,
+            sessionWorkspace: config.directory,
+            onDiagnostic: () => {
+              if (auditErrorLogged) return;
+              auditErrorLogged = true;
+              console.error(
+                "Amos OpenCode adapter: audit write failed; the tool call was not blocked.",
+              );
+            },
+          })
+        : { record: () => undefined, recordAssessment: () => undefined };
 
       const rawGate =
         hostProjection.status === "ready"
@@ -781,10 +814,9 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
 
       if (configError) diagnostic(WORKFLOW_GATE_CONFIG_ERROR);
 
-      const activationState = readActivationGuidanceConfig(
-        options,
-        config.directory,
-      );
+      const activationState = adapterEnabled
+        ? readActivationGuidanceConfig(options, config.directory, hostProjection)
+        : { status: "absent" as const };
       let activationFactory: (() => InjectorSession) | null = null;
       if (activationState.status === "enabled") {
         const loaded = loadActivationGuidance({
@@ -1062,6 +1094,8 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             policyVersion: managedActivation.snapshot.project.projectConfigVersion,
             loadedAt,
             harness: "opencode",
+            mode: "enforcing",
+            ...(runtimeConfigDigest === null ? {} : { configDigest: runtimeConfigDigest }),
             capabilities: OPENCODE_MANAGED_CAPABILITIES,
           });
           while (managedGates.size > MAX_MANAGED_SESSIONS) {
@@ -1109,6 +1143,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         event: ToolEvent,
         normalized: OpenCodeNormalization | null,
       ): void => {
+        if (!adapterEnabled) return;
         const started = performance.now();
         const now = Date.now();
         if (normalized !== null) {
@@ -1135,7 +1170,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         normalized: OpenCodeNormalization | null,
       ): void => {
         try {
-          if (!gateEnabled || parsedConfig === null || !parsedConfig.guidance) {
+          if (!advisoryAllowed || !gateEnabled || parsedConfig === null || !parsedConfig.guidance) {
             return;
           }
           if (normalized === null || normalized.kind !== "action") return;
@@ -1255,9 +1290,10 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             revokeManagedRequirement(config.directory, sessionID);
           }
 
-          const guidanceEnabled =
+          const guidanceEnabled = advisoryAllowed && (
             (gateEnabled && parsedConfig !== null && parsedConfig.guidance) ||
-            (managedRequested && activationState.status === "enabled");
+            (managedRequested && activationState.status === "enabled")
+          );
           if (!guidanceEnabled) return;
           if (text === null || sessionID === null) return;
 
@@ -1299,9 +1335,10 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       };
 
       const onContext = async (event: ContextEvent): Promise<void> => {
-        const guidanceEnabled =
+        const guidanceEnabled = advisoryAllowed && (
           (gateEnabled && parsedConfig !== null && parsedConfig.guidance) ||
-          (managedRequested && activationState.status === "enabled");
+          (managedRequested && activationState.status === "enabled")
+        );
         const completionReviewEnabled =
           gateEnabled && parsedConfig !== null && parsedConfig.completionReview;
         if (!guidanceEnabled && !completionReviewEnabled) return;
@@ -1708,6 +1745,8 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
               loadedAt: state.loadedAt,
               lastToolAt: new Date().toISOString(),
               harness: "opencode",
+              mode: "enforcing",
+              ...(runtimeConfigDigest === null ? {} : { configDigest: runtimeConfigDigest }),
               capabilities: OPENCODE_MANAGED_CAPABILITIES,
             });
           }
@@ -1755,10 +1794,31 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         }
       };
 
-      // Audit remains the first registration and is always active.
-      await register(
+      // Audit registration precedes workflow hooks; a valid disabled projection
+      // makes its handler inert without disabling the independent workflow gate.
+      const auditRegistered = await register(
         ctx.tool.hook("execute.before", onToolExecuteBefore),
       );
+      if (
+        hostProjection.status === "ready" &&
+        hostProjection.projection.version === 2 &&
+        runtimeConfigDigest !== null &&
+        (!adapterEnabled || (hostProjection.projection.harness.mode === "log-only" && auditRegistered))
+      ) {
+        const projection = hostProjection.projection;
+        writeHarnessRuntimeReport({
+          directory: config.directory,
+          projectId: projection.projectId,
+          activationDigest: projection.activationDigest,
+          epoch: projection.epoch,
+          policyVersion: projection.policyVersion,
+          loadedAt: new Date().toISOString(),
+          harness: "opencode",
+          mode: adapterEnabled ? "log-only" : "disabled",
+          configDigest: runtimeConfigDigest,
+          capabilities: {},
+        });
+      }
       if (managedRequested) {
         await register(
           ctx.tool.hook("execute.after", onToolExecuteAfter),
@@ -1782,9 +1842,9 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
         }
 
         if (
-          (managedRequested && activationState.status === "enabled") ||
+          (managedRequested && advisoryAllowed && activationState.status === "enabled") ||
           (parsedConfig !== null &&
-            (parsedConfig.guidance || parsedConfig.completionReview))
+            ((advisoryAllowed && parsedConfig.guidance) || parsedConfig.completionReview))
         ) {
           await register(
             ctx.session === undefined

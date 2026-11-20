@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 export default createRouter({ history: createWebHashHistory(), routes: [
-  { path: '/', component: () => import('@/views/OverviewView.vue') },
+  { path: '/', component: () => import('@/views/HomeView.vue') },
+  { path: '/boundary', component: () => import('@/views/OverviewView.vue') },
   { path: '/rules', component: () => import('@/views/RulesView.vue') },
   { path: '/editor', component: () => import('@/views/EditorView.vue') },
   { path: '/proposals', component: () => import('@/views/ProposalsView.vue') },
@@ -10,6 +11,7 @@ export default createRouter({ history: createWebHashHistory(), routes: [
   { path: '/audit', component: () => import('@/views/AuditView.vue') },
   { path: '/observations', component: () => import('@/views/ObservationsView.vue') },
   { path: '/simulate', component: () => import('@/views/SimulateView.vue') },
+  { path: '/harnesses', component: () => import('@/views/HarnessesView.vue') },
   { path: '/settings', component: () => import('@/views/SettingsView.vue') },
   { path: '/:pathMatch(.*)*', component: () => import('@/views/NotFoundView.vue') },
 ] })

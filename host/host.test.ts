@@ -14,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -73,7 +74,9 @@ interface WorkspaceFixture {
 
 function makeWorkspace(label: string): WorkspaceFixture {
   const base = existsSync('/tmp/opencode') ? '/tmp/opencode' : tmpdir();
-  const root = mkdtempSync(path.join(base, `amos-host-${label}-`));
+  // The host canonicalizes workspace targets (realpath), so fixtures must use a
+  // canonical base on both branches; macOS aliases /tmp to /private/tmp.
+  const root = realpathSync(mkdtempSync(path.join(base, `amos-host-${label}-`)));
   temporaryRoots.push(root);
   const workspace = path.join(root, 'workspace');
   const auditDir = path.join(root, 'audit');

@@ -1,9 +1,12 @@
-# P1: offline project activation and shared projections
+# P1: project activation and shared projections
 
-Status: implemented as an **offline-shadow compiler**, not connected to either
-Harness. This slice does not publish policy, authorize execution, open a database,
-call Jev, or change the existing file configuration. Runtime security remains
-Stage A `log-only` / NO-GO.
+Status: implemented in `activation/` and wired to the governance console
+(`control-plane/activation.ts`) and adapters (`adapters/shared/activation-guidance.ts`,
+Pi `managed.enabled`, OpenCode explicit managed path). Publication writes
+`<workspace>/.pi/activation.json` (`amos-unified-rule-catalog` v2) with both the
+enforcement and advisory projections. Ordinary adapters remain Stage A `log-only`
+by default, and overall runtime security remains NO-GO (not an OS sandbox). See
+[MVP delivery](mvp-delivery.md) and [Configuration & Managed Startup](configuration-one-shot.md).
 
 The product direction is human-maintained rules and bounds, with system decisions
 and an independent reviewer where needed rather than routine human action
@@ -99,9 +102,9 @@ frozen. Input copying rejects non-JSON values, accessors, sparse arrays and
 excessive size/depth. Errors expose only `ActivationError` with
 `code/message: "activation_error"`, not schema diagnostics or hostile content.
 
-The format is `amos-project-activation`, version 1, with a separately versioned
+The current format is `amos-unified-rule-catalog`, version 2 (`compilerVersion: "amos-unified-rule-catalog-v2"`), with a separately versioned
 compiler and domain-separated SHA-256 digests. Identity binds the project,
-workspace, policy version, source-library version, schema bytes, resolved rule
+workspace, policy version, base version, epoch, source-library version, schema bytes, resolved rule
 versions/content, routing/selection data and all projections. Array order is
 preserved because it affects advisory tie-breaking; object key order does not
 affect identity.

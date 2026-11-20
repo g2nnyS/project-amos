@@ -40,8 +40,9 @@
   `injection`、`rules` 与 `published` 元数据。
 - 发布后原子写入 `<workspace>/.pi/activation.json`；数据库发布成功不等于
   宿主加载成功。
-- `GET /api/projects/:id/runtime` 读取 `.pi/runtime.json`，区分
-  `loaded` / `stale` / `never` / `invalid` / `unpublished`。
+- `GET /api/projects/:id/runtime` 读取各 Harness 的 v2 回执，并在缺少专属回执时
+  回退到 `.pi/runtime.json`，区分 `loaded` / `loaded-unverified` / `stale` /
+  `never` / `invalid` / `unpublished`。
 
 ### 1.2 Harness（Pi）
 
@@ -68,7 +69,8 @@
   5. `tool_result` 另写 result（executed/failed），不记录内容/命令。
 - 同一会话固定快照：执行 gate 与 advisory 注入使用同一个
   `ActivationRuntime`；新发布只由后续会话加载，不做运行中热切换。
-- `session_start`/首次 prompt 即加载并写 `.pi/runtime.json`；报告包含
+- `session_start`/首次 prompt 即加载并写回执：v2 投影使用 `.pi/runtime.pi.json`，
+  旧投影使用 `.pi/runtime.json`；报告包含
   projectId、activationDigest、epoch、policyVersion、加载/最近工具时间、
   受管工具能力声明。
 - 注入：`before_agent_start` 写 system prompt 的
@@ -109,8 +111,8 @@
 - 登录 / 项目创建 / 仓库种子 / 新增项目规则 / 服务端校验；
 - 不可变提案、人工批准并发布；
 - 发布产物 `.pi/activation.json` 存在且为 catalog v2；
-- `.pi/runtime.json` 报告使控制台显示 `loaded`；回滚 v2 后旧报告显示
-  `stale`，更新报告后显示 `loaded`；
+- 按 Harness 写入 v2 回执后控制台显示 `loaded`；回滚后旧报告显示 `stale`，
+  更新报告后显示 `loaded`；身份匹配的旧协议回执显示 `loaded-unverified`；
 - 版本 YAML 下载（`format: amos-project-policy`）→ 上传同一 YAML →
   服务端导入校验通过；
 - 回滚创建新提案并发布版本 2；

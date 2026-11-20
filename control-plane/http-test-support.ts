@@ -13,6 +13,7 @@ import { parse as parseYaml } from 'yaml';
 import type { ControlPlane, RuleRecord } from './contracts.ts';
 import {
   startGovernanceServer,
+  type GovernanceServerOptions,
   type RunningGovernanceServer,
 } from './http.ts';
 import { JevSettingsStore } from './jev-settings.ts';
@@ -41,6 +42,9 @@ export interface HttpHarness {
 
 export interface HarnessOptions {
   readonly staticDir?: string;
+  readonly passwords?: GovernanceServerOptions['passwords'];
+  readonly setupGrant?: string;
+  readonly systemAuth?: GovernanceServerOptions['systemAuth'];
   readonly maxBodyBytes?: number;
   readonly sessionTtlMs?: number;
   readonly anonymousSessionTtlMs?: number;
@@ -110,6 +114,9 @@ export async function createHarness(
     staticDir,
     now: () => clock.now(),
     port: 0,
+    ...(options.passwords === undefined ? {} : { passwords: options.passwords }),
+    ...(options.setupGrant === undefined ? {} : { setupGrant: options.setupGrant }),
+    ...(options.systemAuth === undefined ? {} : { systemAuth: options.systemAuth }),
     ...(options.maxBodyBytes === undefined
       ? {}
       : { maxBodyBytes: options.maxBodyBytes }),

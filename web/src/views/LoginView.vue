@@ -1,43 +1,218 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ShieldAlert } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
-
+import { t } from '@/i18n'
 const auth = useAuthStore()
-const token = ref('')
+const password = ref(''), confirmation = ref(''), token = ref('')
+const setupRequired = computed(() => auth.authentication?.setupRequired === true)
+const needsEnrollmentToken = computed(() => setupRequired.value && !auth.setupGranted)
 async function submit() {
-  const value = token.value
-  token.value = ''
-  try { await auth.login(value) } catch {}
+  if (auth.loading) return
+  if (setupRequired.value) {
+    if (password.value.length < 12 || password.value.length > 1024) { auth.error = t('auth.errors.passwordLength'); return }
+    if (password.value !== confirmation.value) { auth.error = t('auth.passwordMismatch'); return }
+    try {
+      await auth.setup(password.value, needsEnrollmentToken.value ? { token: token.value } : undefined)
+      password.value = ''; confirmation.value = ''; token.value = ''
+    } catch {}
+    return
+  }
+  try { await auth.loginWith({ method: 'password', password: password.value }); password.value = '' } catch {}
 }
 </script>
-
 <template>
-  <main class="m-auto w-full max-w-[420px] px-5">
-    <div class="mb-8 flex items-center gap-3">
-      <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card text-xl font-bold">A</span>
-      <div>
-        <p class="text-xl font-bold tracking-tight">Amos</p>
-        <p class="text-xs text-muted-foreground">本地治理控制台</p>
-      </div>
-    </div>
-    <section class="panel p-6">
-      <p class="eyebrow">本地人类会话</p>
-      <h1 class="mt-2 text-xl font-semibold">登录控制台</h1>
-      <p class="mt-2 text-sm leading-relaxed text-muted-foreground">请输入服务启动时创建的 human.token。令牌仅用于登录，不存储在浏览器中。</p>
-      <form class="mt-6 space-y-4" @submit.prevent="submit">
-        <label class="field">
-          <span class="field-label">Human token</span>
-          <input v-model="token" type="password" autocomplete="off" required class="h-10 w-full rounded-md border border-input bg-background px-3" />
-        </label>
-        <p v-if="auth.error" class="text-xs text-destructive" role="alert">{{ auth.error }}</p>
-        <Button type="submit" class="w-full" :disabled="auth.loading">{{ auth.loading ? '登录中…' : '登录' }}</Button>
-      </form>
-    </section>
-    <div class="mt-5 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs leading-relaxed text-warning">
-      <ShieldAlert class="mb-1 inline size-4" />
-      默认插件仍为观察模式；受管拦截需在项目中显式启用 managed，且不是 OS 沙箱。同 UID 访问不构成可信隔离。
+  <main id="main-content" class="login-shell content-scroll">
+    <div class="login-frame">
+      <section class="login-surface" aria-labelledby="login-title">
+        <div class="login-body">
+          <div class="login-head">
+            <p class="eyebrow">{{ t('auth.eyebrow') }}</p>
+            <h1 id="login-title" class="login-title">{{ setupRequired ? t('auth.setupTitle') : t('auth.loginTitle') }}</h1>
+            <p class="login-lede">{{ setupRequired ? t('auth.setupLede') : t('auth.loginLede') }}</p>
+          </div>
+
+          <form class="login-form" :aria-busy="auth.loading" @submit.prevent="submit">
+            <template v-if="setupRequired">
+              <label class="field">
+                <span class="field-label">{{ t('auth.newPassword') }}</span>
+                <input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required class="control login-control" />
+              </label>
+              <label class="field">
+                <span class="field-label">{{ t('auth.confirmPassword') }}</span>
+                <input v-model="confirmation" type="password" autocomplete="new-password" required class="control login-control" />
+              </label>
+              <label v-if="needsEnrollmentToken" class="field">
+                <span class="field-label">{{ t('auth.enrollmentToken') }}</span>
+                <input v-model="token" type="password" autocomplete="off" required class="control login-control" />
+                <span class="field-hint">{{ t('auth.enrollmentTokenHelp') }}</span>
+              </label>
+            </template>
+
+            <label v-else class="field">
+              <span class="field-label">{{ t('auth.password') }}</span>
+              <input v-model="password" type="password" autocomplete="current-password" required class="control login-control" />
+            </label>
+
+            <p v-if="auth.error" class="login-error" role="alert">{{ auth.error }}</p>
+            <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">{{ auth.loading ? t('common.processing') : setupRequired ? t('auth.setupSubmit') : t('auth.loginSubmit') }}</Button>
+          </form>
+        </div>
+
+        <div class="login-notice">
+          <ShieldAlert class="size-3.5" aria-hidden="true" />
+          <p>{{ t('auth.notice') }}</p>
+        </div>
+      </section>
     </div>
   </main>
 </template>
+<style scoped>
+/* Sits above the inert shell, below toasts (70) and the skip link (80). */
+.login-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  padding: 40px 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The veiled, blurred layer is its own fixed element: the scroll container
+   stays filter-free, and the shell behind it is the backdrop of this layer. */
+.login-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-color: hsl(var(--login-scrim));
+  backdrop-filter: blur(14px) saturate(1.25) brightness(var(--login-dim));
+}
+
+.login-frame {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  margin: auto;
+}
+
+.login-surface {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card) / 0.95);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 hsl(0 0% 100% / 0.05);
+}
+
+.login-body {
+  padding: 22px 20px 20px;
+}
+
+.login-head {
+  display: grid;
+  gap: 5px;
+}
+
+.login-head .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.login-head .eyebrow::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+.login-title {
+  font-size: 17.5px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.login-lede {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.login-form {
+  display: grid;
+  gap: 11px;
+  margin-top: 18px;
+}
+
+.login-control {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  transition: border-color 90ms linear, background-color 90ms linear;
+}
+
+.login-control:hover {
+  border-color: hsl(var(--foreground) / 0.24);
+}
+
+.login-control:focus-visible {
+  border-color: hsl(var(--ring));
+  outline: 2px solid hsl(var(--ring) / 0.5);
+  outline-offset: 0;
+}
+
+.login-error {
+  padding: 7px 9px;
+  border: 1px solid hsl(var(--destructive) / 0.25);
+  border-radius: 5px;
+  background: hsl(var(--destructive) / 0.06);
+  color: hsl(var(--destructive));
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.login-submit {
+  height: 34px;
+  margin-top: 3px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+.login-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 20px 14px;
+  border-top: 1px solid hsl(var(--hairline));
+  background: hsl(var(--surface) / 0.55);
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.login-notice svg {
+  flex: none;
+  margin-top: 1px;
+  color: hsl(var(--warning));
+}
+
+@media (max-width: 480px) {
+  .login-shell {
+    padding: 20px 14px;
+  }
+}
+
+@media (max-height: 600px) {
+  .login-shell {
+    padding-block: 16px;
+  }
+}
+</style>

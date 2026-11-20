@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, FileText, Zap, Bookmark, Code } from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CandidateActivation, RuleRecord } from '@/types'
+import { t } from '@/i18n'
 
 const props = defineProps<{
   rule: RuleRecord
@@ -13,6 +14,10 @@ const emit = defineEmits<{ close: [] }>()
 
 const activeTab = ref('semantics')
 const closeButton = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
+const desktop = ref(true)
+let media: MediaQueryList | undefined
+const updateMedia = (list: MediaQueryList | MediaQueryListEvent) => { desktop.value = list.matches }
 
 const included = computed(() => {
   const inc = props.activation.includedRuleIds
@@ -23,7 +28,7 @@ const excluded = computed(() => props.activation.excludedRuleIds.includes(props.
 const active = computed(() => included.value && !excluded.value)
 
 function predicateSummary(p: RuleRecord['predicate']): string {
-  if (!p || p.length === 0) return '无机械命中条件（建议性规则）'
+  if (!p || p.length === 0) return t('ruleInspector.noPredicate')
   return p.map(item => `${item.op}(${values(item).join(', ')})`).join(' · ')
 }
 function values(p: NonNullable<RuleRecord['predicate']>[number]): string[] {
@@ -33,24 +38,43 @@ function json(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
-onMounted(() => closeButton.value?.focus())
+onMounted(() => {
+  closeButton.value?.focus()
+  try {
+    media = window.matchMedia('(min-width: 1024px)')
+    updateMedia(media)
+    media.addEventListener('change', updateMedia)
+  } catch { /* unavailable */ }
+})
+onBeforeUnmount(() => media?.removeEventListener('change', updateMedia))
 watch(() => props.rule.id, () => { activeTab.value = 'semantics' })
 
+function onKeydown(event: KeyboardEvent) {
+  if (desktop.value || event.key !== 'Tab' || !panel.value) return
+  const nodes = [...panel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(node => node.offsetParent !== null)
+  if (!nodes.length) return
+  const first = nodes[0]!
+  const last = nodes[nodes.length - 1]!
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
+
 const activationLabel = computed(() => {
-  if (excluded.value) return { text: '本地已排除', tone: 'muted' as const }
-  if (active.value) return { text: '本地已选中', tone: 'info' as const }
-  return { text: '本地未包含', tone: 'muted' as const }
+  if (excluded.value) return { text: t('ruleInspector.excluded'), tone: 'muted' as const }
+  if (active.value) return { text: t('ruleInspector.selected'), tone: 'info' as const }
+  return { text: t('ruleInspector.notIncluded'), tone: 'muted' as const }
 })
 </script>
 
 <template>
-  <aside class="rule-inspector flex h-full flex-col border-l border-border bg-card" role="complementary" aria-label="规则上下文检查器">
+  <button v-if="!desktop" type="button" tabindex="-1" class="rule-inspector-backdrop" :aria-label="t('ruleInspector.closeBackdrop')" @click="emit('close')" />
+  <aside ref="panel" class="rule-inspector flex h-full flex-col border-l border-border bg-card" :role="desktop ? 'complementary' : 'dialog'" :aria-label="desktop ? t('ruleInspector.label') : undefined" :aria-labelledby="desktop ? undefined : 'rule-inspector-title'" :aria-modal="desktop ? undefined : 'true'" @keydown="onKeydown">
     <div class="flex h-[60px] shrink-0 items-center justify-between border-b border-border px-4">
       <div class="min-w-0">
-        <h2 class="truncate text-sm font-semibold" :title="rule.id">{{ rule.id }}</h2>
+        <h2 id="rule-inspector-title" class="truncate text-sm font-semibold" :title="rule.id">{{ rule.id }}</h2>
         <p class="truncate text-[11px] text-muted-foreground">{{ rule.dimension }} · {{ rule.policy_class }}</p>
       </div>
-      <button ref="closeButton" type="button" class="ml-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border hover:bg-accent" aria-label="关闭检查器" @click="emit('close')"><X class="size-4" /></button>
+      <button ref="closeButton" type="button" class="ml-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border hover:bg-accent" :aria-label="t('ruleInspector.close')" @click="emit('close')"><X class="size-4" /></button>
     </div>
     <div class="border-b border-border px-4 py-2.5">
       <div class="flex flex-wrap items-center gap-2 text-[11px]">
@@ -60,45 +84,45 @@ const activationLabel = computed(() => {
         </span>
         <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ rule.on_hit }}</span>
         <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ rule.enforcement }}</span>
-        <span v-if="publishedVersion" class="text-muted-foreground">版本 {{ publishedVersion }}</span>
+        <span v-if="publishedVersion" class="text-muted-foreground">{{ t('common.version', { version: publishedVersion }) }}</span>
       </div>
-      <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">本地激活集合只决定治理快照的选取；运行时是否加载未知，发布不授予执行权限。</p>
+      <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('ruleInspector.note') }}</p>
     </div>
     <Tabs v-model="activeTab" class="min-h-0 flex-1 flex flex-col">
       <TabsList class="mx-4 mt-3 grid w-auto grid-cols-4">
-        <TabsTrigger value="semantics" class="text-[11px]"><FileText class="mr-1 size-3" />语义</TabsTrigger>
-        <TabsTrigger value="execution" class="text-[11px]"><Zap class="mr-1 size-3" />执行</TabsTrigger>
-        <TabsTrigger value="evidence" class="text-[11px]"><Bookmark class="mr-1 size-3" />证据</TabsTrigger>
-        <TabsTrigger value="raw" class="text-[11px]"><Code class="mr-1 size-3" />原始</TabsTrigger>
+        <TabsTrigger value="semantics" class="text-[11px]"><FileText class="mr-1 size-3" />{{ t('ruleInspector.semantics') }}</TabsTrigger>
+        <TabsTrigger value="execution" class="text-[11px]"><Zap class="mr-1 size-3" />{{ t('ruleInspector.execution') }}</TabsTrigger>
+        <TabsTrigger value="evidence" class="text-[11px]"><Bookmark class="mr-1 size-3" />{{ t('ruleInspector.evidence') }}</TabsTrigger>
+        <TabsTrigger value="raw" class="text-[11px]"><Code class="mr-1 size-3" />{{ t('ruleInspector.raw') }}</TabsTrigger>
       </TabsList>
       <div class="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
         <TabsContent value="semantics" class="mt-0 space-y-4 text-xs">
-          <div><p class="field-label">说明 narrative</p><p class="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{{ rule.narrative || '—' }}</p></div>
+          <div><p class="field-label">{{ t('ruleFields.narrativeField') }}</p><p class="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{{ rule.narrative || '—' }}</p></div>
           <dl class="grid grid-cols-2 gap-3">
-            <div><dt class="text-[11px] text-muted-foreground">维度</dt><dd>{{ rule.dimension }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">层级</dt><dd>{{ rule.level }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">分类</dt><dd>{{ rule.policy_class }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">表达力</dt><dd>{{ rule.expressivity }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.dimension') }}</dt><dd>{{ rule.dimension }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.level') }}</dt><dd>{{ rule.level }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.policyClass') }}</dt><dd>{{ rule.policy_class }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.expressivity') }}</dt><dd>{{ rule.expressivity }}</dd></div>
           </dl>
-          <div><p class="field-label">命中条件 predicate</p><p v-if="!rule.predicate || rule.predicate.length === 0" class="mt-1.5 text-muted-foreground">建议性规则，无机械命中条件。</p><ul v-else class="mt-1.5 space-y-2"><li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-2"><code class="text-[11px]">{{ p.op }}</code><p class="mt-1 break-all text-muted-foreground">{{ values(p).join(' · ') }}</p></li></ul></div>
+          <div><p class="field-label">{{ t('ruleFields.predicateField') }}</p><p v-if="!rule.predicate || rule.predicate.length === 0" class="mt-1.5 text-muted-foreground">{{ t('ruleInspector.advisory') }}</p><ul v-else class="mt-1.5 space-y-2"><li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-2"><code class="text-[11px]">{{ p.op }}</code><p class="mt-1 break-all text-muted-foreground">{{ values(p).join(' · ') }}</p></li></ul></div>
         </TabsContent>
         <TabsContent value="execution" class="mt-0 space-y-4 text-xs">
           <dl class="grid grid-cols-2 gap-3">
-            <div><dt class="text-[11px] text-muted-foreground">命中裁决 on_hit</dt><dd>{{ rule.on_hit }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">范围 scope</dt><dd>{{ rule.scope }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">声明检查点 enforcement</dt><dd>{{ rule.enforcement }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">属主 owner</dt><dd>{{ rule.owner }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">TTL</dt><dd>{{ rule.ttl ?? '无' }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">本地激活集合</dt><dd :class="active ? 'text-info' : 'text-muted-foreground'">{{ activationLabel.text }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">运行时部署状态</dt><dd>未知</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.onHitField') }}</dt><dd>{{ rule.on_hit }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.scopeField') }}</dt><dd>{{ rule.scope }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.enforcementField') }}</dt><dd>{{ rule.enforcement }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.ownerField') }}</dt><dd>{{ rule.owner }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">TTL</dt><dd>{{ rule.ttl ?? t('common.none') }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleInspector.activation') }}</dt><dd :class="active ? 'text-info' : 'text-muted-foreground'">{{ activationLabel.text }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleInspector.deployment') }}</dt><dd>{{ t('common.unknown') }}</dd></div>
           </dl>
           <div class="rounded-md border border-warning/30 bg-warning/5 p-3 text-[11px] leading-relaxed text-warning">
-            以上为规则声明的治理语义。发布写入版本与快照产物；只有显式启用 managed 的 Harness 会话才会在工具调用前执行这些规则。
+            {{ t('ruleInspector.warning') }}
           </div>
         </TabsContent>
         <TabsContent value="evidence" class="mt-0 space-y-4 text-xs">
-          <div><p class="field-label">探测 probe</p><p class="mt-1.5 whitespace-pre-wrap break-words text-muted-foreground">{{ rule.probe || '—' }}</p></div>
-          <div><p class="field-label">来源 source</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ key }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
+          <div><p class="field-label">{{ t('ruleFields.probeField') }}</p><p class="mt-1.5 whitespace-pre-wrap break-words text-muted-foreground">{{ rule.probe || '—' }}</p></div>
+          <div><p class="field-label">{{ t('ruleFields.sourceField') }}</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ key }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
         </TabsContent>
         <TabsContent value="raw" class="mt-0 text-xs">
           <pre class="scroll-thin overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed">{{ json(rule) }}</pre>
@@ -109,6 +133,7 @@ const activationLabel = computed(() => {
 </template>
 
 <style scoped>
+.rule-inspector-backdrop { position: fixed; inset: 0; z-index: 39; background: hsl(220 20% 10% / .45); }
 .rule-inspector { position: fixed; z-index: 40; right: 0; bottom: 0; width: min(100%, 420px); height: min(80dvh, 760px); border-top: 1px solid hsl(var(--border)); box-shadow: 0 0 30px hsl(220 20% 10% / .2); }
 @media (min-width: 1024px) {
   .rule-inspector { position: sticky; top: 0; width: 420px; height: calc(100dvh - 60px); box-shadow: none; }

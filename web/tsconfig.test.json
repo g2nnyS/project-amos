@@ -27,6 +27,7 @@
     "src/lib/**/*.ts",
     "src/stores/**/*.ts",
     "src/composables/**/*.ts",
+    "src/i18n/**/*.ts",
     "tests/**/*.ts"
   ]
 }

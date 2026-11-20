@@ -298,7 +298,9 @@ test('runtime status distinguishes loaded, stale, and never-loaded reports', (t)
   };
   assert.equal(writeHarnessRuntimeReport(report), true);
   const loaded = readRuntimeStatus(workspace, published);
-  assert.equal(loaded.status, 'loaded');
+  // A v1 receipt cannot be compared against a configuration digest.
+  assert.equal(loaded.status, 'loaded-unverified');
+  assert.equal(loaded.harnesses.pi.status, 'loaded-unverified');
   assert.equal(loaded.runtime?.activationDigest, published.snapshot.activationDigest);
 
   assert.equal(
@@ -312,4 +314,257 @@ test('runtime status distinguishes loaded, stale, and never-loaded reports', (t)
   writeFileSync(join(workspace, '.pi', 'runtime.json'), '{not-json', { mode: 0o600 });
   assert.equal(readRuntimeStatus(workspace, published).status, 'invalid');
   assert.equal(readRuntimeStatus(workspace, null).status, 'invalid');
+});
+
+test('runtime status isolates harness reports and binds configuration-only changes', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'runtime-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+    configDigest,
+  };
+  for (const harness of ['pi', 'opencode'] as const) {
+    assert.equal(writeHarnessRuntimeReport({
+      directory: workspace,
+      projectId: expected.projectId,
+      activationDigest: expected.activationDigest,
+      epoch: 1,
+      policyVersion: expected.policyVersion,
+      loadedAt: new Date().toISOString(),
+      harness,
+      mode: harness === 'pi' ? 'log-only' : 'disabled',
+      configDigest,
+      capabilities: {},
+    }), true);
+  }
+  const loaded = readRuntimeStatus(workspace, expected);
+  assert.equal(loaded.harnesses.pi.status, 'loaded');
+  assert.equal(loaded.harnesses.opencode.status, 'loaded');
+  assert.equal(loaded.harnesses.pi.runtime?.mode, 'log-only');
+  assert.equal(loaded.harnesses.opencode.runtime?.mode, 'disabled');
+
+  const changed = readRuntimeStatus(workspace, expected, {
+    ...expected,
+    configDigest: `sha256:${'c'.repeat(64)}`,
+  });
+  assert.equal(changed.harnesses.pi.status, 'stale');
+  assert.equal(changed.harnesses.opencode.status, 'stale');
+
+  writeFileSync(join(workspace, '.pi', 'runtime.pi.json'), '{bad', { mode: 0o600 });
+  const invalid = readRuntimeStatus(workspace, expected);
+  assert.equal(invalid.harnesses.pi.status, 'invalid');
+  assert.equal(invalid.harnesses.opencode.status, 'loaded');
+});
+
+test('v1 receipts match identity but cannot verify configuration', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'legacy-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+  };
+  const base = {
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: expected.activationDigest,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'pi' as const,
+  };
+  assert.equal(writeHarnessRuntimeReport(base), true);
+
+  // No expected digest is available, so identity is all that can be checked.
+  const withoutExpectedDigest = readRuntimeStatus(workspace, expected);
+  assert.equal(withoutExpectedDigest.harnesses.pi.status, 'loaded-unverified');
+  assert.equal(withoutExpectedDigest.status, 'loaded-unverified');
+
+  // An expected digest exists, but the receipt does not carry one to compare.
+  const withExpectedDigest = readRuntimeStatus(workspace, { ...expected, configDigest });
+  assert.equal(withExpectedDigest.harnesses.pi.status, 'loaded-unverified');
+  assert.equal(withExpectedDigest.status, 'loaded-unverified');
+
+  assert.equal(writeHarnessRuntimeReport({
+    ...base,
+    activationDigest: `sha256:${'0'.repeat(64)}`,
+  }), true);
+  const stale = readRuntimeStatus(workspace, { ...expected, configDigest });
+  assert.equal(stale.harnesses.pi.status, 'stale');
+  assert.equal(stale.status, 'stale');
+
+  assert.equal(writeHarnessRuntimeReport({ ...base, projectId: 'other-project' }), true);
+  assert.equal(
+    readRuntimeStatus(workspace, { ...expected, configDigest }).harnesses.pi.status,
+    'stale',
+  );
+});
+
+test('v2 receipts require a matching configuration digest for loaded', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'verified-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+    configDigest,
+  };
+  for (const harness of ['pi', 'opencode'] as const) {
+    assert.equal(writeHarnessRuntimeReport({
+      directory: workspace,
+      projectId: expected.projectId,
+      activationDigest: expected.activationDigest,
+      epoch: expected.epoch,
+      policyVersion: expected.policyVersion,
+      loadedAt: new Date().toISOString(),
+      harness,
+      mode: 'enforcing',
+      configDigest,
+      capabilities: {},
+    }), true);
+  }
+
+  const loaded = readRuntimeStatus(workspace, expected);
+  assert.equal(loaded.harnesses.pi.status, 'loaded');
+  assert.equal(loaded.harnesses.opencode.status, 'loaded');
+  assert.equal(loaded.status, 'loaded');
+
+  const mismatched = readRuntimeStatus(workspace, {
+    ...expected,
+    configDigest: `sha256:${'c'.repeat(64)}`,
+  });
+  assert.equal(mismatched.harnesses.pi.status, 'stale');
+  assert.equal(mismatched.harnesses.opencode.status, 'stale');
+  assert.equal(mismatched.status, 'stale');
+
+  // Without an expected digest the receipts stay unverified rather than loaded.
+  const { configDigest: _ignored, ...withoutDigest } = expected;
+  const unverified = readRuntimeStatus(workspace, withoutDigest);
+  assert.equal(unverified.harnesses.pi.status, 'loaded-unverified');
+  assert.equal(unverified.harnesses.opencode.status, 'loaded-unverified');
+  assert.equal(unverified.status, 'loaded-unverified');
+
+  // Identity mismatch wins even when the configuration digest matches.
+  const wrongIdentity = readRuntimeStatus(workspace, { ...expected, projectId: 'other-project' });
+  assert.equal(wrongIdentity.harnesses.pi.status, 'stale');
+  assert.equal(wrongIdentity.status, 'stale');
+});
+
+test('runtime status aggregates mixed harness verification without merging into loaded', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'mixed-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+    configDigest,
+  };
+
+  // pi leaves a legacy v1 receipt; opencode has a fully verified v2 receipt.
+  assert.equal(writeHarnessRuntimeReport({
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: expected.activationDigest,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'pi',
+  }), true);
+  assert.equal(writeHarnessRuntimeReport({
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: expected.activationDigest,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'opencode',
+    mode: 'enforcing',
+    configDigest,
+    capabilities: {},
+  }), true);
+
+  const mixed = readRuntimeStatus(workspace, expected);
+  assert.equal(mixed.harnesses.pi.status, 'loaded-unverified');
+  assert.equal(mixed.harnesses.opencode.status, 'loaded');
+  assert.equal(mixed.status, 'loaded-unverified');
+
+  // A stale harness outranks an unverified one.
+  assert.equal(writeHarnessRuntimeReport({
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: `sha256:${'0'.repeat(64)}`,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'pi',
+  }), true);
+  const stale = readRuntimeStatus(workspace, expected);
+  assert.equal(stale.harnesses.pi.status, 'stale');
+  assert.equal(stale.harnesses.opencode.status, 'loaded');
+  assert.equal(stale.status, 'stale');
+
+  // An invalid harness outranks every other state.
+  writeFileSync(join(workspace, '.pi', 'runtime.opencode.json'), '{bad', { mode: 0o600 });
+  const invalid = readRuntimeStatus(workspace, expected);
+  assert.equal(invalid.harnesses.pi.status, 'stale');
+  assert.equal(invalid.harnesses.opencode.status, 'invalid');
+  assert.equal(invalid.status, 'invalid');
+});
+
+test('legacy receipts are only read when the harness has no specific receipt', (t) => {
+  const { workspace } = fixture(t);
+  const configDigest = `sha256:${'a'.repeat(64)}`;
+  const expected = {
+    projectId: 'fallback-project',
+    version: 1,
+    activationDigest: `sha256:${'b'.repeat(64)}`,
+    epoch: 1,
+    policyVersion: 'policy-v1',
+    configDigest,
+  };
+
+  // pi has a specific v2 receipt; opencode can only fall back to the legacy one.
+  assert.equal(writeHarnessRuntimeReport({
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: expected.activationDigest,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'pi',
+    mode: 'enforcing',
+    configDigest,
+    capabilities: {},
+  }), true);
+  assert.equal(writeHarnessRuntimeReport({
+    directory: workspace,
+    projectId: expected.projectId,
+    activationDigest: expected.activationDigest,
+    epoch: expected.epoch,
+    policyVersion: expected.policyVersion,
+    loadedAt: new Date().toISOString(),
+    harness: 'opencode',
+  }), true);
+
+  const mixed = readRuntimeStatus(workspace, expected);
+  assert.equal(mixed.harnesses.pi.status, 'loaded');
+  assert.equal(mixed.harnesses.opencode.status, 'loaded-unverified');
+  assert.equal(mixed.status, 'loaded-unverified');
+
+  // A corrupt legacy file invalidates only the harness that falls back to it.
+  writeFileSync(join(workspace, '.pi', 'runtime.json'), '{bad', { mode: 0o600 });
+  const isolated = readRuntimeStatus(workspace, expected);
+  assert.equal(isolated.harnesses.pi.status, 'loaded');
+  assert.equal(isolated.harnesses.opencode.status, 'invalid');
+  assert.equal(isolated.status, 'invalid');
 });

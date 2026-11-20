@@ -16,7 +16,8 @@ import type { WorkflowGateConfig } from '../../workflow/config.ts';
 import { parseWorkflowGateConfig } from '../../workflow/config.ts';
 
 export const HOST_PROJECTION_FORMAT = 'amos-managed-host-projection';
-export const HOST_PROJECTION_VERSION = 1;
+export const HOST_PROJECTION_VERSION = 2;
+export const HOST_PROJECTION_LEGACY_VERSION = 1;
 const MAX_PROJECTION_BYTES = 1024 * 1024;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -38,7 +39,14 @@ export interface HostProjectionManaged {
   readonly review: HostProjectionReview | null;
 }
 
+export interface HostProjectionHarness {
+  readonly enabled: boolean;
+  readonly mode: 'log-only' | 'managed';
+  readonly advisoryInjection: boolean;
+}
+
 export interface HostProjection {
+  readonly version: 1 | 2;
   readonly projectId: string;
   readonly workspace: string;
   readonly policyVersion: string;
@@ -46,6 +54,8 @@ export interface HostProjection {
   readonly epoch: number;
   readonly publishedAt: string;
   readonly kind: 'publish' | 'tightening';
+  readonly configDigest: string | null;
+  readonly harness: HostProjectionHarness;
   readonly activation: {
     readonly snapshotPath: string;
     readonly projectId: string;
@@ -108,7 +118,7 @@ function validateProjection(value: unknown, workspace: string): HostProjection |
   if (!isRecord(value)) return null;
   if (
     value.format !== HOST_PROJECTION_FORMAT ||
-    value.version !== HOST_PROJECTION_VERSION ||
+    (value.version !== HOST_PROJECTION_LEGACY_VERSION && value.version !== HOST_PROJECTION_VERSION) ||
     !isId(value.projectId) ||
     value.workspace !== workspace ||
     typeof value.policyVersion !== 'string' ||
@@ -144,10 +154,29 @@ function validateProjection(value: unknown, workspace: string): HostProjection |
   const managed = validateManaged(value.managed, workspace);
   if (managed === null) return null;
 
+  let configDigest: string | null = null;
+  let harness: HostProjectionHarness;
+  if (value.version === HOST_PROJECTION_VERSION) {
+    if (typeof value.configDigest !== 'string' || !DIGEST.test(value.configDigest)) return null;
+    const parsed = validateHarness(value.harness);
+    if (parsed === null) return null;
+    if (managed.enabled !== (parsed.enabled && parsed.mode === 'managed')) return null;
+    configDigest = value.configDigest;
+    harness = parsed;
+  } else {
+    if (value.configDigest !== undefined || value.harness !== undefined) return null;
+    harness = {
+      enabled: true,
+      mode: managed.enabled ? 'managed' : 'log-only',
+      advisoryInjection: true,
+    };
+  }
+
   const workflowGate = normalizeWorkflowGate(value.workflowGate, workspace);
   if (workflowGate === null) return null;
 
   return Object.freeze({
+    version: value.version,
     projectId: value.projectId,
     workspace,
     policyVersion: value.policyVersion,
@@ -155,6 +184,8 @@ function validateProjection(value: unknown, workspace: string): HostProjection |
     epoch: value.epoch,
     publishedAt: value.publishedAt,
     kind: value.kind,
+    configDigest,
+    harness: Object.freeze(harness),
     activation: Object.freeze({
       snapshotPath,
       projectId: value.projectId,
@@ -164,6 +195,24 @@ function validateProjection(value: unknown, workspace: string): HostProjection |
     tightening: value.tightening,
     rollout: value.rollout,
   });
+}
+
+function validateHarness(value: unknown): HostProjectionHarness | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.some((key) => !['enabled', 'mode', 'advisoryInjection'].includes(key))) return null;
+  if (
+    typeof value.enabled !== 'boolean' ||
+    (value.mode !== 'log-only' && value.mode !== 'managed') ||
+    typeof value.advisoryInjection !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    enabled: value.enabled,
+    mode: value.mode,
+    advisoryInjection: value.advisoryInjection,
+  };
 }
 
 function validateManaged(value: unknown, workspace: string): HostProjectionManaged | null {
