@@ -191,6 +191,46 @@ test('empty machine reports every harness undetected', (t) => {
   assert.deepEqual(result.installations, []);
 });
 
+test('login-shell fallback finds harnesses outside the inherited PATH', (t) => {
+  const home = createTempHome(t);
+  const binDir = join(home, 'bin');
+  const emptyDir = join(home, 'empty');
+  const shellPath = join(home, 'shell');
+
+  writeScript(join(binDir, 'opencode'), "echo 'opencode 2.2.5'");
+  mkdirSync(emptyDir, { recursive: true });
+  writeScript(shellPath, `printf '\\n__AMOS_LOGIN_PATH__%s' '${binDir}'`);
+
+  const env = { PATH: emptyDir, HOME: home, SHELL: shellPath };
+
+  const withoutFallback = discoverHarnessInstallations({ env, home });
+  assert.equal(findHarness(withoutFallback, 'opencode').detected, false);
+
+  const withFallback = discoverHarnessInstallations({
+    env,
+    home,
+    loginPathFallback: true,
+  });
+  const opencode = findHarness(withFallback, 'opencode');
+  assert.equal(opencode.detected, true);
+  assert.equal(opencode.path, join(binDir, 'opencode'));
+  assert.equal(opencode.version, '2.2.5');
+});
+
+test('login-shell fallback keeps the inherited result without a usable shell', (t) => {
+  const home = createTempHome(t);
+  const binDir = join(home, 'bin');
+  mkdirSync(binDir, { recursive: true });
+
+  const result = discoverHarnessInstallations({
+    env: { PATH: binDir, HOME: home, SHELL: join(home, 'missing-shell') },
+    home,
+    loginPathFallback: true,
+  });
+
+  assert.deepEqual(result.installations, []);
+});
+
 test('version probe parses the first version-shaped token and tolerates no output', (t) => {
   const home = createTempHome(t);
   const binDir = join(home, 'bin');
@@ -215,3 +255,4 @@ test('version probe parses the first version-shaped token and tolerates no outpu
   assert.equal(pi.path, join(binDir, 'pi'));
   assert.equal(pi.version, null);
 });
+
