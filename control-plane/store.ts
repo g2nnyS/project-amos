@@ -2792,7 +2792,9 @@ class GovernanceControlPlane implements ControlPlane {
 
   discoverHarnesses(): import('./contracts.ts').HarnessDiscoveryResult {
     return this.guard(() => {
-      return deepFreeze(discoverHarnessInstallations());
+      return deepFreeze(
+        discoverHarnessInstallations({ loginPathFallback: true }),
+      );
     });
   }
 }
