@@ -9,7 +9,6 @@ import {
   closeSync,
   constants,
   fstatSync,
-  lstatSync,
   openSync,
   readSync,
 } from 'node:fs';
@@ -163,13 +162,19 @@ function readReport(
   path: string,
   expectedHarness?: HarnessId,
 ): { readonly exists: boolean; readonly report: HarnessRuntimeReport | null } {
-  let fd: number | null = null;
+  let fd: number;
   try {
-    const link = lstatSync(path);
-    if (link.isSymbolicLink() || !link.isFile() || link.size > MAX_REPORT_BYTES) {
-      return { exists: true, report: null };
-    }
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    return {
+      exists: (error as NodeJS.ErrnoException).code !== 'ENOENT',
+      report: null,
+    };
+  }
+  try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) return { exists: true, report: null };
     const buffer = Buffer.alloc(stat.size);
@@ -187,15 +192,10 @@ function readReport(
         ? null
         : report,
     };
-  } catch (error) {
-    return {
-      exists: (error as NodeJS.ErrnoException).code !== 'ENOENT',
-      report: null,
-    };
+  } catch {
+    return { exists: true, report: null };
   } finally {
-    if (fd !== null) {
-      try { closeSync(fd); } catch { /* best effort */ }
-    }
+    try { closeSync(fd); } catch { /* best effort */ }
   }
 }
 
@@ -216,26 +216,12 @@ function readManagedProjection(
 ): ManagedProjectionStatus {
   const path = join(workspace, '.pi', 'amos.managed.json');
   let raw: string;
+  let fd: number;
   try {
-    const link = lstatSync(path);
-    if (link.isSymbolicLink() || !link.isFile() || link.size > MAX_REPORT_BYTES) {
-      return invalidProjection();
-    }
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) return invalidProjection();
-      const buffer = Buffer.alloc(stat.size);
-      let offset = 0;
-      while (offset < buffer.length) {
-        const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
-        if (read === 0) break;
-        offset += read;
-      }
-      raw = buffer.subarray(0, offset).toString('utf8');
-    } finally {
-      closeSync(fd);
-    }
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return {
@@ -248,6 +234,23 @@ function readManagedProjection(
       };
     }
     return invalidProjection();
+  }
+
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) return invalidProjection();
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0) break;
+      offset += read;
+    }
+    raw = buffer.subarray(0, offset).toString('utf8');
+  } catch {
+    return invalidProjection();
+  } finally {
+    try { closeSync(fd); } catch { /* best effort */ }
   }
 
   let value: unknown;

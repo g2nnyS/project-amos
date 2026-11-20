@@ -1,7 +1,8 @@
 import {
   closeSync,
+  constants,
   fchmodSync,
-  lstatSync,
+  fstatSync,
   openSync,
   rmSync,
 } from 'node:fs';
@@ -109,59 +110,70 @@ export function openGovernanceDatabase(
  * empty file is never treated as a blank database: it is either a truncated
  * store or another initializer that has not finished, so both fail closed.
  *
- * This is a lexical startup safety check only. It deliberately does not claim
- * TOCTOU protection or a same-UID security boundary.
+ * The exclusive create is attempted first, so an existing path is validated on
+ * a freshly opened descriptor instead of on an earlier path check.
  */
 function prepareDatabaseFile(databasePath: string): boolean {
   if (databasePath === ':memory:') {
     return false;
   }
 
-  let preexisting: ReturnType<typeof lstatSync> | null = null;
+  let handle: number | null = null;
   try {
-    preexisting = lstatSync(databasePath);
+    // Exclusive create makes "newly created by this operation" explicit and
+    // prevents two initializers from both adopting the same blank file.
+    handle = openSync(databasePath, 'wx', 0o600);
   } catch (error) {
-    if (fileSystemErrorCode(error) !== 'ENOENT') {
+    if (fileSystemErrorCode(error) !== 'EEXIST') {
       throw new DomainError('internal_error');
     }
   }
 
-  if (preexisting !== null) {
-    if (
-      preexisting.isSymbolicLink() ||
-      !preexisting.isFile() ||
-      (preexisting.mode & 0o7777) !== 0o600 ||
-      (typeof process.getuid === 'function' &&
-        preexisting.uid !== process.getuid())
-    ) {
-      throw new DomainError('database_incompatible');
-    }
-    if (preexisting.size === 0) {
-      throw new DomainError('database_corrupt');
-    }
+  if (handle === null) {
+    assertExistingDatabaseFile(databasePath);
     return false;
   }
 
-  let created = false;
   try {
-    // Exclusive create makes "newly created by this operation" explicit and
-    // prevents two initializers from both adopting the same blank file.
-    const handle = openSync(databasePath, 'wx', 0o600);
-    created = true;
-    try {
-      fchmodSync(handle, 0o600);
-    } finally {
-      closeSync(handle);
-    }
+    fchmodSync(handle, 0o600);
     return true;
+  } catch {
+    removeFreshDatabaseFiles(databasePath);
+    throw new DomainError('internal_error');
+  } finally {
+    closeSync(handle);
+  }
+}
+
+function assertExistingDatabaseFile(databasePath: string): void {
+  let handle: number;
+  try {
+    handle = openSync(
+      databasePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
-    if (created) {
-      removeFreshDatabaseFiles(databasePath);
-    }
-    if (fileSystemErrorCode(error) === 'EEXIST') {
+    if (fileSystemErrorCode(error) === 'ENOENT') {
       throw new DomainError('database_corrupt');
     }
-    throw new DomainError('internal_error');
+    throw new DomainError('database_incompatible');
+  }
+
+  try {
+    const stat = fstatSync(handle);
+    if (
+      !stat.isFile() ||
+      (stat.mode & 0o7777) !== 0o600 ||
+      (typeof process.getuid === 'function' &&
+        stat.uid !== process.getuid())
+    ) {
+      throw new DomainError('database_incompatible');
+    }
+    if (stat.size === 0) {
+      throw new DomainError('database_corrupt');
+    }
+  } finally {
+    closeSync(handle);
   }
 }
 

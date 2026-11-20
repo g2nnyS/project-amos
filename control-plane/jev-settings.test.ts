@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -24,6 +25,23 @@ const BASE = {
   policy: { reviewRisk: 0.6, denyRisk: 0.9, minConfidence: 0.6 },
   allowCredentialEgress: false,
 } as const;
+
+/**
+ * Read and mode-check the credential file through one descriptor so the
+ * assertions observe the same object rather than re-resolving the path.
+ */
+async function readProtectedJson(
+  path: string,
+): Promise<{ readonly mode: number; readonly value: Record<string, unknown> }> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const mode = (await handle.stat()).mode & 0o777;
+    const value = JSON.parse(await handle.readFile('utf8')) as Record<string, unknown>;
+    return { mode, value };
+  } finally {
+    await handle.close();
+  }
+}
 
 test('console saves protected Jev credentials, retains keys and tests the saved connection', async (t) => {
   const providerRequests: Array<{ url: string; authorization: string; body: string }> = [];
@@ -73,9 +91,9 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
   assert.equal(projectConfig.workflowGate.jevConfigPath, null);
   assert.equal(projectConfig.managed.jevConfigPath, null);
   assert.equal(path.includes('jev.local.json'), true);
-  assert.equal((await stat(path)).mode & 0o777, 0o600);
-  const persisted = JSON.parse(await readFile(path, 'utf8')) as { apiKey?: unknown };
-  assert.equal(persisted.apiKey, KEY);
+  const persisted = await readProtectedJson(path);
+  assert.equal(persisted.mode, 0o600);
+  assert.equal(persisted.value.apiKey, KEY);
   assert.equal(loadJevConfig(path).config.provider, 'openrouter');
 
   const retained = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
@@ -84,8 +102,8 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
     body: JSON.stringify({ ...BASE, timeoutMs: 2_000, apiKey: '' }),
   });
   assert.equal(retained.status, 200);
-  const persistedAgain = JSON.parse(await readFile(path, 'utf8')) as { apiKey?: unknown };
-  assert.equal(persistedAgain.apiKey, KEY);
+  const persistedAgain = await readProtectedJson(path);
+  assert.equal(persistedAgain.value.apiKey, KEY);
 
   const tested = await fetchJson(harness, `/api/projects/${project.id}/jev/test`, {
     method: 'POST',

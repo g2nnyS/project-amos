@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { constants } from 'node:fs';
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   symlink,
@@ -50,6 +52,20 @@ function fixedTokens(): () => string {
   };
 }
 
+async function readFileWithMode(
+  path: string,
+): Promise<{ readonly mode: number; readonly text: string }> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return {
+      mode: (await handle.stat()).mode & 0o777,
+      text: await handle.readFile('utf8'),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 test('default state lives under XDG_STATE_HOME and never inside the workspace', async () => {
   const home = '/home/example';
   assert.equal(
@@ -91,10 +107,10 @@ test('init creates owner-only state and independent credentials without exposing
 
     const dirStat = await lstat(paths.dataDir);
     assert.equal(dirStat.mode & 0o777, 0o700);
-    const humanStat = await lstat(paths.humanTokenPath);
-    assert.equal(humanStat.mode & 0o777, 0o600);
-    const agentStat = await lstat(paths.agentTokenPath);
-    assert.equal(agentStat.mode & 0o777, 0o600);
+    const humanFile = await readFileWithMode(paths.humanTokenPath);
+    assert.equal(humanFile.mode, 0o600);
+    const agentFile = await readFileWithMode(paths.agentTokenPath);
+    assert.equal(agentFile.mode, 0o600);
 
     assert.equal(await readCredentialFile(paths.humanTokenPath), first.humanToken);
     assert.equal(await readCredentialFile(paths.agentTokenPath), first.agentToken);
@@ -120,7 +136,7 @@ test('init creates owner-only state and independent credentials without exposing
     assert.match(printed, /已初始化/);
     assert.ok(!printed.includes(first.humanToken));
     assert.ok(!printed.includes(first.agentToken));
-    assert.ok(!(await readFile(paths.humanTokenPath, 'utf8')).includes('human.token'));
+    assert.ok(!humanFile.text.includes('human.token'));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
