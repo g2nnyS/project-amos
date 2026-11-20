@@ -14,8 +14,6 @@ import {
 import amosPiLogOnly from './index.ts';
 import { readHostProjection } from '../shared/host-projection.ts';
 
-const ROOT = process.cwd();
-
 function journal(path: string): Array<Record<string, unknown>> {
   if (!existsSync(path)) return [];
   return readFileSync(path, 'utf8')

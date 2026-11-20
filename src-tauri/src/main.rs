@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_dialog::DialogExt;
 
 const URL_TIMEOUT: Duration = Duration::from_secs(15);
 const URL_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -22,10 +23,10 @@ const MAIN_WINDOW: &str = "main";
 const SETUP_GRANT_BYTES: usize = 32;
 
 /// Minimal desktop bridge, installed before any page script. It exposes the
-/// one-use first-password grant and the window controls the frameless window
-/// needs; no other desktop capability is reachable from the console document.
-/// The origin and top-frame checks keep the bridge out of iframes and any
-/// other document.
+/// one-use first-password grant, the window controls the frameless window
+/// needs and the system folder picker for the new-project dialog; no other
+/// desktop capability is reachable from the console document. The origin and
+/// top-frame checks keep the bridge out of iframes and any other document.
 fn desktop_bridge(service_url: &Url) -> String {
     let origin = service_url.origin().ascii_serialization();
     let origin = serde_json::to_string(&origin).unwrap_or_else(|_| "\"\"".to_string());
@@ -44,7 +45,8 @@ fn desktop_bridge(service_url: &Url) -> String {
       startWindowDrag: () => invoke('start_window_drag'),
       minimize: () => invoke('minimize_main_window'),
       toggleMaximize: () => invoke('toggle_main_window_maximize'),
-      close: () => invoke('close_main_window')
+      close: () => invoke('close_main_window'),
+      pickWorkspaceFolder: () => invoke('pick_workspace_directory')
     }}),
     writable: false,
     enumerable: true,
@@ -417,6 +419,41 @@ fn start_window_drag(window: WebviewWindow, state: State<ServiceState>) -> Resul
         .map_err(|_| "window_control_failed".to_string())
 }
 
+/// Open the system folder picker for the new-project dialog and return the
+/// selected absolute directory, or `None` when the picker is dismissed.
+#[tauri::command]
+async fn pick_workspace_directory(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, ServiceState>,
+) -> Result<Option<String>, String> {
+    window_control_guard(&window, &state)?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |picked| {
+        let _ = sender.send(picked);
+    });
+    let picked = receiver
+        .await
+        .map_err(|_| "pick_dialog_failed".to_string())?;
+    match picked {
+        None => Ok(None),
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => path
+            .into_os_string()
+            .into_string()
+            .map(Some)
+            .map_err(|_| "pick_dialog_failed".to_string()),
+        Some(tauri_plugin_dialog::FilePath::Url(url)) => {
+            let path = url
+                .to_file_path()
+                .map_err(|_| "pick_dialog_failed".to_string())?;
+            path.into_os_string()
+                .into_string()
+                .map(Some)
+                .map_err(|_| "pick_dialog_failed".to_string())
+        }
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
@@ -464,12 +501,14 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_setup_grant,
             minimize_main_window,
             toggle_main_window_maximize,
             close_main_window,
-            start_window_drag
+            start_window_drag,
+            pick_workspace_directory
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

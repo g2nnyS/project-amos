@@ -95,6 +95,9 @@ export const JEV_QUESTIONS = Object.freeze({
 const DEFAULT_MODEL = 'jev-latest';
 const DEFAULT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const DEFAULT_TIMEOUT_MS = 8_000;
+// A hosted assessment is one bounded HTTP exchange. Reject excessive durations
+// before they can hold the process open or overflow Node's timer delay.
+const MAX_TIMEOUT_MS = 5 * 60 * 1_000;
 
 const DEFAULT_THRESHOLDS: AssessmentThresholds = Object.freeze({
   sensitiveArea: 0.5,
@@ -124,7 +127,11 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
       ? systemOneEndpoint(baseUrl)
       : validateEndpoint(configuredEndpoint ?? DEFAULT_ENDPOINT);
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  if (
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_TIMEOUT_MS
+  ) {
     throw new JevAssessmentError('config');
   }
 
@@ -179,6 +186,11 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
 
       const controller = new AbortController();
       let timedOut = false;
+      // Revalidate at the asynchronous boundary so the timer always receives
+      // a bounded duration.
+      if (timeoutMs > MAX_TIMEOUT_MS) {
+        throw new JevAssessmentError('config');
+      }
       const timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
@@ -189,6 +201,10 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
       try {
         let response: Response;
         try {
+          // The endpoint is operator configuration frozen at construction, not
+          // request data: `validateEndpoint` already rejects plaintext remote
+          // hosts, userinfo, queries, and fragments. Tool targets and action
+          // context never reach this URL, so there is no request-forgery path.
           response = await fetchImpl(endpoint, {
             method: 'POST',
             headers: {

@@ -57,7 +57,9 @@ export interface SystemOneClientOptions {
   readonly fetchImpl?: typeof fetch;
 }
 
-const DEFAULT_TIMEOUT_MS = 8_000;
+// Bound the transport duration so a bad configuration cannot keep a request
+// alive for weeks; above 2^31-1 ms Node fires the timer immediately.
+const MAX_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export function createSystemOneClient(
   config: SystemOneClientConfig,
@@ -75,7 +77,8 @@ export function createSystemOneClient(
     !config.models.includes(config.model) ||
     typeof config.timeoutMs !== 'number' ||
     !Number.isFinite(config.timeoutMs) ||
-    config.timeoutMs <= 0
+    config.timeoutMs <= 0 ||
+    config.timeoutMs > MAX_TIMEOUT_MS
   ) {
     throw new JevAssessmentError('config');
   }
@@ -156,6 +159,11 @@ interface PostInput {
 async function postSystemOne(input: PostInput): Promise<SystemOneResult> {
   const controller = new AbortController();
   let timedOut = false;
+  // Revalidate at the asynchronous boundary so the timer always receives a
+  // bounded duration.
+  if (input.timeoutMs > MAX_TIMEOUT_MS) {
+    throw new JevAssessmentError('config');
+  }
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();

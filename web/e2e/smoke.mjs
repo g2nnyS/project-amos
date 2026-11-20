@@ -195,11 +195,44 @@ try {
     throw new Error(`Timed out: ${expression}`)
   }
 
+  /**
+   * Run a fixed page function with structured arguments. Values travel as CDP
+   * call arguments, so page data never becomes part of an evaluated code string.
+   */
+  async function callInPage(fn, args = []) {
+    const handle = await send('Runtime.evaluate', { expression: 'globalThis' })
+    if (handle.exceptionDetails) throw new Error(handle.exceptionDetails.exception?.description || handle.exceptionDetails.text)
+    const result = await send('Runtime.callFunctionOn', {
+      objectId: handle.result.objectId,
+      functionDeclaration: fn,
+      arguments: args.map((value) => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+    })
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+    return result.result.value
+  }
+
+  async function waitForCall(fn, args = [], timeout = 8000) {
+    const until = Date.now() + timeout
+    while (Date.now() < until) {
+      if (await callInPage(fn, args)) return
+      await sleep(100)
+    }
+    throw new Error(`Timed out: ${fn.replace(/\s+/g, ' ').slice(0, 160)}`)
+  }
+
   async function click(selector, text) {
-    const find = `Array.from(document.querySelectorAll(${q(selector)})).find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && (${text === undefined ? 'true' : `e.textContent.trim().includes(${q(text)})`}))`
-    await evaluate(`(${find})?.scrollIntoView({block:'center',inline:'center',behavior:'instant'})`)
+    const locate = `function (selector, text, mode) {
+      const e = Array.from(document.querySelectorAll(selector)).find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && (text === null || el.textContent.trim().includes(text)))
+      if (mode === 'scroll') { e?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); return null }
+      if (!e) return null
+      const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2, top = document.elementFromPoint(x, y)
+      return { x, y, hit: !!top && (e === top || e.contains(top)), blocker: top?.outerHTML?.slice(0, 160) }
+    }`
+    await callInPage(locate, [selector, text ?? null, 'scroll'])
     await sleep(150)
-    const point = await evaluate(`(() => { const e = ${find}; if (!e) return null; const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, top=document.elementFromPoint(x,y); return {x,y,hit:!!top && (e===top || e.contains(top)), blocker:top?.outerHTML?.slice(0,160)}; })()`)
+    const point = await callInPage(locate, [selector, text ?? null, 'point'])
     if (!point) throw new Error(`Element missing: ${selector} ${text || ''}`)
     if (!point.hit) throw new Error(`Element obscured: ${selector}; hit ${point.blocker}`)
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, x: point.x, y: point.y })
@@ -567,7 +600,10 @@ try {
     })()`)
     assert.ok(cell, 'no non-empty matrix cell')
     await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
-    await waitFor(`(() => { const p = new URLSearchParams(location.hash.split('?')[1] || ''); return p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}; })()`)
+    await waitForCall(`function (dimension, hit) {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('dimension') === dimension && p.get('onHit') === hit
+    }`, [cell.dimension, cell.hit])
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
     const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
@@ -594,7 +630,11 @@ try {
       await waitFor(`Array.from(document.querySelectorAll(${q(inspector + ' [role="tab"]')})).some(e => e.textContent.includes(${q(label)}) && e.getAttribute('aria-selected') === 'true')`)
       if (expected) await waitFor(`document.querySelector(${q(inspector)})?.textContent.includes(${q(expected)})`)
     }
-    const raw = await evaluate(`(() => { const panel = document.querySelector(${q(inspector)}); const pre = panel.querySelector('pre'); return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }; })()`)
+    const raw = await callInPage(`function (selector) {
+      const panel = document.querySelector(selector)
+      const pre = panel.querySelector('pre')
+      return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }
+    }`, [inspector])
     assert.ok(raw.text && JSON.parse(raw.text).id, 'raw rule JSON missing or invalid')
     assert.equal(raw.editable, false, 'raw inspector contains editable fields')
     await screenshot('desktop-rules-inspector')
@@ -617,7 +657,10 @@ try {
       })()`)) await sleep(50)
       await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
       await waitFor(visible(inspector))
-      const layout = await evaluate(`(() => { const e = document.querySelector(${q(inspector)}), r = e.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, client:document.documentElement.clientWidth, focused:document.activeElement?.getAttribute('aria-label') }; })()`)
+      const layout = await callInPage(`function (selector) {
+        const e = document.querySelector(selector), r = e.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, focused: document.activeElement?.getAttribute('aria-label') }
+      }`, [inspector])
       assert.ok(layout.left >= 0 && layout.right <= layout.width && layout.top < layout.height && layout.bottom > 0, `mobile inspector outside viewport: ${JSON.stringify(layout)}`)
       assert.equal(layout.focused, '关闭检查器')
       assert.ok(layout.scroll <= layout.client, `mobile inspector causes global horizontal overflow: ${JSON.stringify(layout)}`)

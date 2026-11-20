@@ -21,7 +21,7 @@ export function copyJson(value: unknown, depth = 0): Json {
     return value;
   }
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value !== 'object' || value === null) throw new Error('invalid_json');
+  if (typeof value !== 'object') throw new Error('invalid_json');
   const prototype = Object.getPrototypeOf(value);
   if (Array.isArray(value)) {
     if (prototype !== Array.prototype || value.length > MAX_CANONICAL_ITEMS) {
