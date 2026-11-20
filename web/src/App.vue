@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { Menu, PanelLeftClose, PanelLeftOpen, Search, Plus, LogOut, ChevronRight, ShieldAlert, Command } from 'lucide-vue-next'
+import { Menu, PanelLeftClose, PanelLeftOpen, Search, Plus, LogOut, ChevronRight, Command } from 'lucide-vue-next'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
@@ -162,7 +162,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
           </nav>
 
           <div class="sidebar-footer">
-            <p class="sidebar-note">{{ t('app.sidebarNote') }}</p>
             <button type="button" class="sidebar-toggle" :aria-label="preferences.sidebarCollapsed ? t('app.expandSidebar') : t('app.collapseSidebar')" :title="preferences.sidebarCollapsed ? t('app.expandSidebar') : t('app.collapseSidebar')" @click="preferences.toggleSidebar()">
               <PanelLeftOpen v-if="preferences.sidebarCollapsed" class="size-4" aria-hidden="true" />
               <PanelLeftClose v-else class="size-4" aria-hidden="true" />
@@ -184,7 +183,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
             </div>
             <div class="topbar-actions">
               <span class="topbar-pill topbar-pill-version">{{ t('app.localVersion', { version: governance.policy ? `v${governance.policy.version}` : t('common.notPublished') }) }}</span>
-              <span class="topbar-pill topbar-pill-managed"><ShieldAlert class="size-3" aria-hidden="true" />{{ t('app.harnessPill') }}</span>
               <button type="button" class="topbar-search" :aria-label="t('app.searchLabel')" @click="commandOpen = true">
                 <Search class="size-3.5" aria-hidden="true" /><span>{{ t('app.search') }}</span><kbd class="kbd">⌘K</kbd>
               </button>
@@ -243,7 +241,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
             <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="flex h-9 items-center gap-2 rounded-md px-2 text-sm" :class="isActivePath(route.path, item.to) ? 'bg-accent text-foreground' : 'text-muted-foreground'" @click="mobileOpen = false"><component :is="item.icon" class="size-4" />{{ t(item.labelKey) }}</RouterLink>
           </template>
         </nav>
-        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">{{ t('app.mobileNote') }}</p>
       </SheetContent></Sheet>
 
       <Dialog v-if="auth.authenticated" v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>{{ t('app.newProject') }}</DialogTitle><DialogDescription>{{ t('app.createProject.description') }}</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">{{ t('app.createProject.name') }}</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">{{ t('app.createProject.workspace') }}</span><div class="flex gap-2"><input v-model="workspace" required class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /><Button v-if="canPickWorkspaceFolder" type="button" variant="outline" size="sm" class="h-9 shrink-0" :disabled="browsing" @click="browseWorkspace">{{ t('app.createProject.browse') }}</Button></div></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">{{ t('common.cancel') }}</Button><Button type="submit" :disabled="creating">{{ creating ? t('app.createProject.creating') : t('app.createProject.submit') }}</Button></div></form></DialogContent></Dialog>

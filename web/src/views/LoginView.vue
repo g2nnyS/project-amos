@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ShieldAlert } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
@@ -58,11 +57,6 @@ async function submit() {
             <p v-if="auth.error" class="login-error" role="alert">{{ auth.error }}</p>
             <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">{{ auth.loading ? t('common.processing') : setupRequired ? t('auth.setupSubmit') : t('auth.loginSubmit') }}</Button>
           </form>
-        </div>
-
-        <div class="login-notice">
-          <ShieldAlert class="size-3.5" aria-hidden="true" />
-          <p>{{ t('auth.notice') }}</p>
         </div>
       </section>
     </div>
@@ -184,24 +178,6 @@ async function submit() {
   font-size: 12.5px;
   font-weight: 550;
   letter-spacing: 0.01em;
-}
-
-.login-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px 20px 14px;
-  border-top: 1px solid hsl(var(--hairline));
-  background: hsl(var(--surface) / 0.55);
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  line-height: 1.65;
-}
-
-.login-notice svg {
-  flex: none;
-  margin-top: 1px;
-  color: hsl(var(--warning));
 }
 
 @media (max-width: 480px) {
