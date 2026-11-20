@@ -29,7 +29,9 @@ Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`
 
 探测需要 POSIX shell。模块依次定位 `/bin/sh`、`/usr/bin/sh`、`/usr/local/bin/sh`，并以绝对路径启动：`spawnSync` 通过子进程 `PATH` 解析可执行文件，而探测会注入自定义 `PATH`，直接使用 `'sh'` 会在该 `PATH` 不含 shell 时失败。shell 不可用时所有探测失败，Harness 报告未探测到。
 
-安装判定与路径只来自终端命令执行结果；探测不读取包元数据，也不解析 mise 或 Homebrew 安装路径。
+打包后的桌面应用由 launchd 启动，只继承 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`，Homebrew、nvm 与 `~/.local` 下的 Harness 不在其可见范围内。Store 以 `discoverHarnessInstallations({ loginPathFallback: true })` 调用：继承环境定位失败的命令，会先执行一次 `$SHELL -ilc` 解析交互式登录 shell 的 `PATH`（10 秒超时，按 shell 缓存到进程结束），再用该 `PATH` 重试。取值经标记行解析，交互式启动输出不会混入；shell 缺失、超时或无输出时保留继承环境的结果。显式传入 `env` 的调用方不触发回退，结果仍由传入环境决定。
+
+安装判定与路径只来自终端命令执行结果；探测不读取包元数据，也不直接扫描安装目录。
 
 Amos 插件从配置根检测：
 
