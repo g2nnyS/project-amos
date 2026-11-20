@@ -15,6 +15,11 @@
  * package metadata, and it never spawns a harness beyond the `--version` probe.
  * Command names are hardcoded module constants.
  *
+ * With `loginPathFallback`, a command that the inherited environment cannot
+ * resolve is retried against the interactive login-shell PATH. A packaged
+ * desktop app inherits launchd's minimal PATH, so Homebrew, nvm and `~/.local`
+ * installations stay invisible to the probe otherwise.
+ *
  * Amos plugin presence is still detected from filesystem markers under the Pi
  * and OpenCode config roots, because that marker describes the plugin rather
  * than the harness binary.
@@ -58,6 +63,12 @@ interface CommandProbe {
 interface DiscoveryOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly home?: string;
+  /**
+   * Retry commands that the inherited environment cannot resolve through the
+   * interactive login-shell PATH. Packaged desktop apps inherit launchd's
+   * minimal PATH instead of a terminal session's.
+   */
+  readonly loginPathFallback?: boolean;
 }
 
 const OPENCODE_PLUGIN_MARKERS = [
@@ -126,6 +137,12 @@ const PROBE_TIMEOUT_MS = 5_000;
 const VERSION_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const MAX_VERSION_LENGTH = 64;
 const VERSION_PATTERN = /[0-9]+(?:\.[0-9A-Za-z._+-]+)*/;
+const LOGIN_PATH_MARKER = '__AMOS_LOGIN_PATH__';
+/**
+ * Interactive startup runs plugin managers and prompt hooks, which can take
+ * several seconds on a configured shell; the value is cached per process.
+ */
+const LOGIN_PATH_TIMEOUT_MS = 10_000;
 
 /**
  * `spawnSync` resolves its executable through the child `PATH`, so the probe
@@ -218,6 +235,68 @@ function probeHarness(
   return { path, version: probeVersion(definition.command, env) };
 }
 
+function probeHarnesses(
+  definitions: readonly HarnessDefinition[],
+  env: NodeJS.ProcessEnv,
+): Map<HarnessKind, CommandProbe | null> {
+  const probes = new Map<HarnessKind, CommandProbe | null>();
+  for (const definition of definitions) {
+    probes.set(definition.id, probeHarness(definition, env));
+  }
+  return probes;
+}
+
+interface LoginPathCache {
+  readonly shell: string;
+  readonly path: string | null;
+}
+
+let loginPathCache: LoginPathCache | null = null;
+
+/**
+ * Interactive login-shell PATH, resolved at most once per shell and process.
+ *
+ * The PATH is printed behind a marker so interactive startup output cannot be
+ * mistaken for the value. A shell that is missing, hangs or prints nothing
+ * yields null and discovery keeps the inherited environment.
+ */
+function resolveLoginPath(env: NodeJS.ProcessEnv): string | null {
+  const shell = env.SHELL;
+  if (typeof shell !== 'string' || !isAbsolute(shell) || !existsSync(shell)) {
+    return null;
+  }
+  if (loginPathCache !== null && loginPathCache.shell === shell) {
+    return loginPathCache.path;
+  }
+
+  let result: SpawnSyncReturns<string | Buffer>;
+  try {
+    result = spawnSync(
+      shell,
+      ['-ilc', `printf '\n${LOGIN_PATH_MARKER}%s' "$PATH"`],
+      {
+        env,
+        timeout: LOGIN_PATH_TIMEOUT_MS,
+        maxBuffer: VERSION_OUTPUT_LIMIT_BYTES,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+  } catch {
+    loginPathCache = { shell, path: null };
+    return null;
+  }
+
+  const text = result.error === undefined ? `${result.stdout ?? ''}` : '';
+  const markerIndex = text.lastIndexOf(LOGIN_PATH_MARKER);
+  const printed =
+    markerIndex < 0 ? '' : text.slice(markerIndex + LOGIN_PATH_MARKER.length);
+  const resolved = (printed.split('\n')[0] ?? '').trim();
+
+  const path = resolved.length > 0 ? resolved : null;
+  loginPathCache = { shell, path };
+  return path;
+}
+
 function openCodeConfigRoot(env: NodeJS.ProcessEnv, home: string): string {
   const xdgConfigHome = env.XDG_CONFIG_HOME;
   if (typeof xdgConfigHome === 'string' && xdgConfigHome.length > 0) {
@@ -268,11 +347,22 @@ export function discoverHarnessInstallations(
   }
 
   const installations: HarnessInstallation[] = [];
-  const probes = new Map<HarnessKind, CommandProbe | null>();
+  const probes = probeHarnesses(HARNESS_DEFINITIONS, env);
+
+  if (options.loginPathFallback === true) {
+    const unresolved = [...probes.values()].some((probe) => probe === null);
+    const loginPath = unresolved ? resolveLoginPath(env) : null;
+    if (loginPath !== null) {
+      const loginEnv = { ...env, PATH: loginPath };
+      for (const definition of HARNESS_DEFINITIONS) {
+        if (probes.get(definition.id) !== null) continue;
+        probes.set(definition.id, probeHarness(definition, loginEnv));
+      }
+    }
+  }
 
   for (const definition of HARNESS_DEFINITIONS) {
-    const probe = probeHarness(definition, env);
-    probes.set(definition.id, probe);
+    const probe = probes.get(definition.id) ?? null;
 
     // Only the current HarnessId values participate in installations and
     // managed plugin state. OMP reuses the Pi adapter contract but is not a
