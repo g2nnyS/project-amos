@@ -20,6 +20,7 @@ export interface AmosDesktopBridge {
   minimize?(): Promise<void>
   toggleMaximize?(): Promise<void>
   close?(): Promise<void>
+  pickWorkspaceFolder?(): Promise<string | null>
 }
 declare global { interface Window { amosDesktop?: AmosDesktopBridge } }
 export interface BrowserSession {

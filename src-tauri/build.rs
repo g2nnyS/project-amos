@@ -8,6 +8,7 @@ fn main() {
                     "toggle_main_window_maximize",
                     "close_main_window",
                     "start_window_drag",
+                    "pick_workspace_directory",
                 ]),
             ),
     )

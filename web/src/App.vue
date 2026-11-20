@@ -87,6 +87,19 @@ const customWindowControls = desktopBridge !== undefined
   && typeof desktopBridge.close === 'function'
 const windowDraggable = typeof desktopBridge?.startWindowDrag === 'function'
 
+/** Native folder picker for the new-project workspace field. */
+const canPickWorkspaceFolder = typeof desktopBridge?.pickWorkspaceFolder === 'function'
+const browsing = ref(false)
+async function browseWorkspace() {
+  if (!canPickWorkspaceFolder || browsing.value) return
+  browsing.value = true
+  try {
+    const picked = await desktopBridge?.pickWorkspaceFolder?.()
+    if (typeof picked === 'string' && picked.length > 0) workspace.value = picked
+  } catch { /* the picker is dismissed or unavailable; keep the typed path */ }
+  finally { browsing.value = false }
+}
+
 /** Frameless window: press on the topbar, the login veil or the macOS
  * titlebar spacer moves the window; a double press toggles maximize. */
 function windowDragProbe(event: MouseEvent) {
@@ -233,7 +246,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
         <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">{{ t('app.mobileNote') }}</p>
       </SheetContent></Sheet>
 
-      <Dialog v-if="auth.authenticated" v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>{{ t('app.newProject') }}</DialogTitle><DialogDescription>{{ t('app.createProject.description') }}</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">{{ t('app.createProject.name') }}</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">{{ t('app.createProject.workspace') }}</span><input v-model="workspace" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">{{ t('common.cancel') }}</Button><Button type="submit" :disabled="creating">{{ creating ? t('app.createProject.creating') : t('app.createProject.submit') }}</Button></div></form></DialogContent></Dialog>
+      <Dialog v-if="auth.authenticated" v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>{{ t('app.newProject') }}</DialogTitle><DialogDescription>{{ t('app.createProject.description') }}</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">{{ t('app.createProject.name') }}</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">{{ t('app.createProject.workspace') }}</span><div class="flex gap-2"><input v-model="workspace" required class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /><Button v-if="canPickWorkspaceFolder" type="button" variant="outline" size="sm" class="h-9 shrink-0" :disabled="browsing" @click="browseWorkspace">{{ t('app.createProject.browse') }}</Button></div></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">{{ t('common.cancel') }}</Button><Button type="submit" :disabled="creating">{{ creating ? t('app.createProject.creating') : t('app.createProject.submit') }}</Button></div></form></DialogContent></Dialog>
 
       <Dialog v-if="auth.authenticated" v-model:open="commandOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] max-w-xl gap-0 overflow-y-auto p-0">
         <DialogHeader class="border-b border-border p-4 pb-3"><DialogTitle class="flex items-center gap-2"><Command class="size-4" />{{ t('app.command.title') }}</DialogTitle><DialogDescription>{{ t('app.command.description') }}</DialogDescription></DialogHeader>
