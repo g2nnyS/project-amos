@@ -36,10 +36,6 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <div class="rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      {{ t('observations.notice') }}
-    </div>
-
     <div v-if="loading" class="panel p-5 text-sm" role="status">{{ t('observations.loading') }}</div>
     <div v-else-if="error" role="alert" class="panel p-5 text-sm text-destructive">
       {{ error }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button>
@@ -51,7 +47,6 @@ onMounted(load)
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('observations.sourcesTitle') }}</h2>
-            <p class="panel-kicker">{{ t('observations.sourcesKicker') }}</p>
           </div>
         </div>
         <ul class="divide-y divide-border">

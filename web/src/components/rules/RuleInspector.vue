@@ -86,7 +86,6 @@ const activationLabel = computed(() => {
         <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ rule.enforcement }}</span>
         <span v-if="publishedVersion" class="text-muted-foreground">{{ t('common.version', { version: publishedVersion }) }}</span>
       </div>
-      <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('ruleInspector.note') }}</p>
     </div>
     <Tabs v-model="activeTab" class="min-h-0 flex-1 flex flex-col">
       <TabsList class="mx-4 mt-3 grid w-auto grid-cols-4">

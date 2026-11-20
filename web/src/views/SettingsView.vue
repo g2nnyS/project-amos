@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { Languages, LogOut, Monitor, Moon, ShieldAlert, Sun } from 'lucide-vue-next'
+import { Languages, LogOut, Monitor, Moon, Sun } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAuthStore } from '@/stores/auth'
@@ -238,7 +238,6 @@ async function testJev() {
                 <label for="global-harness-enabled" class="text-xs font-semibold">{{ t('settings.harness.enabled') }}</label>
                 <Switch id="global-harness-enabled" v-model="globalForm.enabled" :disabled="!canEditGlobal || governance.globalConfigSaving" :aria-label="t('settings.harness.enabledLabel')" />
               </div>
-              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.enabledHint') }}</p>
             </div>
             <div class="rounded-md border border-border bg-surface p-3">
               <label id="global-harness-mode-label" class="text-xs font-semibold">{{ t('settings.harness.mode') }}</label>
@@ -249,7 +248,6 @@ async function testJev() {
                   <SelectItem value="managed">{{ t('harness.modes.managed') }}</SelectItem>
                 </SelectContent>
               </Select>
-              <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">{{ t('settings.harness.modeHint') }}</p>
             </div>
             <div class="rounded-md border border-border bg-surface p-3">
               <div class="flex items-center justify-between gap-3">
@@ -285,7 +283,6 @@ async function testJev() {
           <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div class="min-w-0">
               <p id="pref-language-label" class="flex items-center gap-1.5 text-[12.5px] font-medium text-foreground"><Languages class="size-3.5 text-muted-foreground" aria-hidden="true" />{{ t('settings.appearance.language') }}</p>
-              <p class="mt-0.5 text-[11.5px] text-muted-foreground">{{ t('settings.appearance.languageHint') }}</p>
             </div>
             <div class="segmented shrink-0" role="group" aria-labelledby="pref-language-label">
               <button
@@ -305,7 +302,6 @@ async function testJev() {
           <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div class="min-w-0">
               <p id="pref-theme-label" class="text-[12.5px] font-medium text-foreground">{{ t('settings.appearance.theme') }}</p>
-              <p class="mt-0.5 text-[11.5px] text-muted-foreground">{{ t('settings.appearance.themeHint') }}</p>
             </div>
             <div class="segmented shrink-0" role="group" aria-labelledby="pref-theme-label">
               <button
@@ -340,7 +336,6 @@ async function testJev() {
         <div class="panel-header">
           <div>
             <h2 id="pref-session-title" class="panel-title">{{ t('settings.session.title') }}</h2>
-            <p class="panel-kicker">{{ t('settings.session.kicker') }}</p>
           </div>
           <span :class="[pillClass, sessionToneClass]">{{ roleLabel(auth.session?.role) }}</span>
         </div>
@@ -355,14 +350,9 @@ async function testJev() {
           </div>
         </dl>
         <div class="space-y-2.5 border-t border-hairline px-4 py-3">
-          <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5 text-[11.5px] leading-relaxed text-warning">
-            <ShieldAlert class="mr-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
-            {{ t('settings.session.boundary') }}
-          </div>
           <p class="text-[11.5px] leading-relaxed text-muted-foreground">{{ t('settings.session.isolation') }}</p>
         </div>
-        <div class="flex items-center justify-between gap-4 border-t border-hairline px-4 py-2.5">
-          <p class="text-[11.5px] text-muted-foreground">{{ t('settings.session.logoutHint') }}</p>
+        <div class="flex items-center justify-end gap-4 border-t border-hairline px-4 py-2.5">
           <Button variant="outline" size="sm" @click="auth.logout()"><LogOut class="size-3.5" aria-hidden="true" />{{ t('app.logout') }}</Button>
         </div>
       </section>

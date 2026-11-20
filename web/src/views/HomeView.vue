@@ -176,7 +176,6 @@ onMounted(() => { if (!isGlobal.value) void governance.refreshRuntime() })
         <div class="panel-header">
           <div class="min-w-0">
             <p class="panel-title truncate">{{ t('app.globalProject') }}</p>
-            <p class="panel-kicker truncate">{{ t('home.global.description') }}</p>
           </div>
           <span class="global-badge">{{ t('app.globalBadge') }}</span>
         </div>
@@ -184,19 +183,9 @@ onMounted(() => { if (!isGlobal.value) void governance.refreshRuntime() })
           <div class="min-w-0">
             <p class="eyebrow">{{ t('home.global.scopeEyebrow') }}</p>
             <h2 id="home-mode-title" class="home-mode-title">{{ t('home.global.title') }}</h2>
-            <p id="home-mode-description" class="home-mode-description">{{ t('home.global.noConfig') }}</p>
+            <p id="home-mode-description" class="home-mode-description">{{ t('home.global.description') }}</p>
           </div>
         </div>
-        <ul class="home-mode-notes" role="status">
-          <li class="flex items-start gap-2 text-muted-foreground">
-            <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{{ t('home.global.noRuntime') }}</span>
-          </li>
-          <li class="flex items-start gap-2 text-muted-foreground">
-            <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{{ t('home.global.noReview') }}</span>
-          </li>
-        </ul>
       </section>
 
       <section v-else class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
@@ -278,7 +267,6 @@ onMounted(() => { if (!isGlobal.value) void governance.refreshRuntime() })
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('home.attention.title') }}</h2>
-              <p class="panel-kicker">{{ t('home.attention.kicker') }}</p>
             </div>
           </div>
           <p v-if="!attention.length" class="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground"><CircleCheck class="size-4 text-positive" aria-hidden="true" />{{ t('home.attention.none') }}</p>

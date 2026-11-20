@@ -593,14 +593,6 @@
   border-top: 1px solid hsl(var(--sidebar-border));
 }
 
-.sidebar-note {
-  margin: 0;
-  padding: 2px 6px;
-  color: hsl(var(--muted-foreground));
-  font-size: 10.5px;
-  line-height: 1.45;
-}
-
 .sidebar-toggle {
   display: flex;
   align-items: center;
@@ -629,8 +621,7 @@
 .app-shell[data-collapsed="true"] .sidebar-label,
 .app-shell[data-collapsed="true"] .project-select,
 .app-shell[data-collapsed="true"] .sidebar-add-text,
-.app-shell[data-collapsed="true"] .sidebar-toggle-text,
-.app-shell[data-collapsed="true"] .sidebar-note {
+.app-shell[data-collapsed="true"] .sidebar-toggle-text {
   display: none;
 }
 
@@ -796,12 +787,6 @@
 
 @media (min-width: 768px) {
   .topbar-pill-version {
-    display: inline-flex;
-  }
-}
-
-@media (min-width: 1120px) {
-  .topbar-pill-managed {
     display: inline-flex;
   }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ServerCog, Info } from 'lucide-vue-next'
+import { ServerCog } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { harnessIcon } from '@/components/governance/harness-icons'
@@ -91,11 +91,6 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
       </template>
     </PageHeader>
 
-    <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      <Info class="mb-1 mr-1 inline size-3" />
-      <strong class="text-foreground">{{ t('harnesses.scopeLead') }}</strong>{{ t('harnesses.scopeText') }}<strong class="text-foreground">{{ t('harnesses.managedLead') }}</strong>{{ t('harnesses.managedText') }}
-    </div>
-
     <div v-if="error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">
       {{ error }}
       <button class="ml-2 underline" @click="loadDiscovery">{{ t('common.retry') }}</button>
@@ -124,7 +119,6 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('harnesses.listTitle') }}</h2>
-            <p class="panel-kicker">{{ t('harnesses.listKicker') }}</p>
           </div>
         </div>
         <div class="divide-y">
