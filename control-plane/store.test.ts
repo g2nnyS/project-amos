@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  fstatSync,
+  ftruncateSync,
   mkdirSync,
+  openSync,
   readFileSync,
   statSync,
   symlinkSync,
@@ -24,6 +28,10 @@ import type {
   GovernanceEvent,
   Proposal,
 } from './contracts.ts';
+import {
+  createProbeRun,
+  createPromotionThresholds,
+} from '../rollout/contracts.ts';
 import { createControlPlane } from './store.ts';
 import {
   agent,
@@ -73,6 +81,16 @@ function reject(
     },
     actor,
   );
+}
+
+function readFileSnapshot(path: string) {
+  const fd = openSync(path, 'r');
+  try {
+    const stat = fstatSync(fd);
+    return { bytes: readFileSync(fd), stat };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function auditOf(cp: ControlPlane, projectId: string): GovernanceEvent[] {
@@ -890,8 +908,15 @@ test('pre-existing empty and truncated-to-empty database files are refused witho
     db.close();
   }
   chmodSync(truncatedPath, 0o600);
-  assert.ok(statSync(truncatedPath).size > 0);
-  writeFileSync(truncatedPath, Buffer.alloc(0), { mode: 0o600 });
+  {
+    const fd = openSync(truncatedPath, 'r+');
+    try {
+      assert.ok(fstatSync(fd).size > 0);
+      ftruncateSync(fd, 0);
+    } finally {
+      closeSync(fd);
+    }
+  }
   expectDomainError(
     () =>
       createControlPlane({
@@ -915,9 +940,8 @@ test('existing database symlinks are refused before touching the target', (t) =>
   });
   targetService.close();
 
-  const targetBytes = readFileSync(targetPath);
-  const before = statSync(targetPath);
-  assert.equal(before.mode & 0o7777, 0o600);
+  const before = readFileSnapshot(targetPath);
+  assert.equal(before.stat.mode & 0o7777, 0o600);
 
   const linkPath = join(dir, 'link.sqlite');
   symlinkSync(targetPath, linkPath);
@@ -933,10 +957,10 @@ test('existing database symlinks are refused before touching the target', (t) =>
     409,
   );
 
-  const after = statSync(targetPath);
-  assert.deepEqual(readFileSync(targetPath), targetBytes);
-  assert.equal(after.mode & 0o7777, before.mode & 0o7777);
-  assert.equal(after.mtimeMs, before.mtimeMs);
+  const after = readFileSnapshot(targetPath);
+  assert.deepEqual(after.bytes, before.bytes);
+  assert.equal(after.stat.mode & 0o7777, before.stat.mode & 0o7777);
+  assert.equal(after.stat.mtimeMs, before.stat.mtimeMs);
 });
 
 test('existing database files must have exact 0600 permissions and are not chmodded', (t) => {
@@ -950,8 +974,7 @@ test('existing database files must have exact 0600 permissions and are not chmod
   service.close();
 
   chmodSync(databasePath, 0o640);
-  const bytes = readFileSync(databasePath);
-  const before = statSync(databasePath);
+  const before = readFileSnapshot(databasePath);
 
   expectDomainError(
     () =>
@@ -964,10 +987,10 @@ test('existing database files must have exact 0600 permissions and are not chmod
     409,
   );
 
-  const after = statSync(databasePath);
-  assert.deepEqual(readFileSync(databasePath), bytes);
-  assert.equal(after.mode & 0o7777, 0o640);
-  assert.equal(after.mtimeMs, before.mtimeMs);
+  const after = readFileSnapshot(databasePath);
+  assert.deepEqual(after.bytes, before.bytes);
+  assert.equal(after.stat.mode & 0o7777, 0o640);
+  assert.equal(after.stat.mtimeMs, before.stat.mtimeMs);
 });
 
 test('non-regular database paths are refused', (t) => {
@@ -1040,5 +1063,120 @@ test('a missing candidate field cannot be smuggled through partial input', (t) =
       ),
     'candidate_invalid',
     400,
+  );
+});
+
+function promotionThreshold(now: number, ruleId: string) {
+  return createPromotionThresholds({
+    format: 'amos-rollout-thresholds',
+    version: 1,
+    id: 'threshold-draft-log_only',
+    ruleRef: { id: ruleId, version: 1 },
+    fromStage: 'draft',
+    toStage: 'log_only',
+    minViolationCases: 1,
+    minControlCases: 1,
+    minCoverage: 1,
+    maxFalseAllowRate: 0,
+    maxFalseDenyRate: 0,
+    requiredHosts: [],
+    requiredEnvironments: [],
+    reviewer: null,
+    registeredAt: now - 1_000,
+    expiresAt: now + 3_600_000,
+  });
+}
+
+function promotionProbe(activationDigest: string, now: number, ruleId: string) {
+  return createProbeRun({
+    format: 'amos-probe-run',
+    version: 1,
+    runId: 'run-1',
+    ruleRef: { id: ruleId, version: 1 },
+    activationDigest,
+    host: { id: 'host-a', version: '1.0.0' },
+    check: { id: 'typescript', version: '1.0.0' },
+    environment: { id: 'env-a', version: '1.0.0' },
+    driver: 'trusted-os',
+    outcome: 'observed',
+    cases: { total: 10, observed: 10, violations: 5, controls: 5 },
+    coverage: { required: 10, observed: 10 },
+    sideEffects: { expected: 0, observed: 0, unauthorized: 0 },
+    falseAllowRate: 0,
+    falseDenyRate: 0,
+    artifactsDigest: `sha256:${'a'.repeat(64)}`,
+    recordedAt: now,
+    expiresAt: now + 3_600_000,
+  });
+}
+
+test('rollout promotion stores a dotted rule id as an own map key without prototype effects', (t) => {
+  const { cp, clock } = createServiceFixture(t);
+  const project = createProject(cp);
+  const ruleId = 'rule.1:prod';
+  approve(
+    cp,
+    createSimpleProposal(cp, project.id, clock, {
+      candidate: makeCandidate([makeRule(ruleId)]),
+    }),
+  );
+  const activationDigest = cp.getVersion(project.id, 1).snapshot.activationDigest;
+  cp.updateProjectConfig(
+    project.id,
+    { rollout: { thresholds: promotionThreshold(clock.now(), ruleId) } },
+    human(),
+  );
+  const run = promotionProbe(activationDigest, clock.now(), ruleId);
+  cp.recordProbeRun(project.id, { probe: run }, agent());
+
+  const promoted = cp.evaluateRulePromotion(
+    project.id,
+    ruleId,
+    {
+      evidence: [run],
+      current: {
+        activationDigest,
+        host: run.host,
+        check: run.check,
+        environment: run.environment,
+      },
+    },
+    agent(),
+  );
+  assert.equal(promoted.decision, 'promote');
+
+  const rollout = cp.getProjectConfig(project.id).rollout;
+  assert.equal(Object.hasOwn(rollout.ruleStates, ruleId), true);
+  assert.equal(rollout.ruleStates[ruleId], 'log_only');
+  assert.equal(Object.hasOwn(rollout.thresholdsByRule, ruleId), true);
+  assert.equal(Object.getPrototypeOf(rollout.ruleStates), Object.prototype);
+  assert.equal(Object.getPrototypeOf(rollout.thresholdsByRule), Object.prototype);
+  assert.equal(Object.hasOwn(Object.prototype, ruleId), false);
+});
+
+test('rollout promotion rejects prototype-affecting rule ids before any write', (t) => {
+  const { cp } = createServiceFixture(t);
+  const project = createProject(cp);
+  const before = cp.getProjectConfig(project.id);
+  const prototypeKeysBefore = Object.getOwnPropertyNames(Object.prototype).sort();
+
+  for (const ruleId of ['__proto__', 'constructor', 'prototype']) {
+    expectDomainError(
+      () =>
+        cp.evaluateRulePromotion(
+          project.id,
+          ruleId,
+          { current: {} } as never,
+          human(),
+        ),
+      'invalid_request',
+      400,
+    );
+  }
+
+  assert.deepEqual(cp.getProjectConfig(project.id), before);
+  assert.deepEqual(
+    Object.getOwnPropertyNames(Object.prototype).sort(),
+    prototypeKeysBefore,
   );
 });

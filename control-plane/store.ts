@@ -95,7 +95,6 @@ import {
   managedAuditPath,
   normalizeGlobalConfig,
   normalizeProjectConfig,
-  readProjectConfig,
   resolveHarnessConfig,
 } from './project-config.ts';
 import {
@@ -1119,13 +1118,11 @@ class GovernanceControlPlane implements ControlPlane {
           throw new DomainError('tightening_denied');
         }
         const context = this.createTighteningContext(project, base, config, nowMs);
-        let changedSnapshot: ProjectActivationSnapshot | null = null;
 
         const expired = context.publisher.expire();
         if (expired.expired.length > 0) {
           this.retireDueTightenings(projectId, nowMs, nowIso);
           this.writeTighteningState(projectId, expired.snapshot, nowMs, nowIso);
-          changedSnapshot = expired.snapshot;
           this.appendEvent({
             projectId,
             proposalId: null,
@@ -1168,7 +1165,6 @@ class GovernanceControlPlane implements ControlPlane {
             nowIso,
           );
         this.writeTighteningState(projectId, applied.snapshot, nowMs, nowIso);
-        changedSnapshot = applied.snapshot;
         this.appendEvent({
           projectId,
           proposalId: null,
@@ -1189,23 +1185,21 @@ class GovernanceControlPlane implements ControlPlane {
 
         return {
           status: this.readTighteningStatus(project, base, nowMs),
-          snapshot: changedSnapshot,
+          snapshot: applied.snapshot,
         };
       });
 
-      if (outcome.snapshot !== null) {
-        const project = this.requireProjectRow(projectId);
-        const base = this.requirePublishedVersion(project);
-        if (base !== null) {
-          this.emitProjectArtifacts(
-            projectId,
-            project.workspace,
-            base.version,
-            'tightening',
-            base.snapshot,
-            outcome.snapshot,
-          );
-        }
+      const project = this.requireProjectRow(projectId);
+      const base = this.requirePublishedVersion(project);
+      if (base !== null) {
+        this.emitProjectArtifacts(
+          projectId,
+          project.workspace,
+          base.version,
+          'tightening',
+          base.snapshot,
+          outcome.snapshot,
+        );
       }
       return outcome.status;
     });
@@ -1447,10 +1441,11 @@ class GovernanceControlPlane implements ControlPlane {
               rollout: {
                 ...config.rollout,
                 thresholds: parsed,
-                thresholdsByRule: {
-                  ...config.rollout.thresholdsByRule,
-                  [ruleId]: parsed,
-                },
+                thresholdsByRule: withRuleEntry(
+                  config.rollout.thresholdsByRule,
+                  active.id,
+                  parsed,
+                ),
               },
             },
             { workspace: project.workspace, existing: config },
@@ -1538,8 +1533,12 @@ class GovernanceControlPlane implements ControlPlane {
           {
             rollout: {
               ...config.rollout,
-              ruleStates: { ...config.rollout.ruleStates, [ruleId]: next },
-              thresholdsByRule: { ...config.rollout.thresholdsByRule, [ruleId]: thresholds },
+              ruleStates: withRuleEntry(config.rollout.ruleStates, active.id, next),
+              thresholdsByRule: withRuleEntry(
+                config.rollout.thresholdsByRule,
+                active.id,
+                thresholds,
+              ),
               thresholds,
             },
           },
@@ -2511,6 +2510,27 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
 function isRolloutRuleId(value: string): boolean {
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
+  return (
+    typeof value === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) &&
+    !RESERVED_OBJECT_KEYS.has(value)
+  );
+}
+
+/**
+ * Add or replace one rule-scoped rollout entry. Request-derived rule ids are
+ * validated before this point; staging through a Map keeps them out of
+ * prototype-affecting property writes.
+ */
+function withRuleEntry<T>(
+  existing: Readonly<Record<string, T>>,
+  ruleId: string,
+  value: T,
+): Record<string, T> {
+  const entries = new Map(Object.entries(existing));
+  entries.set(ruleId, value);
+  return Object.fromEntries(entries);
 }
