@@ -61,7 +61,6 @@ const jev = ref<JevSettingsView | null>(null)
 const jevForm = reactive({ provider: 'openrouter' as JevProviderId, baseUrl: providerUrls.openrouter, defaultModel: '', apiKey: '' })
 const jevLoading = ref(false), jevSaving = ref(false), jevTesting = ref(false)
 const jevError = ref(''), jevNotice = ref('')
-let jevEpoch = 0
 
 const sections: ReadonlyArray<{ id: string; labelKey: MessageKey }> = [
   { id: 'pref-harness', labelKey: 'settings.sections.harness' },
@@ -107,7 +106,6 @@ const jevStateTone = computed<JevTone>(() => {
   return jev.value.hasApiKey ? 'positive' : 'warning'
 })
 const jevStateLabel = computed(() => {
-  if (!governance.activeProjectId) return t('settings.jev.stateNoProject')
   if (jevLoading.value) return t('settings.jev.stateLoading')
   if (!jev.value) return jevError.value ? t('settings.jev.stateFailed') : t('settings.jev.stateNotLoaded')
   if (!jev.value.config) return t('common.notConfigured')
@@ -128,33 +126,29 @@ function applyJev(view: JevSettingsView) {
   jevForm.defaultModel = config?.defaultModel ?? ''
   jevForm.apiKey = ''
 }
-async function loadJev(id: string | null) {
-  const epoch = ++jevEpoch
-  jev.value = null; jevForm.apiKey = ''; jevError.value = ''; jevNotice.value = ''
-  jevSaving.value = false; jevTesting.value = false
-  if (!id) { jevLoading.value = false; return }
-  jevLoading.value = true
+async function reloadJev() {
+  if (jevLoading.value) return
+  jevLoading.value = true; jevError.value = ''
   try {
-    const view = await api.jevSettings(id)
-    if (epoch === jevEpoch && id === governance.activeProjectId) applyJev(view)
+    applyJev(await governance.refreshJev())
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.loadFailed')
+    jevError.value = e instanceof Error ? e.message : t('settings.jev.loadFailed')
   } finally {
-    if (epoch === jevEpoch) jevLoading.value = false
+    jevLoading.value = false
   }
 }
-watch(() => governance.activeProjectId, id => { void loadJev(id) }, { immediate: true })
+watch(() => governance.jev, view => { if (view) applyJev(view) }, { immediate: true })
 
 function changeJevProvider() {
   if (jevForm.baseUrl === providerUrls.openrouter || jevForm.baseUrl === providerUrls.typesafe) jevForm.baseUrl = providerUrls[jevForm.provider]
 }
 async function saveJev() {
-  const id = governance.activeProjectId, current = jev.value?.config
-  if (!id || !jev.value || jevSaving.value) return
+  const current = jev.value?.config
+  if (!jev.value || jevSaving.value) return
   const baseUrl = jevForm.baseUrl.trim(), defaultModel = jevForm.defaultModel.trim(), apiKey = jevForm.apiKey
   if (!baseUrl || !defaultModel) { jevNotice.value = ''; jevError.value = t('settings.jev.missingFields'); return }
   if (!current && !apiKey) { jevNotice.value = ''; jevError.value = t('settings.jev.keyRequired'); return }
-  const epoch = jevEpoch, models = [...(current?.models ?? [])]
+  const models = [...(current?.models ?? [])]
   if (!models.includes(defaultModel)) models.push(defaultModel)
   const input: JevSettingsInput = {
     provider: jevForm.provider, baseUrl, defaultModel, models,
@@ -166,29 +160,25 @@ async function saveJev() {
   }
   jevSaving.value = true; jevError.value = ''; jevNotice.value = ''
   try {
-    const view = await api.saveJevSettings(id, input)
-    if (epoch !== jevEpoch || id !== governance.activeProjectId) return
-    applyJev(view)
-    await governance.refreshProject()
-    if (epoch === jevEpoch) jevNotice.value = t('settings.jev.saved')
+    applyJev(await api.saveJevSettings(input))
+    await governance.refreshJev().catch(() => null)
+    jevNotice.value = t('settings.jev.saved')
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.saveFailed')
+    jevError.value = e instanceof Error ? e.message : t('settings.jev.saveFailed')
   } finally {
-    if (epoch === jevEpoch) { jevSaving.value = false; jevForm.apiKey = '' }
+    jevSaving.value = false; jevForm.apiKey = ''
   }
 }
 async function testJev() {
-  const id = governance.activeProjectId
-  if (!id || !jev.value?.config || jevTesting.value) return
-  const epoch = jevEpoch
+  if (!jev.value?.config || jevTesting.value) return
   jevTesting.value = true; jevError.value = ''; jevNotice.value = ''
   try {
-    const result = await api.testJevSettings(id)
-    if (epoch === jevEpoch) jevNotice.value = t('settings.jev.tested', { model: result.model })
+    const result = await api.testJevSettings()
+    jevNotice.value = t('settings.jev.tested', { model: result.model })
   } catch (e) {
-    if (epoch === jevEpoch) jevError.value = e instanceof Error ? e.message : t('settings.jev.testFailed')
+    jevError.value = e instanceof Error ? e.message : t('settings.jev.testFailed')
   } finally {
-    if (epoch === jevEpoch) jevTesting.value = false
+    jevTesting.value = false
   }
 }
 </script>
@@ -381,17 +371,15 @@ async function testJev() {
         <div class="panel-header">
           <div>
             <h2 id="pref-jev-title" class="panel-title">{{ t('settings.jev.title') }}</h2>
-            <p class="panel-kicker">{{ governance.activeProject ? t('settings.jev.currentProject', { name: governance.activeProject.name }) : t('settings.jev.kicker') }}</p>
+            <p class="panel-kicker">{{ t('settings.jev.kicker') }}</p>
           </div>
           <span :class="[pillClass, jevStateClass]" role="status">{{ jevStateLabel }}</span>
         </div>
         <div class="px-4 py-3">
-          <p v-if="!governance.activeProject" class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.selectProject') }}</p>
-          <template v-else>
             <p v-if="jevLoading" class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.loading') }}</p>
             <div v-else-if="!jev" class="flex items-center justify-between gap-4">
               <p class="text-[12.5px] text-muted-foreground">{{ t('settings.jev.notLoaded') }}</p>
-              <Button variant="outline" size="sm" @click="loadJev(governance.activeProjectId)">{{ t('common.reload') }}</Button>
+              <Button variant="outline" size="sm" @click="reloadJev">{{ t('common.reload') }}</Button>
             </div>
             <form v-else class="space-y-3" :aria-busy="jevSaving || jevTesting" @submit.prevent="saveJev">
               <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-md border border-hairline bg-surface/40 px-3 py-2 sm:grid-cols-3" :aria-label="t('settings.jev.summary')">
@@ -435,7 +423,6 @@ async function testJev() {
                 <Button type="button" variant="outline" size="sm" :disabled="!jev.config || jevSaving || jevTesting" @click="testJev">{{ jevTesting ? t('settings.jev.testing') : t('settings.jev.test') }}</Button>
               </div>
             </form>
-          </template>
           <div class="mt-3 min-h-[1.125rem] text-[11.5px]">
             <p v-if="jevError" role="alert" class="text-destructive">{{ jevError }}</p>
             <p v-else-if="jevNotice" role="status" class="text-positive">{{ jevNotice }}</p>
@@ -472,7 +459,7 @@ async function testJev() {
             <dd class="min-w-0 truncate text-right font-mono text-[11.5px] text-foreground">github.com/g2nnyS/project-amos</dd>
           </div>
         </dl>
-        <p class="border-t border-hairline px-4 py-2.5 text-[10.5px] text-muted-foreground">{{ t('settings.about.copyright') }}</p>
+        <p class="border-t border-hairline px-4 py-2.5 text-[10.5px] text-muted-foreground">{{ t('settings.about.licenseNotice') }}</p>
       </section>
     </div>
   </div>

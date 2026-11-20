@@ -141,9 +141,9 @@ export class ApiClient {
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
   config(id: string): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`) }
   updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
-  jevSettings(id: string): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`) }
-  saveJevSettings(id: string, input: JevSettingsInput): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`, 'POST', input) }
-  testJevSettings(id: string): Promise<{ ok: true; model: string }> { return this.json(`/api/projects/${pathId(id)}/jev/test`, 'POST', {}) }
+  jevSettings(): Promise<JevSettingsView> { return this.json('/api/jev') }
+  saveJevSettings(input: JevSettingsInput): Promise<JevSettingsView> { return this.json('/api/jev', 'POST', input) }
+  testJevSettings(): Promise<{ ok: true; model: string }> { return this.json('/api/jev/test', 'POST', {}) }
   tightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`) }
   applyTightening(id: string, input: { templateId: string; ttlMs: number }): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`, 'POST', input) }
   expireTightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten/expire`, 'POST', {}) }

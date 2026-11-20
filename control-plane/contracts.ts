@@ -26,9 +26,10 @@ export interface Actor {
 export interface Project {
   readonly id: string;
   readonly name: string;
-  readonly workspace: string;
+  readonly workspace: string | null;
   readonly currentVersion: number | null;
   readonly createdAt: string;
+  readonly kind: 'global' | 'project';
 }
 
 export type RuleExpressivity = 'deterministic' | 'advisory_only';
@@ -321,7 +322,6 @@ export interface ProjectWorkflowGateConfig {
   readonly guidance: boolean;
   readonly shellGate: boolean;
   readonly completionReview: boolean;
-  readonly jevConfigPath: string | null;
   readonly actionAssessment: boolean;
   readonly requirementEgress: 'allowed' | 'denied';
 }
@@ -331,17 +331,18 @@ export interface ProjectWorkflowGateConfig {
  * environment-variable name; a literal key is rejected on write.
  *
  * `reviewer` is the discriminator for the managed review semantics. `'jev'`
- * selects the Jev provider that reads `jevConfigPath`; `null` with any legacy
- * reviewer field present is the stopped migration state. The legacy
- * `reviewEndpoint`/`reviewModel`/`apiKeyEnv` fields stay stored so the
- * migration gate can recognize an old configuration, and are never projected.
+ * selects the Jev provider, whose configuration is deployment-global: the
+ * service injects its path into host projections and never stores a
+ * per-project path. `null` with any legacy reviewer field present is the
+ * stopped migration state. The legacy `reviewEndpoint`/`reviewModel`/
+ * `apiKeyEnv` fields stay stored so the migration gate can recognize an old
+ * configuration, and are never projected.
  */
 export interface ProjectManagedConfig {
   readonly enabled: boolean;
   readonly requirementEgress: 'allowed' | 'denied';
   readonly grantTtlMs: number;
   readonly reviewer: 'jev' | null;
-  readonly jevConfigPath: string | null;
   readonly reviewEndpoint: string | null;
   readonly reviewModel: string | null;
   readonly apiKeyEnv: string | null;
@@ -591,6 +592,11 @@ export interface CreateControlPlaneOptions {
   readonly writeArtifacts?: (input: PublishArtifactWrite) => void;
   /** Directory outside project workspaces for managed journals. */
   readonly managedAuditDir?: string;
+  /**
+   * Deployment-global Jev config path injected into every host projection.
+   * Absent means this deployment has no global Jev configured.
+   */
+  readonly jevConfigPath?: string | null;
   readonly now?: () => number;
 }
 
