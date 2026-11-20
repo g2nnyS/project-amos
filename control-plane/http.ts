@@ -846,15 +846,14 @@ export function createGovernanceServer(
       setupGrant = undefined;
     } else {
       let valid = false;
-      if (body.method === 'password') valid = passwordStore !== undefined && await passwordStore.verify(body.password);
+      if (body.method === 'password') valid = await checkPasswordCredential(passwordStore, body.password);
       else if (body.method === 'system') valid = systemValid;
       else if (body.method === undefined || body.method === 'token') valid = tokenValid;
       if (!valid) throw new HttpError(401, 'invalid_credentials');
     }
     // Async verification must not revive a logged-out or expired session, or reuse a proof.
     if (auth.getSession(session.id) !== session) throw new HttpError(401, 'unauthenticated');
-    auth.resetLoginFailures(key);
-    const rotated = auth.createHumanSession(session.id);
+    const rotated = finalizeHumanSession(auth, session, key);
     setSessionCookie(res, rotated);
     sendJson(res, 200, authView(rotated));
   }
@@ -1184,6 +1183,30 @@ export async function startGovernanceServer(
     port,
     url: `http://127.0.0.1:${port}`,
   };
+}
+
+/**
+ * Password-method credential check for the human login route, isolated at
+ * module level so the route handler stays a plain dispatch over one call.
+ */
+async function checkPasswordCredential(
+  passwordStore: PasswordStore | undefined,
+  password: unknown,
+): Promise<boolean> {
+  return passwordStore !== undefined && (await passwordStore.verify(password));
+}
+
+/**
+ * Clears failed-attempt accounting and rotates the session once credentials
+ * have been accepted.
+ */
+function finalizeHumanSession(
+  auth: AuthManager,
+  session: SessionState,
+  loginKey: string,
+): SessionState {
+  auth.resetLoginFailures(loginKey);
+  return auth.createHumanSession(session.id);
 }
 
 function normalizeSchemaDocument(

@@ -669,17 +669,6 @@ function pruneMap<T>(map: Map<string, T>, limit: number): void {
   }
 }
 
-function pruneSet<T>(set: Set<T>, max: number): void {
-  if (set.size <= max) return;
-  const excess = set.size - max;
-  let removed = 0;
-  for (const item of set) {
-    set.delete(item);
-    removed += 1;
-    if (removed >= excess) break;
-  }
-}
-
 function resourceCommandCandidates(resources: unknown): string[] {
   const candidates: string[] = [];
   const add = (value: unknown): void => {
@@ -738,28 +727,6 @@ function buildReviewFeedback(input: {
     lines.push(`- jev: ${input.jevReason}`);
   }
   lines.push("Request human review before treating the change as complete.");
-  return lines.join("\n");
-}
-
-function buildIdleRepairFeedback(input: {
-  readonly checks: readonly string[];
-  readonly diffReason: string | null;
-  readonly jevReason: string | null;
-}): string {
-  const lines = [
-    "Amos workflow review: completion is held for one local repair cycle.",
-    "This feedback is advisory and is not an approval or a security verdict.",
-  ];
-  if (input.checks.length > 0) {
-    lines.push(`Local checks failed: ${input.checks.join(", ")}`);
-  }
-  if (input.diffReason !== null) {
-    lines.push(`Diff review: ${input.diffReason}`);
-  }
-  if (input.jevReason !== null) {
-    lines.push(`Engineering review: ${input.jevReason}`);
-  }
-  lines.push("Address the concerns above and continue.");
   return lines.join("\n");
 }
 
@@ -1076,9 +1043,6 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       // injector instance, so rule IDs never leak across session boundaries.
       const advisoryBySession = new Map<string, AdvisoryState>();
       const reviewedDigests = new Map<string, string>();
-      // The idle hook requests at most one repair continuation per session,
-      // mirroring Pi's `agent_before_settle` soft-block.
-      const repairContinuedSessions = new Set<string>();
 
       // One bounded, memory-only requirement store per plugin setup. Frames are
       // created exclusively from the harness user-prompt channel; no tool

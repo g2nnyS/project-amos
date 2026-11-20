@@ -210,6 +210,11 @@ test('serve --api-only runs the governance API without console assets', async ()
     await mkdir(workspace, { recursive: true });
     const dataDir = join(dir, 'state');
     const missingStatic = join(dir, 'no-console');
+    // Pre-seed a known agent token so the API check needs no file read; the
+    // server must load and honor this exact value.
+    const agentToken = 'amos-cli-test-agent-token';
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(dataDir, AGENT_TOKEN_FILE), agentToken, { mode: 0o600 });
 
     await assert.rejects(
       () => startServe({ dataDir, workspace, port: 0, rootDir: ROOT, staticDir: missingStatic }),
@@ -238,7 +243,6 @@ test('serve --api-only runs the governance API without console assets', async ()
       assert.equal(status.status, 200);
       assert.equal((await status.json() as { mode: string }).mode, 'managed-opt-in');
 
-      const agentToken = (await readFile(join(dataDir, AGENT_TOKEN_FILE), 'utf8')).trim();
       const config = await fetch(`${handle.url}/api/config`, {
         headers: { authorization: `Bearer ${agentToken}` },
       });

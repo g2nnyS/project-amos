@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { type FileHandle, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -24,6 +24,14 @@ const PASSWORD = 'correct horse battery staple';
 const OTHER_PASSWORD = 'another correct horse battery staple';
 const SETUP_GRANT = 'synthetic-one-use-setup-grant-0123456789';
 const SYSTEM_AUTH = { secret: 'a'.repeat(64), label: 'Test system account' };
+
+/** Reads the whole file through an already-open handle, avoiding path re-resolution. */
+async function readAllAtStart(handle: FileHandle): Promise<string> {
+  const size = (await handle.stat()).size;
+  const buffer = Buffer.alloc(size);
+  if (size > 0) await handle.read(buffer, 0, size, 0);
+  return buffer.toString('utf8');
+}
 
 interface SessionBody {
   authenticated: boolean;
@@ -129,7 +137,7 @@ test('first password setup requires trusted enrollment and browser Origin, CSRF 
   assert.equal(wrongCsrf.status, 403);
   assert.deepEqual(wrongCsrf.body, { error: { code: 'csrf_invalid' } });
   assert.equal(passwords.configured, false);
-  await assert.rejects(stat(path), { code: 'ENOENT' });
+  await assert.rejects(readFile(path, 'utf8'), { code: 'ENOENT' });
 
   const setup = await postAuth(harness, 'setup', anonymous, enrollment);
   const human = rotatedAuth(setup, anonymous);
@@ -139,11 +147,16 @@ test('first password setup requires trusted enrollment and browser Origin, CSRF 
   assert.equal(projects.status, 200);
   const stale = await fetchJson(harness, '/api/projects', { headers: { Cookie: anonymous.cookie } });
   assert.equal(stale.status, 401);
-  const original = await readFile(path, 'utf8');
-  const overwrite = await postAuth(harness, 'setup', human, { password: OTHER_PASSWORD, setupGrant: SETUP_GRANT });
-  assert.equal(overwrite.status, 409);
-  assert.deepEqual(overwrite.body, { error: { code: 'setup_already_complete' } });
-  assert.equal(await readFile(path, 'utf8'), original);
+  const handle = await open(path, 'r');
+  try {
+    const original = await readAllAtStart(handle);
+    const overwrite = await postAuth(harness, 'setup', human, { password: OTHER_PASSWORD, setupGrant: SETUP_GRANT });
+    assert.equal(overwrite.status, 409);
+    assert.deepEqual(overwrite.body, { error: { code: 'setup_already_complete' } });
+    assert.equal(await readAllAtStart(handle), original);
+  } finally {
+    await handle.close();
+  }
   assert.equal(JSON.stringify(setup.body).includes(PASSWORD), false);
   assert.equal(JSON.stringify(setup.body).includes(SETUP_GRANT), false);
 });

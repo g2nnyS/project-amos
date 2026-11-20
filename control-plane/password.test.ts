@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { scryptSync } from 'node:crypto';
-import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, type FileHandle, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,14 @@ import { PasswordStore } from './password.ts';
 
 const PASSWORD = 'correct horse battery staple';
 const OTHER_PASSWORD = 'another correct horse battery staple';
+
+/** Reads the whole file through an already-open handle, avoiding path re-resolution. */
+async function readAllAtStart(handle: FileHandle): Promise<string> {
+  const size = (await handle.stat()).size;
+  const buffer = Buffer.alloc(size);
+  if (size > 0) await handle.read(buffer, 0, size, 0);
+  return buffer.toString('utf8');
+}
 
 test('existing malformed, public or linked verifiers fail closed instead of reopening enrollment', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'amos-password-invalid-'));
@@ -36,25 +44,30 @@ test('password verifier is private, scrypt-derived, persistent and first-write-o
 
   await store.setup(PASSWORD);
   assert.equal(store.configured, true);
-  assert.equal((await stat(path)).mode & 0o777, 0o600);
-  const original = await readFile(path, 'utf8');
-  assert.equal(original.includes(PASSWORD), false);
-  const record = JSON.parse(original) as { version: number; salt: string; hash: string };
-  assert.equal(record.version, 1);
-  assert.match(record.salt, /^[0-9a-f]{64}$/);
-  assert.match(record.hash, /^[0-9a-f]{128}$/);
-  assert.equal(
-    record.hash,
-    scryptSync(PASSWORD, record.salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }).toString('hex'),
-  );
+  const handle = await open(path, 'r');
+  try {
+    assert.equal((await handle.stat()).mode & 0o777, 0o600);
+    const original = await readAllAtStart(handle);
+    assert.equal(original.includes(PASSWORD), false);
+    const record = JSON.parse(original) as { version: number; salt: string; hash: string };
+    assert.equal(record.version, 1);
+    assert.match(record.salt, /^[0-9a-f]{64}$/);
+    assert.match(record.hash, /^[0-9a-f]{128}$/);
+    assert.equal(
+      record.hash,
+      scryptSync(PASSWORD, record.salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }).toString('hex'),
+    );
 
-  const reloaded = await PasswordStore.load(path);
-  assert.equal(reloaded.configured, true);
-  assert.equal(await reloaded.verify(PASSWORD), true);
-  assert.equal(await reloaded.verify(OTHER_PASSWORD), false);
-  await assert.rejects(store.setup(OTHER_PASSWORD), { code: 'setup_already_complete' });
-  await assert.rejects(reloaded.setup(OTHER_PASSWORD), { code: 'setup_already_complete' });
-  assert.equal(await readFile(path, 'utf8'), original);
+    const reloaded = await PasswordStore.load(path);
+    assert.equal(reloaded.configured, true);
+    assert.equal(await reloaded.verify(PASSWORD), true);
+    assert.equal(await reloaded.verify(OTHER_PASSWORD), false);
+    await assert.rejects(store.setup(OTHER_PASSWORD), { code: 'setup_already_complete' });
+    await assert.rejects(reloaded.setup(OTHER_PASSWORD), { code: 'setup_already_complete' });
+    assert.equal(await readAllAtStart(handle), original);
+  } finally {
+    await handle.close();
+  }
   assert.deepEqual(await readdir(dir), ['password.json']);
 });
 

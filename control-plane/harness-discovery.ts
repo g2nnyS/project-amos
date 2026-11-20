@@ -177,18 +177,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function readJsonVersion(path: string): string | null {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (!isRecord(parsed)) return null;
-    return typeof parsed.version === 'string' && parsed.version.length > 0
-      ? parsed.version
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function readPackageVersion(
   path: string,
   definition: HarnessDefinition,

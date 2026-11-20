@@ -259,7 +259,7 @@ test('a v2 database re-emits v2 projections only for published projects on the m
     { name: 'Published project', workspace: publishedWorkspace },
     human(),
   );
-  const unpublished = setup.createProject(
+  setup.createProject(
     { name: 'Unpublished project', workspace: unpublishedWorkspace },
     human(),
   );

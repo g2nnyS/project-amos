@@ -23,8 +23,8 @@ export const useGovernanceStore = defineStore('governance', () => {
   let epoch = 0
   let preferred = readStoredJson(KEY, (value): value is string => typeof value === 'string' && value.length > 0)
   function resetProject() { policy.value = null; proposals.value = []; versions.value = []; runtime.value = null; config.value = null; tightenings.value = null; probes.value = []; rollouts.value = [] }
-  function clear() { epoch++; projects.value = []; activeProjectId.value = null; resetProject(); status.value = null; globalConfig.value = null; globalConfigSaving.value = false; error.value = null; loading.value = false; preferred = null; removeStored(KEY) }
-  function save(id: string | null) { preferred = id; if (id) writeStoredJson(KEY, id); else removeStored(KEY) }
+  function clear() { epoch++; projects.value = []; activeProjectId.value = null; resetProject(); status.value = null; globalConfig.value = null; globalConfigSaving.value = false; error.value = null; loading.value = false; preferred = null; removeStored(KEY); }
+  function save(id: string | null) { preferred = id; if (id) writeStoredJson(KEY, id); else removeStored(KEY); }
   async function refreshProjects() {
     const current = epoch
     try { const result = await api.projects(); if (current !== epoch) return; projects.value = result; if (activeProjectId.value && !result.some(p => p.id === activeProjectId.value)) { activeProjectId.value = null; resetProject(); save(null) } }
