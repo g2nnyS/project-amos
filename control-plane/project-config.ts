@@ -556,7 +556,7 @@ function normalizeReviewPolicy(value: unknown): ReviewerPolicy | null {
 
 function normalizeCalibration(value: unknown): CalibrationEvidence | null {
   if (value === undefined || value === null) return null;
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+  if (typeof value !== 'object' || Array.isArray(value)) {
     throw new DomainError('invalid_request');
   }
   const raw = value as Record<string, unknown>;

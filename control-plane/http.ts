@@ -1433,23 +1433,6 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-function effectiveRules(candidate: Candidate): RuleRecord[] {
-  const rules = candidate.rules;
-  const activation = candidate.activation;
-  const excluded = new Set(activation.excludedRuleIds);
-  const included =
-    activation.includedRuleIds === null
-      ? null
-      : new Set(activation.includedRuleIds);
-
-  return rules.filter((rule) => {
-    if (included !== null) {
-      return included.has(rule.id) && !excluded.has(rule.id);
-    }
-    return !excluded.has(rule.id);
-  });
-}
-
 function safeFilenamePart(value: string): string {
   const safe = value.replace(/[^A-Za-z0-9_-]/g, '_');
   return safe.length > 0 ? safe.slice(0, 64) : 'project';
