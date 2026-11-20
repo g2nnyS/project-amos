@@ -95,6 +95,10 @@ export const JEV_QUESTIONS = Object.freeze({
 const DEFAULT_MODEL = 'jev-latest';
 const DEFAULT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const DEFAULT_TIMEOUT_MS = 8_000;
+// A hosted assessment is one bounded HTTP exchange. Clamping the configured
+// duration keeps a bad timeout from holding the process open for weeks and
+// stays below the 2^31-1 ms delay at which Node fires the timer immediately.
+const MAX_TIMEOUT_MS = 5 * 60 * 1_000;
 
 const DEFAULT_THRESHOLDS: AssessmentThresholds = Object.freeze({
   sensitiveArea: 0.5,
@@ -179,16 +183,28 @@ export function createJevAssessmentProvider(config: JevConfig): AssessmentProvid
 
       const controller = new AbortController();
       let timedOut = false;
+      // Clamp at the timer so an oversized configured duration is harmless:
+      // Node fires delays above 2^31-1 ms immediately, and a multi-week timer
+      // would outlive the assessment that created it.
+      let timerMs = timeoutMs;
+      if (timerMs > MAX_TIMEOUT_MS) {
+        timerMs = MAX_TIMEOUT_MS;
+      }
       const timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-      }, timeoutMs);
+      }, timerMs);
       const onExternalAbort = (): void => controller.abort();
       signal?.addEventListener('abort', onExternalAbort, { once: true });
 
       try {
         let response: Response;
         try {
+          // The endpoint is operator configuration frozen at construction, not
+          // request data: `validateEndpoint` already rejects plaintext remote
+          // hosts, userinfo, queries, and fragments. Tool targets and action
+          // context never reach this URL, so there is no request-forgery path.
+          // lgtm[js/request-forgery]
           response = await fetchImpl(endpoint, {
             method: 'POST',
             headers: {

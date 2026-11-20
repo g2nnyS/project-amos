@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -376,6 +378,26 @@ test('a state file owned by another uid is owner_mismatch', (t) => {
     code: 'owner_mismatch',
   });
   assert.equal(readFileSync(path, 'utf8'), before);
+});
+
+test('a symlinked state file is refused without following it', (t) => {
+  const { root, path, options } = fixture(t);
+  const realDirectory = join(root, 'elsewhere');
+  mkdirSync(realDirectory, { recursive: true, mode: 0o700 });
+  const real = join(realDirectory, 'requirements.json');
+  writeFileSync(real, '{}\n', { mode: 0o600 });
+  mkdirSync(join(root, 'state'), { recursive: true, mode: 0o700 });
+  symlinkSync(real, path);
+  const before = readFileSync(real, 'utf8');
+
+  const registry = createRequirementRegistry(options);
+  t.after(() => registry.close());
+  assert.equal(registry.resolve('ses_001', 1).status, 'owner_mismatch');
+  assert.deepEqual(registry.captureUserMessage(message()), {
+    status: 'rejected',
+    code: 'owner_mismatch',
+  });
+  assert.equal(readFileSync(real, 'utf8'), before);
 });
 
 test('a project id mismatch is owner_mismatch', (t) => {
