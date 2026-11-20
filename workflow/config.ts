@@ -45,7 +45,6 @@ export function parseWorkflowGateConfig(
     return null;
   }
   if (
-    value === null ||
     typeof value !== 'object' ||
     Array.isArray(value)
   ) {

@@ -142,34 +142,18 @@ test('times out safely and clears the transport', async () => {
   );
 });
 
-test('clamps an oversized timeout instead of arming an immediate timer', async () => {
-  let aborted = false;
-  const transport = createSystemOneClient({
-    apiKey: API_KEY,
-    baseUrl: 'https://openrouter.ai/api',
-    model: MODEL,
-    models: [MODEL],
-    timeoutMs: Number.MAX_SAFE_INTEGER,
-    fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) =>
-      new Promise((resolve, reject) => {
-        const timer = setTimeout(
-          () => resolve(json({ model: MODEL, answers: {} })),
-          50,
-        );
-        init?.signal?.addEventListener(
-          'abort',
-          () => {
-            aborted = true;
-            clearTimeout(timer);
-            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-          },
-          { once: true },
-        );
-      })) as typeof fetch,
-  });
-
-  const result = await transport.request(REQUEST);
-
-  assert.equal(aborted, false);
-  assert.equal(result.model, MODEL);
+test('rejects an oversized timeout before arming a timer', () => {
+  assert.throws(
+    () =>
+      createSystemOneClient({
+        apiKey: API_KEY,
+        baseUrl: 'https://openrouter.ai/api',
+        model: MODEL,
+        models: [MODEL],
+        timeoutMs: Number.MAX_SAFE_INTEGER,
+        fetchImpl: (async () => json({ model: MODEL, answers: {} })) as typeof fetch,
+      }),
+    (error: unknown) =>
+      error instanceof JevAssessmentError && error.code === 'config',
+  );
 });

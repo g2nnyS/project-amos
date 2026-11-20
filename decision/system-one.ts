@@ -77,7 +77,8 @@ export function createSystemOneClient(
     !config.models.includes(config.model) ||
     typeof config.timeoutMs !== 'number' ||
     !Number.isFinite(config.timeoutMs) ||
-    config.timeoutMs <= 0
+    config.timeoutMs <= 0 ||
+    config.timeoutMs > MAX_TIMEOUT_MS
   ) {
     throw new JevAssessmentError('config');
   }
@@ -158,17 +159,15 @@ interface PostInput {
 async function postSystemOne(input: PostInput): Promise<SystemOneResult> {
   const controller = new AbortController();
   let timedOut = false;
-  // Clamp at the timer so an oversized configured duration is harmless: Node
-  // fires delays above 2^31-1 ms immediately, and a multi-week timer would
-  // outlive the request that created it.
-  let timerMs = input.timeoutMs;
-  if (timerMs > MAX_TIMEOUT_MS) {
-    timerMs = MAX_TIMEOUT_MS;
+  // Revalidate at the asynchronous boundary so the timer always receives a
+  // bounded duration.
+  if (input.timeoutMs > MAX_TIMEOUT_MS) {
+    throw new JevAssessmentError('config');
   }
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, timerMs);
+  }, input.timeoutMs);
   const onExternalAbort = (): void => controller.abort();
   input.signal?.addEventListener('abort', onExternalAbort, { once: true });
 

@@ -376,33 +376,15 @@ test('times out with a safe code and clears the abort timer', async () => {
   assert.equal(error.code, 'timeout');
 });
 
-test('clamps an oversized timeout instead of arming an immediate timer', async () => {
-  let aborted = false;
-  const fetchImpl = ((
-    _input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> =>
-    new Promise((resolve, reject) => {
-      const timer = setTimeout(() => resolve(jsonResponse(validPayload())), 50);
-      init?.signal?.addEventListener(
-        'abort',
-        () => {
-          aborted = true;
-          clearTimeout(timer);
-          reject(new DOMException('aborted', 'AbortError'));
-        },
-        { once: true },
-      );
-    })) as typeof fetch;
-
-  const provider = makeProvider(fetchImpl, {
-    timeoutMs: Number.MAX_SAFE_INTEGER,
-  });
-
-  const facts = await provider.assess(ACTION, CONTEXT, ASSESSMENT_INPUT);
-
-  assert.equal(aborted, false);
-  assert.equal(facts.intent, 'feature');
+test('rejects an oversized timeout before arming a timer', () => {
+  assert.throws(
+    () =>
+      makeProvider((async () => jsonResponse(validPayload())) as typeof fetch, {
+        timeoutMs: Number.MAX_SAFE_INTEGER,
+      }),
+    (error: unknown) =>
+      error instanceof JevAssessmentError && error.code === 'config',
+  );
 });
 
 test('never derives the request URL from action or context input', async () => {
