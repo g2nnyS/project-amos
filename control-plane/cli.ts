@@ -539,6 +539,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       : desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
     const managedAuditDir = join(paths.dataDir, 'managed-audit');
     await ensurePrivateDirectory(managedAuditDir);
+    const jevSettings = new JevSettingsStore(paths.dataDir);
 
     const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
     let rawSchema: Record<string, unknown>;
@@ -574,6 +575,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       ...(guidanceSource === undefined ? {} : { guidanceSource }),
       writeArtifacts: writeProjectArtifacts,
       managedAuditDir,
+      jevConfigPath: jevSettings.path,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
     const controlPlane = service;
@@ -607,7 +609,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
         ...(options.apiOnly === true ? {} : { staticDir: options.staticDir ?? paths.staticDir }),
         ...(options.now === undefined ? {} : { now: options.now }),
         observations,
-        jevSettings: new JevSettingsStore(paths.dataDir),
+        jevSettings,
       });
     } catch {
       controlPlane.close();

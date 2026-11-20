@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ServerCog, Info } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
+import { harnessIcon } from '@/components/governance/harness-icons'
 import { api } from '@/lib/api'
 import { t, type MessageKey } from '@/i18n'
 import type { HarnessDiscoveryItem, HarnessDiscoveryResult } from '@/types'
@@ -135,6 +136,7 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
+                  <span class="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40"><component :is="harnessIcon(h.id)" class="size-4" aria-hidden="true" /></span>
                   <h3 class="font-medium" :class="{ 'text-foreground': h.detected }">{{ h.name }}</h3>
                   <span
                     class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"

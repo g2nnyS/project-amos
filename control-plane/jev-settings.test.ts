@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import type { JevSettingsView, Project } from './contracts.ts';
+import type { JevSettingsView } from './contracts.ts';
 import { loadJevConfig } from '../decision/config.ts';
 import {
   createHarness,
@@ -43,7 +43,7 @@ async function readProtectedJson(
   }
 }
 
-test('console saves protected Jev credentials, retains keys and tests the saved connection', async (t) => {
+test('console saves the deployment-global Jev credentials, retains keys and tests the saved connection', async (t) => {
   const providerRequests: Array<{ url: string; authorization: string; body: string }> = [];
   const harness = await createHarness({
     jevFetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -60,22 +60,13 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
   });
   t.after(() => harness.close());
 
-  const workspace = join(harness.dir, 'workspace');
-  await mkdir(workspace);
   const auth = await loginHuman(harness);
-  const created = await fetchJson(harness, '/api/projects', {
-    method: 'POST',
-    headers: humanHeaders(auth, harness.url),
-    body: JSON.stringify({ name: 'Jev', workspace }),
-  });
-  const project = created.body as Project;
-
-  const initial = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const initial = await fetchJson(harness, '/api/jev', {
     headers: { Cookie: auth.cookie },
   });
   assert.deepEqual(initial.body, { config: null, hasApiKey: false });
 
-  const saved = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const saved = await fetchJson(harness, '/api/jev', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: JSON.stringify({ ...BASE, apiKey: KEY }),
@@ -86,17 +77,13 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
   assert.equal(view.config?.defaultModel, BASE.defaultModel);
   assert.equal(JSON.stringify(saved.body).includes(KEY), false);
 
-  const projectConfig = harness.service.getProjectConfig(project.id);
-  const path = join(harness.dir, 'secrets', 'jev', project.id, 'jev.local.json');
-  assert.equal(projectConfig.workflowGate.jevConfigPath, null);
-  assert.equal(projectConfig.managed.jevConfigPath, null);
-  assert.equal(path.includes('jev.local.json'), true);
+  const path = join(harness.dir, 'secrets', 'jev', 'jev.local.json');
   const persisted = await readProtectedJson(path);
   assert.equal(persisted.mode, 0o600);
   assert.equal(persisted.value.apiKey, KEY);
   assert.equal(loadJevConfig(path).config.provider, 'openrouter');
 
-  const retained = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const retained = await fetchJson(harness, '/api/jev', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: JSON.stringify({ ...BASE, timeoutMs: 2_000, apiKey: '' }),
@@ -105,7 +92,7 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
   const persistedAgain = await readProtectedJson(path);
   assert.equal(persistedAgain.value.apiKey, KEY);
 
-  const tested = await fetchJson(harness, `/api/projects/${project.id}/jev/test`, {
+  const tested = await fetchJson(harness, '/api/jev/test', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: '{}',
@@ -119,7 +106,7 @@ test('console saves protected Jev credentials, retains keys and tests the saved 
   assert.equal(providerRequest.body.includes(KEY), false);
   assert.equal(providerRequest.body.includes('amos_connection_test'), true);
 
-  const agentWrite = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const agentWrite = await fetchJson(harness, '/api/jev', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${TEST_AGENT_TOKEN}`,
@@ -135,17 +122,9 @@ test('Jev settings reject invalid input and stop failed connection tests without
     jevFetch: (async () => new Response('provider detail must not escape', { status: 401 })) as typeof fetch,
   });
   t.after(() => harness.close());
-  const workspace = join(harness.dir, 'workspace');
-  await mkdir(workspace);
   const auth = await loginHuman(harness);
-  const created = await fetchJson(harness, '/api/projects', {
-    method: 'POST',
-    headers: humanHeaders(auth, harness.url),
-    body: JSON.stringify({ name: 'Jev', workspace }),
-  });
-  const project = created.body as Project;
 
-  const invalid = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const invalid = await fetchJson(harness, '/api/jev', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: JSON.stringify({ ...BASE, baseUrl: 'not-a-url', apiKey: KEY }),
@@ -153,13 +132,13 @@ test('Jev settings reject invalid input and stop failed connection tests without
   assert.equal(invalid.status, 400);
   assert.deepEqual(invalid.body, { error: { code: 'jev_config_invalid' } });
 
-  const valid = await fetchJson(harness, `/api/projects/${project.id}/jev`, {
+  const valid = await fetchJson(harness, '/api/jev', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: JSON.stringify({ ...BASE, apiKey: KEY }),
   });
   assert.equal(valid.status, 200);
-  const failed = await fetchJson(harness, `/api/projects/${project.id}/jev/test`, {
+  const failed = await fetchJson(harness, '/api/jev/test', {
     method: 'POST',
     headers: humanHeaders(auth, harness.url),
     body: '{}',

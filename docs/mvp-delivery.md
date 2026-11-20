@@ -12,12 +12,18 @@
   `decision/requirement-registry.ts`，旧 reviewer 配置改为停止式迁移。本轮只
   完成受管路径的 reviewer 迁移与 requirement 生命周期，没有 OS 隔离、完整中介、
   远端分支保护或同 UID 防篡改。
+- 2026-11-20 更新：控制台内置 Global Project，登录后可直接维护全局规则；
+  工作区项目保存补充候选，发布时组合当前全局层。全局发布扇出项目产物并保留
+  各项目版本历史，运行回执继续按实际加载结果报告。审查服务（Jev）改为全局
+  配置：单一私有文件、`/api/jev` 全局读写，宿主投影由服务注入全局路径，
+  项目配置不再存储 Jev 路径。
 
 ## 1. 本轮闭环
 
 ```text
-浏览器登录 → 创建/选择项目 → 编辑/导入规则 → 校验 → 提案 → 人类批准并发布
-→ 写入 .pi/activation.json（P1 快照）→ 真实 Pi 会话加载并报告版本
+浏览器登录 → 默认 Global Project 或创建工作区项目 → 编辑/导入全局或补充规则
+→ 校验 → 提案 → 人类批准并发布 → 全局继承组合
+→ 写入项目 .pi/activation.json（P1 快照）→ 真实 Pi 会话加载并报告版本
 → 同一快照动态注入 → tool_call 前确定性裁决
 → deny 阻断 / confirm Jev 语义 reviewer + 一次性授权后执行一次
 → tool_result 记录结果 → 控制台读取运行时加载报告与审计
@@ -27,7 +33,12 @@
 ### 1.1 控制台
 
 - 复用现有 Vue 控制台：登录、项目、规则编辑、校验、提案、批准/发布、
-  版本、回滚、审计、观察、模拟页面均保留。
+  版本、回滚、审计、观察、模拟页面均保留。内置 Global Project 默认首位并作为
+  新会话的默认工作台，已保存的项目偏好优先恢复；项目选择器区分全局与工作区。
+- 全局项目复用规则、提案、审批、版本、导入导出、审计和模拟流程，工作区配置、
+  运行回执、临时收紧、探测与 rollout 仍归属于具体项目。审查服务（Jev）为
+  全局配置：设置页一次保存、所有项目共用；启用 Jev 消费方而全局服务未配置时
+  以 `jev_not_configured` 停止，宿主投影中的 Jev 路径由服务注入。
 - 单一治理存储：`control-plane/`（SQLite `node:sqlite`，WAL、
   `synchronous=FULL`、owner-only 文件）。`governance/` 实验副本未并入
   交付分支。
@@ -77,14 +88,24 @@
   `amos-workflow-guidance` section；读/写/搜索动作后按路径/任务追加 area
   guidance；未激活/过期条目不注入；注入失败不影响裁决。
 
-### 1.3 规则与全局基线
+### 1.3 全局规则、项目补充与固定基线
 
-- 全局 catalog 从仓库 `constraints/rules.yaml` + `guidance/packs.ts` 在
-  控制面启动时构建一次；必选基线由 P1 `mandatoryRuleRefs` 固定。
-- 项目可新增项目规则 ID；不能修改/重定义全局规则 ID（`global_rule_conflict`），
-  不能排除必选基线（`mandatory_exclusion`）。项目无法用优先级覆盖全局
-  hard deny。
-- 同 ID 重复、未知字段、非法谓词、空激活、必选排除均在任何发布前拒绝。
+- 内置 Global Project 是 SQLite 中独立版本化的全局作用域，`workspace = null`；
+  全局版本自身不写 `.pi` 产物。仓库固定 catalog 继续从
+  `constraints/rules.yaml` + `guidance/packs.ts` 在控制面启动时构建一次，必选基线由
+  P1 `mandatoryRuleRefs` 固定。
+- 工作区项目保留原始补充候选和不可变版本历史。项目发布时组合当前全局候选与
+  项目候选：相同 ID 且内容一致的定义去重，不同定义以 `global_rule_conflict`
+  或 `candidate_invalid` 拒绝；全局已激活 ID 与项目有效 ID 取并集，项目排除集合
+  不会移除全局已激活规则。注入 baseline 去重合并，路由按全局、项目顺序组合，
+  项目路由中针对全局已激活 ID 的 suppress 会被剔除。
+- 全局发布先预检所有已发布项目的组合结果和临时收紧状态，再提交全局版本并扇出
+  各项目 `.pi/activation.json` 与 `.pi/amos.managed.json`。扇出不增加项目版本号；
+  后续运行时状态、模拟与临时收紧基版使用最新全局层。活跃临时收紧使全局发布以
+  `global_tightening_active` 停止。
+- 项目无法重定义全局规则 ID（`global_rule_conflict`）、排除必选基线
+  （`mandatory_exclusion`）或用优先级覆盖全局 hard deny。同 ID 重复、未知字段、
+  非法谓词、空激活、必选排除均在任何发布前拒绝。
 - `level` 只影响 advisory 排序和审计优先级，不改变
   `deny > confirm > log > allow`。
 - 合法空 runtime 投影显式 `empty`：Harness 不调用空表引擎，按 no-match
@@ -92,25 +113,26 @@
 
 ## 2. 实际验证证据
 
-所有命令在 `/home/ganyu/projects/project-amos/.slim/worktrees/amos-mvp`
-执行；`npm test` 会先删除并重建 `dist/`。
+当前命令在 `/home/ganyu/projects/project-amos` 执行；`npm test` 会先删除并重建 `dist/`。
 
 | 命令 | 实际结果 |
 |---|---|
 | `npm run typecheck` | exit 0（根 TS + `web` vue-tsc） |
-| `npm test` | exit 0；Node 与 Web 均无失败；1 项依赖外部 UID 的环境测试保持 skip |
-| `node web/e2e/smoke.mjs` | 全部浏览器检查 PASS；真实 headless Chromium、真实 CLI 服务、真实 YAML 下载/导入、回滚、CSP/控制台错误检查；证据 `/tmp/opencode/amos-governance-e2e-*/evidence.txt` |
+| `npm test` | exit 0；服务端 1000 项中 998 通过、2 项因当前非 root 环境跳过，Web 30 项全部通过 |
+| `npm run e2e:smoke` | 30 项浏览器检查全部 PASS；真实 headless Chromium、真实 CLI 服务、默认全局、项目继承产物与全局 Jev 设置、真实 YAML 下载/导入、回滚、CSP/控制台错误检查；证据 `/tmp/opencode/amos-governance-e2e-nLfPLg/evidence.txt` |
 | `npm run probe:live` | 通过；真实本地 llama.cpp 模型 `gemma-4-e4b` + 真实 Pi AgentSession + 真实扩展 + 真实文件副作用 + 真实模型 reviewer；证据 `/tmp/opencode/amos-live-probe-*/evidence.json`（历史，2026-11-05：该探针的 reviewer 是旧本地模型 reviewer 服务，2026-11-07 起由 Jev 取代，见 §2.2） |
-| `git diff --check` / `git diff --cached --check` | exit 0 |
+| `git diff --check` | exit 0 |
 
 ### 2.1 浏览器闭环（AC-12）
 
 `web/e2e/smoke.mjs` 使用真实编译后的 `dist/control-plane/cli.js`、全新临时
 数据目录、真实 Chromium（CDP pipe）和同源 API，不 mock `/api/*`。已覆盖：
 
-- 登录 / 项目创建 / 仓库种子 / 新增项目规则 / 服务端校验；
-- 不可变提案、人工批准并发布；
-- 发布产物 `.pi/activation.json` 存在且为 catalog v2；
+- 登录后默认选择 Global Project，全局规则编辑 / 服务端校验 / 不可变提案 /
+  人工批准并发布 / 版本历史；
+- 工作区项目创建 / 仓库种子 / 新增项目补充规则 / 服务端校验与审批发布；
+- 发布产物 `.pi/activation.json` 存在且为 catalog v2，并同时包含全局规则与
+  项目补充规则，快照身份包含当前全局版本；
 - 按 Harness 写入 v2 回执后控制台显示 `loaded`；回滚后旧报告显示 `stale`，
   更新报告后显示 `loaded`；身份匹配的旧协议回执显示 `loaded-unverified`；
 - 版本 YAML 下载（`format: amos-project-policy`）→ 上传同一 YAML →

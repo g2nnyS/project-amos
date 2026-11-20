@@ -11,12 +11,13 @@ import { api } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { t } from '@/i18n'
 import { auditEventLabel, roleLabel } from '@/i18n/labels'
-import { useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
 import type { GovernanceEvent } from '@/types'
 
 const governance = useGovernanceStore()
 const auth = useAuthStore()
+const isGlobal = computed(() => isGlobalProject(governance.activeProject))
 const audit = ref<GovernanceEvent[]>([])
 const auditError = ref('')
 const auditLoading = ref(false)
@@ -45,8 +46,8 @@ async function loadAudit() {
   }
 }
 
-watch(() => governance.activeProjectId, () => { void loadAudit(); void governance.refreshRuntime() }, { immediate: true })
-onMounted(() => { void loadAudit(); void governance.refreshRuntime() })
+watch(() => governance.activeProjectId, () => { void loadAudit(); if (!isGlobal.value) void governance.refreshRuntime() }, { immediate: true })
+onMounted(() => { void loadAudit(); if (!isGlobal.value) void governance.refreshRuntime() })
 
 const stats = computed(() => [
   { label: t('overview.stats.currentVersion'), value: governance.currentVersion == null ? t('common.notYetPublished') : `v${governance.currentVersion}`, note: governance.currentVersion == null ? t('overview.stats.noPublishedVersion') : t('overview.stats.publishedVersion') },
@@ -183,9 +184,10 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
     <template v-else>
       <section class="panel mb-4">
         <div class="panel-header"><div><h2 class="panel-title">{{ t('overview.snapshot.title') }}</h2><p class="panel-kicker">{{ t('overview.snapshot.kicker') }}</p></div><RouterLink to="/versions" class="text-xs text-primary hover:underline">{{ t('overview.snapshot.history') }}</RouterLink></div>
-        <dl class="grid gap-4 p-4 text-xs sm:grid-cols-2 xl:grid-cols-4">
-          <div><dt class="field-label">{{ t('overview.snapshot.project') }}</dt><dd class="mt-1 break-all font-medium">{{ governance.activeProject.name }}</dd><dd class="mt-1 break-all font-mono text-muted-foreground">{{ governance.activeProject.id }}</dd></div>
-          <div><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.activeProject.workspace }}</dd></div>
+        <dl class="grid gap-4 p-4 text-xs" :class="isGlobal ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 xl:grid-cols-4'">
+          <div><dt class="field-label">{{ t('overview.snapshot.project') }}</dt><dd class="mt-1 break-all font-medium">{{ isGlobal ? t('app.globalProject') : governance.activeProject.name }}</dd><dd class="mt-1 break-all font-mono text-muted-foreground">{{ governance.activeProject.id }}</dd></div>
+          <div v-if="!isGlobal"><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.activeProject.workspace }}</dd></div>
+          <div v-else><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 text-muted-foreground">{{ t('overview.snapshot.globalNote') }}</dd></div>
           <div><dt class="field-label">{{ t('overview.snapshot.publishedAt') }}</dt><dd class="mt-1">{{ governance.policy ? formatDateTime(governance.policy.createdAt) : t('common.notYetPublished') }}</dd></div>
           <div><dt class="field-label">{{ t('overview.snapshot.digest') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.policy?.snapshot.digest ?? t('overview.snapshot.noSnapshot') }}</dd></div>
         </dl>
@@ -297,7 +299,7 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
         </div>
       </div>
 
-      <section class="panel mt-4">
+      <section v-if="!isGlobal" class="panel mt-4">
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('overview.projection.title') }}</h2>
@@ -341,7 +343,8 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
           <Lock class="size-4 text-muted-foreground" />
         </div>
         <div v-if="configError" class="mx-4 mt-3 rounded-md border border-destructive/30 p-2 text-xs text-destructive" role="alert">{{ configError }}</div>
-        <div v-if="!governance.config" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.unavailable') }}</div>
+        <div v-if="isGlobal" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.globalNote') }}</div>
+        <div v-else-if="!governance.config" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.unavailable') }}</div>
         <div v-else class="grid gap-4 p-4 text-xs lg:grid-cols-2">
           <div class="rounded-md border border-border p-3">
             <div class="flex items-center justify-between gap-3">
@@ -397,7 +400,7 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
             <div class="mt-3 border-t border-border pt-3 text-muted-foreground">
               <p class="leading-relaxed">{{ t('overview.config.managedNote') }}</p>
               <p class="mt-2 break-all font-mono text-[10px]">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
-              <p class="mt-1 break-all font-mono text-[10px]">reviewer: {{ governance.config.managed.reviewer ?? t('common.notConfigured') }} · jevConfigPath: {{ governance.config.managed.jevConfigPath ?? t('common.notConfigured') }}</p>
+              <p class="mt-1 break-all font-mono text-[10px]">reviewer: {{ governance.config.managed.reviewer ?? t('common.notConfigured') }} · jev: {{ governance.jev?.config ? t('settings.jev.stateConfigured') : t('common.notConfigured') }}</p>
             </div>
           </div>
           <div class="rounded-md border border-border p-3">
@@ -418,7 +421,7 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
         </div>
       </section>
 
-      <div class="mt-4 grid gap-4 lg:grid-cols-2">
+      <div v-if="!isGlobal" class="mt-4 grid gap-4 lg:grid-cols-2">
         <section class="panel">
           <div class="panel-header">
             <div>

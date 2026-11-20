@@ -1,6 +1,7 @@
 import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
 import type { ProjectActivationSnapshot } from '../activation/types.ts';
 import { SNAPSHOT_FORMAT, deepFreeze } from './compiler.ts';
+import { GLOBAL_PROJECT_ID } from './global.ts';
 import { readProjectConfig } from './project-config.ts';
 import { createProbeRun, isRolloutStage, type ProbeRun, type RolloutStage } from '../rollout/contracts.ts';
 import type {
@@ -120,12 +121,14 @@ export interface RuleRolloutRow {
 }
 
 export function projectFromRow(row: ProjectRow): Project {
+  const global = row.id === GLOBAL_PROJECT_ID;
   return deepFreeze({
     id: row.id,
     name: row.name,
-    workspace: row.workspace,
+    workspace: global ? null : row.workspace,
     currentVersion: row.current_version,
     createdAt: row.created_at,
+    kind: global ? 'global' : 'project',
   });
 }
 

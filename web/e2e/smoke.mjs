@@ -440,7 +440,9 @@ try {
     await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
     await setByLabel('确认密码', password)
     await click('button', '设置密码')
-    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('全局规则')`)
+    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.includes('全局规则')`)
+    assert.equal(selectedGlobal, true, 'global project is not selected by default')
     const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)
     assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
@@ -448,12 +450,50 @@ try {
   })
 
   await mkdir(workspace, { recursive: true })
+
+  await check('global baseline is selected by default and supports rule editing', async () => {
+    await nav('编辑草稿')
+    await click('button', '内置示例')
+    await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
+    await click('button', '添加')
+    await waitFor(`document.body.innerText.includes('new-rule-1')`)
+    await setByLabel('规则 ID', 'global-smoke-rule')
+    await setByLabel('说明', 'E2E global baseline smoke rule; never an execution authorization.')
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
+  })
+
+  await check('submit and approve a global baseline proposal', async () => {
+    await setByLabel('标题', 'E2E global baseline proposal')
+    await setByLabel('理由', 'Synthetic global baseline rationale; never an execution authorization.')
+    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
+    await setByLabel('申请过期时间（本地时间）', expiry)
+    await click('button', '提交审批')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
+    await waitFor(`document.body.innerText.includes('待审批')`)
+    await click('button', '批准并发布')
+    await waitFor(visible('[role="alertdialog"]'))
+    await click('[role="alertdialog"] button', '确认')
+    await waitFor(`document.body.innerText.includes('已批准')`)
+  })
+
+  await check('global baseline version is visible in version history', async () => {
+    await nav('版本')
+    await waitFor(`document.body.innerText.includes('版本 1')`)
+    await nav('规则库')
+    await waitFor(`document.querySelector('h1')?.textContent.includes('全局规则')`)
+    await screenshot('desktop-global-rules')
+    await nav('首页')
+    await waitFor(`document.body.innerText.includes('全局基线')`)
+    await screenshot('desktop-global-home')
+  })
+
   await check('create project through the shell dialog', async () => {
     await createProject(projectOne, workspace)
     await waitFor(`document.body.innerText.includes(${q(projectOne)})`)
   })
 
-  await check('Jev settings save, reload and test through the browser', async () => {
+  await check('Jev settings are global: save, reload and test through the browser', async () => {
     await nav('设置')
     await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
     await waitFor(`${visible('#pref-jev')}`)
@@ -466,7 +506,7 @@ try {
 
     const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(projectId, 'active project missing')
-    const configPath = path.join(dataDir, 'jev', projectId, 'jev.local.json')
+    const configPath = path.join(dataDir, 'jev', 'jev.local.json')
     const saved = JSON.parse(await readFile(configPath, 'utf8'))
     assert.equal(saved.apiKey, 'e2e-synthetic-jev-key')
     if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600)
@@ -480,8 +520,17 @@ try {
     assert.deepEqual(providerRequests, [{ authorized: true, connectionTest: true }])
     assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
     await screenshot('desktop-jev-settings')
+
+    // The Jev configuration is one global service: it stays identical while
+    // the built-in Global Project is the active project.
+    await setBySelector('#project-select', 'global')
+    await waitFor(`document.querySelector('#project-select')?.value === 'global'`)
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
+    await waitFor(`${visible('#pref-jev')} && document.body.innerText.includes('typesafe/jev-1.14') && document.body.innerText.includes('已保存')`)
+    await setBySelector('#project-select', projectId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && document.body.innerText.includes(${q(projectOne)})`)
     await evaluate(`document.querySelector('main.workspace').scrollTop = 0`)
-    await click('nav[aria-label="设置分区"] button', '助手默认设置')
+    await click('nav[aria-label="设置分区"] button', 'Amos 全局默认')
     await waitFor(`${visible('#pref-harness')}`)
     await screenshot('desktop-settings-top')
     await click('nav[aria-label="设置分区"] button', '关于')
@@ -503,6 +552,7 @@ try {
     // instead of silently redefining the global deny table.
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
+    await setByLabel('规则 ID', 'project-smoke-rule')
     await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
@@ -655,6 +705,9 @@ try {
     const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
     assert.equal(artifact.format, 'amos-unified-rule-catalog')
     assert.equal(artifact.project.workspace, workspace)
+    assert.ok(artifact.activeRules.some((rule) => rule.id === 'global-smoke-rule'), 'global rule missing from project artifact')
+    assert.ok(artifact.activeRules.some((rule) => rule.id === 'project-smoke-rule'), 'project supplement missing from project artifact')
+    assert.match(artifact.project.projectConfigVersion, /\+global-v1$/)
     const projection = await readProjection()
     assert.equal(typeof projection.harness?.enabled, 'boolean')
     assert.ok(projection.harness?.mode === 'log-only' || projection.harness?.mode === 'managed')
@@ -908,10 +961,15 @@ try {
     assert.equal(sessionAfterLogout, false, 'server session remained authenticated after logout')
     await setBySelector('input[autocomplete="current-password"]', password)
     await click('button', '登录')
-    await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
+    await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 3`)
+    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.value === 'global'`)
+    assert.equal(selectedGlobal, true, 'logout preference reset did not fall back to the global project')
   })
 
   await check('language switch translates the console, persists across reload and switches back', async () => {
+    const firstId = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o=>o.textContent.includes(${q(projectOne)}))?.value`)
+    assert.ok(firstId, 'first project option missing after relogin')
+    await setBySelector('#project-select', firstId)
     await nav('设置')
     await click('nav[aria-label="设置分区"] button', '外观与语言')
     await waitFor(visible('#pref-appearance'))

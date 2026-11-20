@@ -49,6 +49,7 @@ import {
   serializePolicyDocument,
 } from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
+import { GLOBAL_COMPILE_WORKSPACE } from './global.ts';
 import {
   JevSettingsError,
   type JevSettingsStore,
@@ -362,12 +363,40 @@ export function createGovernanceServer(
       return;
     }
 
+    if (resource === 'jev') {
+      if (id === 'test') {
+        requirePath(segments, 3);
+        requireMethod(method, 'POST');
+        requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+        const store = requireJevSettings();
+        sendJson(res, 200, await runJevOperation(() => store.test()));
+        return;
+      }
+      requirePath(segments, 2);
+      const store = requireJevSettings();
+      if (method === 'GET') {
+        requireAnyActor(req);
+        sendJson(res, 200, await runJevOperation(() => store.read()));
+        return;
+      }
+      requireMethod(method, 'POST');
+      requireHumanActor(req);
+      requireBrowserMutation(req, port);
+      const input = await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+      sendJson(res, 200, await runJevOperation(() => store.save({ input })));
+      return;
+    }
+
     if (resource === 'status') {
       requirePath(segments, 2);
       requireMethod(method, 'GET');
       let projectCount: number | null = null;
       try {
-        projectCount = service.listProjects().length;
+        projectCount = service
+          .listProjects()
+          .filter((project) => project.kind !== 'global').length;
       } catch {
         projectCount = null;
       }
@@ -560,9 +589,14 @@ export function createGovernanceServer(
         if (parsed.projectId !== null && parsed.projectId !== id) {
           throw new HttpError(400, 'project_mismatch');
         }
+        const importProject = service.getProject(id);
+        const importWorkspace =
+          importProject.kind === 'global'
+            ? GLOBAL_COMPILE_WORKSPACE
+            : importProject.workspace;
         if (
           parsed.workspace !== null &&
-          parsed.workspace !== service.getProject(id).workspace
+          parsed.workspace !== importWorkspace
         ) {
           throw new HttpError(400, 'project_mismatch');
         }
@@ -572,65 +606,6 @@ export function createGovernanceServer(
           issues: validation.issues,
           candidate: parsed.candidate,
         });
-        return;
-      }
-
-      if (child === 'jev') {
-        if (numeric === 'test') {
-          requirePath(segments, 5);
-          requireMethod(method, 'POST');
-          requireHumanActor(req);
-          requireBrowserMutation(req, port);
-          await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
-          const store = requireJevSettings();
-          const config = service.getProjectConfig(id);
-          const result = await runJevOperation(() =>
-            store.test(
-              config.managed.jevConfigPath ??
-              config.workflowGate.jevConfigPath ??
-              store.pathFor(id),
-            ),
-          );
-          sendJson(res, 200, result);
-          return;
-        }
-        requirePath(segments, 4);
-        const store = requireJevSettings();
-        const config = service.getProjectConfig(id);
-        const currentPath =
-          config.managed.jevConfigPath ?? config.workflowGate.jevConfigPath;
-        if (method === 'GET') {
-          requireAnyActor(req);
-          sendJson(
-            res,
-            200,
-            await runJevOperation(() => store.read(currentPath ?? store.pathFor(id))),
-          );
-          return;
-        }
-        requireMethod(method, 'POST');
-        const actor = requireHumanActor(req);
-        requireBrowserMutation(req, port);
-        const input = await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
-        const project = service.getProject(id);
-        const saved = await runJevOperation(() =>
-          store.save({ projectId: id, workspace: project.workspace, currentPath, input }),
-        );
-        if (config.workflowGate.enabled || config.managed.reviewer === 'jev') {
-          service.updateProjectConfig(
-            id,
-            {
-              ...(config.workflowGate.enabled
-                ? { workflowGate: { jevConfigPath: saved.path } }
-                : {}),
-              ...(config.managed.reviewer === 'jev'
-                ? { managed: { jevConfigPath: saved.path } }
-                : {}),
-            },
-            actor,
-          );
-        }
-        sendJson(res, 200, saved.view);
         return;
       }
 

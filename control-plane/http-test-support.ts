@@ -99,10 +99,13 @@ export async function createHarness(
   );
   const rules = parseYaml(rulesYaml, { maxAliasCount: 50 }) as RuleRecord[];
 
+  const jevSettings = new JevSettingsStore(join(dir, 'secrets'), options.jevFetch);
+
   const service = createControlPlane({
     databasePath: join(dir, 'governance.sqlite'),
     rawSchema: schemaText,
     now: () => clock.now(),
+    jevConfigPath: jevSettings.path,
   });
 
   const server = await startGovernanceServer({
@@ -138,7 +141,7 @@ export async function createHarness(
     ...(options.observations === undefined
       ? {}
       : { observations: options.observations }),
-    jevSettings: new JevSettingsStore(join(dir, 'secrets'), options.jevFetch),
+    jevSettings,
   });
 
   return {

@@ -6,5 +6,11 @@
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
-  "permissions": ["allow-get-setup-grant"]
+  "permissions": [
+    "allow-get-setup-grant",
+    "allow-minimize-main-window",
+    "allow-toggle-main-window-maximize",
+    "allow-close-main-window",
+    "allow-start-window-drag"
+  ]
 }

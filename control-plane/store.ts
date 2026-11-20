@@ -13,6 +13,7 @@ import {
   proposalDigest,
   validateAndCompileCandidate,
   type CandidateCompilation,
+  type CompiledCandidate,
   type RuleValidator,
 } from './compiler.ts';
 import { createTemporaryTighteningPublisher, type AppliedTightening } from '../activation/tighten.ts';
@@ -64,9 +65,16 @@ import {
   createActivationCatalog,
   validationView,
   type ActivationCatalog,
+  type ActivationValidationView,
 } from './activation.ts';
 import { openGovernanceDatabase } from './database.ts';
 import { DomainError, isDomainError } from './errors.ts';
+import {
+  GLOBAL_COMPILE_WORKSPACE,
+  GLOBAL_PROJECT_ID,
+  composeEffectiveCandidate,
+  type GlobalLayer,
+} from './global.ts';
 import {
   eventFromRow,
   parseStoredJson,
@@ -98,7 +106,6 @@ import {
   resolveHarnessConfig,
 } from './project-config.ts';
 import {
-  expectationFromPublished,
   readRuntimeStatus,
   type RuntimeExpectation,
 } from './runtime-status.ts';
@@ -138,6 +145,20 @@ interface DecisionOutcome {
     readonly snapshot: PublishedVersion['snapshot'];
     readonly activationSnapshot: ProjectActivationSnapshot;
   };
+  readonly fanout?: readonly GlobalFanout[];
+}
+
+interface GlobalFanout {
+  readonly projectId: string;
+  readonly workspace: string;
+  readonly version: number;
+  readonly baseSnapshot: PublishedVersion['snapshot'];
+  readonly activationSnapshot: ProjectActivationSnapshot;
+}
+
+interface EffectiveBase {
+  readonly snapshot: PublishedVersion['snapshot'];
+  readonly candidate: Candidate;
 }
 
 export function createControlPlane(
@@ -183,6 +204,7 @@ export function createControlPlane(
       now,
       activationCatalog,
       managedAuditDir,
+      options.jevConfigPath ?? null,
       options.publishArtifact,
       options.writeArtifacts,
     );
@@ -208,6 +230,7 @@ class GovernanceControlPlane implements ControlPlane {
     private readonly clock: () => number,
     private readonly activationCatalog: ActivationCatalog,
     private readonly managedAuditDir: string,
+    private readonly jevConfigPath: string | null,
     private readonly publishArtifact?: (input: import('./contracts.ts').PublishArtifactInput) => void,
     private readonly writeArtifacts?: (input: import('./contracts.ts').PublishArtifactWrite) => void,
   ) {
@@ -234,6 +257,7 @@ class GovernanceControlPlane implements ControlPlane {
     if (this.writeArtifacts === undefined && this.publishArtifact === undefined) return;
     const actor: Actor = { id: 'system', role: 'human' };
     for (const project of this.listProjects()) {
+      if (project.kind === 'global') continue;
       if (project.currentVersion === null) continue;
       try {
         const nowMs = this.nowMs();
@@ -273,9 +297,9 @@ class GovernanceControlPlane implements ControlPlane {
     return this.guard(() => {
       const rows = this.db
         .prepare(
-          'SELECT id, name, workspace, current_version, created_at FROM projects ORDER BY created_at ASC, rowid ASC',
+          'SELECT id, name, workspace, current_version, created_at FROM projects ORDER BY CASE id WHEN ? THEN 0 ELSE 1 END ASC, created_at ASC, rowid ASC',
         )
-        .all() as unknown as ProjectRow[];
+        .all(GLOBAL_PROJECT_ID) as unknown as ProjectRow[];
       return deepFreeze(rows.map((row) => projectFromRow(row)));
     });
   }
@@ -352,9 +376,9 @@ class GovernanceControlPlane implements ControlPlane {
       const project = this.requireProjectRow(projectId);
       const compilation = validateAndCompileCandidate(
         candidate,
-        project.workspace,
+        this.compileWorkspace(project),
         this.validator,
-        validationView(this.activationCatalog),
+        this.validationViewFor(project),
       );
       return deepFreeze(compilation.result);
     });
@@ -511,9 +535,9 @@ class GovernanceControlPlane implements ControlPlane {
         );
         const compilation = validateAndCompileCandidate(
           parsedCandidate,
-          project.workspace,
+          this.compileWorkspace(project),
           this.validator,
-          validationView(this.activationCatalog),
+          this.validationViewFor(project),
         );
         if (compilation.compiled === null) {
           return { error: new DomainError('candidate_invalid') };
@@ -521,7 +545,7 @@ class GovernanceControlPlane implements ControlPlane {
 
         const recomputedDigest = proposalDigest({
           projectId: proposal.project_id,
-          workspace: project.workspace,
+          workspace: this.compileWorkspace(project),
           baseVersion: proposal.base_version,
           title: proposal.title,
           rationale: proposal.rationale,
@@ -536,21 +560,35 @@ class GovernanceControlPlane implements ControlPlane {
         }
 
         const version = (project.current_version ?? 0) + 1;
-        const activated = compileProjectActivation(this.activationCatalog, {
-          projectId: project.id,
-          workspace: project.workspace,
+        let effectiveCandidate = compilation.compiled.candidate;
+        let globalVersion: number | null = null;
+        let fanout: GlobalFanout[] | null = null;
+        if (project.id === GLOBAL_PROJECT_ID) {
+          fanout = this.preflightGlobalPublication(
+            compilation.compiled.candidate,
+            version,
+          );
+          globalVersion = version;
+        } else {
+          const layer = this.globalLayer();
+          if (layer !== null) {
+            effectiveCandidate = composeEffectiveCandidate(
+              layer,
+              compilation.compiled.candidate,
+              this.compositionCatalog(),
+            );
+            globalVersion = layer.version;
+          }
+        }
+        const effective = this.compileEffectiveSnapshot(
+          project,
           version,
-          baseVersion: proposal.base_version,
-          candidate: compilation.compiled.candidate,
-        });
-        const snapshot = buildPolicySnapshot({
-          projectId: project.id,
-          workspace: project.workspace,
-          version,
-          compiled: compilation.compiled,
-          schemaDigest: this.validator.schemaDigest,
-          activationSnapshot: activated.snapshot,
-        });
+          proposal.base_version,
+          effectiveCandidate,
+          globalVersion,
+          this.validationViewFor(project),
+        );
+        const snapshot = effective.snapshot;
 
         this.db
           .prepare(
@@ -616,7 +654,7 @@ class GovernanceControlPlane implements ControlPlane {
             snapshotDigest: snapshot.digest,
             enforcementDigest: snapshot.enforcement.digest,
             advisoryDigest: snapshot.advisory.digest,
-            effectiveRuleCount: compilation.compiled.effectiveRuleIds.length,
+            effectiveRuleCount: effective.compiled.effectiveRuleIds.length,
             enforcementRuleCount: snapshot.enforcement.ruleIds.length,
             advisoryRuleCount: snapshot.advisory.ruleIds.length,
           },
@@ -624,6 +662,12 @@ class GovernanceControlPlane implements ControlPlane {
 
         this.retireAllTightenings(project.id, nowMs, actor, 'version_published');
 
+        if (project.id === GLOBAL_PROJECT_ID) {
+          return {
+            proposal: proposalFromRow(this.requireProposalRow(proposalId), nowMs),
+            ...(fanout === null ? {} : { fanout }),
+          };
+        }
         return {
           proposal: proposalFromRow(this.requireProposalRow(proposalId), nowMs),
           artifact: {
@@ -631,7 +675,7 @@ class GovernanceControlPlane implements ControlPlane {
             workspace: project.workspace,
             version,
             snapshot,
-            activationSnapshot: activated.snapshot,
+            activationSnapshot: effective.activationSnapshot,
           },
         };
       });
@@ -651,6 +695,18 @@ class GovernanceControlPlane implements ControlPlane {
           outcome.artifact.snapshot,
           outcome.artifact.activationSnapshot,
         );
+      }
+      if (outcome.fanout !== undefined) {
+        for (const item of outcome.fanout) {
+          this.emitProjectArtifacts(
+            item.projectId,
+            item.workspace,
+            item.version,
+            'publish',
+            item.baseSnapshot,
+            item.activationSnapshot,
+          );
+        }
       }
       return outcome.proposal;
     });
@@ -868,12 +924,9 @@ class GovernanceControlPlane implements ControlPlane {
       const published = this.requireVersionRow(projectId, version);
       const base = versionFromRow(published);
       const effective = this.loadEffectiveActivation(project, base);
-      // Temporary tightening applies to the P1 runtime projection; when no
-      // tightening is active the published legacy snapshot remains the source.
-      const rules =
-        effective.tightened
-          ? effective.snapshot.enforcement.runtime.rules
-          : base.snapshot.enforcement.rules;
+      // Evaluate the P1 runtime projection even when no tightening is active,
+      // so current-global changes are visible to simulation.
+      const rules = effective.snapshot.enforcement.runtime.rules;
       // A legal empty runtime projection means "no matching rule"; do not ask
       // the engine to validate an empty table (which is deliberately an error).
       const decision: PolicyDecision =
@@ -921,6 +974,7 @@ class GovernanceControlPlane implements ControlPlane {
 
       const projectionFailures: string[] = [];
       for (const project of this.listProjects()) {
+        if (project.kind === 'global') continue;
         if (project.currentVersion === null) continue;
         try {
           const row = this.requireProjectRow(project.id);
@@ -963,6 +1017,7 @@ class GovernanceControlPlane implements ControlPlane {
   getProjectConfig(projectId: string): ProjectConfigView {
     return this.guard(() => {
       const project = this.requireProjectRow(projectId);
+      this.assertWorkspaceProject(project);
       const config = this.readProjectConfigFor(project);
       return deepFreeze({
         ...config,
@@ -994,6 +1049,7 @@ class GovernanceControlPlane implements ControlPlane {
       const nowIso = new Date(nowMs).toISOString();
       const outcome = this.transaction(() => {
         const project = this.requireProjectRow(projectId);
+        this.assertWorkspaceProject(project);
         const existing = this.readProjectConfigFor(project);
         if (!isPlainRecord(input)) throw new DomainError('invalid_request');
         // Expire against the configuration that authorized the active
@@ -1005,6 +1061,16 @@ class GovernanceControlPlane implements ControlPlane {
           workspace: project.workspace,
           existing,
         });
+        // A Jev consumer needs the deployment-global config; without one the
+        // edit fails closed instead of storing a projection that cannot load.
+        if (
+          this.jevConfigPath === null &&
+          (config.managed.reviewer === 'jev' ||
+            config.workflowGate.completionReview ||
+            config.workflowGate.actionAssessment)
+        ) {
+          throw new DomainError('jev_not_configured');
+        }
         this.writeProjectConfigRow(projectId, config, actor, nowIso);
         this.syncConfiguredRolloutStates(project, config, actor, nowIso, input);
         const globalConfig = this.readGlobalConfigFor();
@@ -1058,17 +1124,18 @@ class GovernanceControlPlane implements ControlPlane {
   getRuntimeStatus(projectId: string): RuntimeStatus {
     return this.guard(() => {
       const project = this.requireProjectRow(projectId);
+      this.assertWorkspaceProject(project);
       const base = this.requirePublishedVersion(project);
       if (base === null) {
         return readRuntimeStatus(project.workspace, null);
       }
       const effective = this.loadEffectiveActivation(project, base);
-      const expected = expectationFromPublished(base);
       const config = this.readProjectConfigFor(project);
       const configDigest = hostRuntimeConfigDigest({
         config,
         globalConfig: this.readGlobalConfigFor(),
         auditPath: managedAuditPath(this.managedAuditDir, project.workspace, project.id),
+        jevConfigPath: this.jevConfigPath,
       });
       const effectiveExpectation: RuntimeExpectation = {
         projectId: project.id,
@@ -1078,7 +1145,11 @@ class GovernanceControlPlane implements ControlPlane {
         epoch: effective.snapshot.epoch,
         configDigest,
       };
-      return readRuntimeStatus(project.workspace, expected, effectiveExpectation);
+      return readRuntimeStatus(
+        project.workspace,
+        effectiveExpectation,
+        effectiveExpectation,
+      );
     });
   }
 
@@ -1107,6 +1178,7 @@ class GovernanceControlPlane implements ControlPlane {
 
       const outcome = this.transaction(() => {
         const project = this.requireProjectRow(projectId);
+        this.assertWorkspaceProject(project);
         const base = this.requirePublishedVersion(project);
         if (base === null) throw new DomainError('not_found');
         const config = this.readProjectConfigFor(project);
@@ -1215,6 +1287,7 @@ class GovernanceControlPlane implements ControlPlane {
       const nowIso = new Date(nowMs).toISOString();
       const outcome = this.transaction(() => {
         const project = this.requireProjectRow(projectId);
+        this.assertWorkspaceProject(project);
         const base = this.requirePublishedVersion(project);
         if (base === null) throw new DomainError('not_found');
         const config = this.readProjectConfigFor(project);
@@ -1267,6 +1340,7 @@ class GovernanceControlPlane implements ControlPlane {
     return this.guard(() => {
       const nowMs = this.nowMs();
       const project = this.requireProjectRow(projectId);
+      this.assertWorkspaceProject(project);
       const base = this.requirePublishedVersion(project);
       if (base === null) {
         return deepFreeze({
@@ -1291,6 +1365,7 @@ class GovernanceControlPlane implements ControlPlane {
   ): ProbeRunRecord {
     return this.guard(() => {
       assertActor(actor);
+      this.assertWorkspaceProject(this.requireProjectRow(projectId));
       const raw = isPlainRecord(input) && Object.hasOwn(input, 'probe') ? input.probe : input;
       let run: ProbeRun;
       try {
@@ -1368,7 +1443,8 @@ class GovernanceControlPlane implements ControlPlane {
 
   listProbeRuns(projectId: string): ProbeRunRecord[] {
     return this.guard(() => {
-      this.requireProjectRow(projectId);
+      const project = this.requireProjectRow(projectId);
+      this.assertWorkspaceProject(project);
       const rows = this.db
         .prepare('SELECT * FROM probe_runs WHERE project_id = ? ORDER BY recorded_at DESC, rowid DESC LIMIT 200')
         .all(projectId) as unknown as ProbeRunRow[];
@@ -1384,6 +1460,7 @@ class GovernanceControlPlane implements ControlPlane {
   ): RolloutEvaluation {
     return this.guard(() => {
       assertActor(actor);
+      this.assertWorkspaceProject(this.requireProjectRow(projectId));
       if (!isRolloutRuleId(ruleId) || !isPlainRecord(input) || !isPlainRecord(input.current)) {
         throw new DomainError('invalid_request');
       }
@@ -1581,6 +1658,7 @@ class GovernanceControlPlane implements ControlPlane {
   listRuleRollouts(projectId: string): RuleRolloutRecord[] {
     return this.guard(() => {
       const project = this.requireProjectRow(projectId);
+      this.assertWorkspaceProject(project);
       const rows = this.db
         .prepare('SELECT * FROM rule_rollouts WHERE project_id = ? ORDER BY rule_id ASC')
         .all(projectId) as unknown as RuleRolloutRow[];
@@ -1649,9 +1727,9 @@ class GovernanceControlPlane implements ControlPlane {
 
     const compilation: CandidateCompilation = validateAndCompileCandidate(
       input?.candidate,
-      project.workspace,
+      this.compileWorkspace(project),
       this.validator,
-      validationView(this.activationCatalog),
+      this.validationViewFor(project),
     );
     if (compilation.compiled === null) {
       throw new DomainError('candidate_invalid');
@@ -1659,7 +1737,7 @@ class GovernanceControlPlane implements ControlPlane {
 
     const digest = proposalDigest({
       projectId: project.id,
-      workspace: project.workspace,
+      workspace: this.compileWorkspace(project),
       baseVersion: baseVersion as number,
       title,
       rationale,
@@ -1889,11 +1967,12 @@ class GovernanceControlPlane implements ControlPlane {
     base: PublishedVersion,
     applyExpiry = true,
   ): { readonly snapshot: ProjectActivationSnapshot; readonly tightened: boolean } {
+    const effectiveBase = this.effectiveBase(project, base);
     const row = this.db
       .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
       .get(project.id) as unknown as TighteningStateRow | undefined;
     if (row === undefined) {
-      return { snapshot: base.snapshot.activationSnapshot, tightened: false };
+      return { snapshot: effectiveBase.snapshot.activationSnapshot, tightened: false };
     }
     let snapshot: ProjectActivationSnapshot;
     try {
@@ -1903,9 +1982,11 @@ class GovernanceControlPlane implements ControlPlane {
     }
     if (
       snapshot.project.projectId !== project.id ||
-      snapshot.project.workspace !== project.workspace ||
+      snapshot.project.workspace !== this.compileWorkspace(project) ||
       snapshot.epoch !== row.epoch ||
-      snapshot.epoch <= base.snapshot.activationSnapshot.epoch
+      snapshot.epoch <= effectiveBase.snapshot.activationSnapshot.epoch ||
+      snapshot.project.baseVersion !==
+        effectiveBase.snapshot.activationSnapshot.project.baseVersion
     ) {
       throw new DomainError('database_corrupt');
     }
@@ -1927,7 +2008,12 @@ class GovernanceControlPlane implements ControlPlane {
     if (due !== undefined) {
       try {
         const config = this.readProjectConfigFor(project);
-        const context = this.createTighteningContext(project, base, config, nowMs);
+        const context = this.createTighteningContext(
+          project,
+          { ...base, snapshot: effectiveBase.snapshot },
+          config,
+          nowMs,
+        );
         const expired = context.publisher.expire();
         if (expired.expired.length > 0) {
           return { snapshot: expired.snapshot, tightened: true };
@@ -1938,6 +2024,195 @@ class GovernanceControlPlane implements ControlPlane {
       }
     }
     return { snapshot, tightened: true };
+  }
+
+  private isGlobalProject(project: ProjectRow): boolean {
+    return project.id === GLOBAL_PROJECT_ID;
+  }
+
+  private compileWorkspace(project: ProjectRow): string {
+    return this.isGlobalProject(project)
+      ? GLOBAL_COMPILE_WORKSPACE
+      : project.workspace;
+  }
+
+  private assertWorkspaceProject(project: ProjectRow): void {
+    if (this.isGlobalProject(project)) {
+      throw new DomainError('global_project_unsupported');
+    }
+  }
+
+  private compositionCatalog(): {
+    readonly ruleIds: ReadonlySet<string>;
+    readonly mandatoryIds: ReadonlySet<string>;
+  } {
+    return {
+      ruleIds: this.activationCatalog.globalRuleIds,
+      mandatoryIds: this.activationCatalog.mandatoryIds,
+    };
+  }
+
+  private globalLayer(): GlobalLayer | null {
+    const project = this.db
+      .prepare(
+        'SELECT id, name, workspace, current_version, created_at FROM projects WHERE id = ?',
+      )
+      .get(GLOBAL_PROJECT_ID) as unknown as ProjectRow | undefined;
+    if (project === undefined || project.current_version === null) return null;
+    const version = this.requireVersionRow(GLOBAL_PROJECT_ID, project.current_version);
+    const candidate = parseStoredJson(version.candidate_json) as Candidate;
+    return { version: version.version, candidate };
+  }
+
+  private validationViewForLayer(layer: GlobalLayer | null): ActivationValidationView {
+    const base = validationView(this.activationCatalog);
+    if (layer === null) return base;
+    const allowedRuleIds = new Set(base.allowedRuleIds);
+    const globalRules = new Map(base.globalRules);
+    for (const rule of layer.candidate.rules) {
+      allowedRuleIds.add(rule.id);
+      if (!globalRules.has(rule.id)) {
+        globalRules.set(rule.id, rule);
+      }
+    }
+    return {
+      allowedRuleIds,
+      mandatoryIds: base.mandatoryIds,
+      globalRules,
+    };
+  }
+
+  private validationViewFor(project: ProjectRow): ActivationValidationView {
+    return this.isGlobalProject(project)
+      ? validationView(this.activationCatalog)
+      : this.validationViewForLayer(this.globalLayer());
+  }
+
+  private compileEffectiveSnapshot(
+    project: ProjectRow,
+    version: number,
+    baseVersion: number,
+    candidate: Candidate,
+    globalVersion: number | null,
+    view: ActivationValidationView,
+  ): {
+    readonly snapshot: PublishedVersion['snapshot'];
+    readonly activationSnapshot: ProjectActivationSnapshot;
+    readonly compiled: CompiledCandidate;
+  } {
+    const compilation = validateAndCompileCandidate(
+      candidate,
+      this.compileWorkspace(project),
+      this.validator,
+      view,
+    );
+    if (compilation.compiled === null) {
+      throw new DomainError('candidate_invalid');
+    }
+    const activated = compileProjectActivation(this.activationCatalog, {
+      projectId: project.id,
+      workspace: this.compileWorkspace(project),
+      version,
+      baseVersion,
+      candidate: compilation.compiled.candidate,
+      ...(globalVersion === null ? {} : { globalVersion }),
+    });
+    const snapshot = buildPolicySnapshot({
+      projectId: project.id,
+      workspace: this.compileWorkspace(project),
+      version,
+      compiled: compilation.compiled,
+      schemaDigest: this.validator.schemaDigest,
+      activationSnapshot: activated.snapshot,
+    });
+    return {
+      snapshot,
+      activationSnapshot: activated.snapshot,
+      compiled: compilation.compiled,
+    };
+  }
+
+  /**
+   * Current-global effective base for a published project version. The stored
+   * version row keeps its original local candidate and historical snapshot;
+   * runtime/status/tightening read the composed current layer instead.
+   */
+  private effectiveBase(project: ProjectRow, base: PublishedVersion): EffectiveBase {
+    if (this.isGlobalProject(project)) {
+      return { snapshot: base.snapshot, candidate: base.candidate };
+    }
+    const layer = this.globalLayer();
+    if (layer === null) {
+      return { snapshot: base.snapshot, candidate: base.candidate };
+    }
+    const candidate = composeEffectiveCandidate(
+      layer,
+      base.candidate,
+      this.compositionCatalog(),
+    );
+    const effective = this.compileEffectiveSnapshot(
+      project,
+      base.version,
+      Math.max(0, base.version - 1),
+      candidate,
+      layer.version,
+      this.validationViewForLayer(layer),
+    );
+    return { snapshot: effective.snapshot, candidate: effective.compiled.candidate };
+  }
+
+  /**
+   * Preflight every published workspace project against the NEW global
+   * candidate. Aborts on any active tightening state or composition failure and
+   * returns the effective artifacts to fan out after the global commit.
+   */
+  private preflightGlobalPublication(
+    candidate: Candidate,
+    nextGlobalVersion: number,
+  ): GlobalFanout[] {
+    const projects = this.db
+      .prepare(
+        'SELECT id, name, workspace, current_version, created_at FROM projects WHERE id <> ? AND current_version IS NOT NULL ORDER BY created_at ASC, rowid ASC',
+      )
+      .all(GLOBAL_PROJECT_ID) as unknown as ProjectRow[];
+    for (const project of projects) {
+      const state = this.db
+        .prepare('SELECT 1 AS present FROM tightening_state WHERE project_id = ?')
+        .get(project.id) as unknown as { present?: unknown } | undefined;
+      if (state !== undefined) {
+        throw new DomainError('global_tightening_active');
+      }
+    }
+
+    const layer: GlobalLayer = { version: nextGlobalVersion, candidate };
+    const view = this.validationViewForLayer(layer);
+    const fanout: GlobalFanout[] = [];
+    for (const project of projects) {
+      const base = versionFromRow(
+        this.requireVersionRow(project.id, project.current_version as number),
+      );
+      const effectiveCandidate = composeEffectiveCandidate(
+        layer,
+        base.candidate,
+        this.compositionCatalog(),
+      );
+      const effective = this.compileEffectiveSnapshot(
+        project,
+        base.version,
+        Math.max(0, base.version - 1),
+        effectiveCandidate,
+        nextGlobalVersion,
+        view,
+      );
+      fanout.push({
+        projectId: project.id,
+        workspace: project.workspace,
+        version: base.version,
+        baseSnapshot: base.snapshot,
+        activationSnapshot: effective.activationSnapshot,
+      });
+    }
+    return fanout;
   }
 
   private writeProjectConfigRow(
@@ -1996,6 +2271,10 @@ class GovernanceControlPlane implements ControlPlane {
     state: TighteningStateRow | undefined;
     rows: TemporaryTighteningRow[];
   } {
+    const effectiveBase = this.effectiveBase(project, base);
+    const currentGlobalVersion = this.isGlobalProject(project)
+      ? null
+      : (this.globalLayer()?.version ?? null);
     const state = this.db
       .prepare('SELECT * FROM tightening_state WHERE project_id = ?')
       .get(project.id) as unknown as TighteningStateRow | undefined;
@@ -2010,7 +2289,7 @@ class GovernanceControlPlane implements ControlPlane {
     }
 
     const entries: AppliedTightening[] = [];
-    const currentBaseVersion = base.snapshot.activationSnapshot.project.baseVersion;
+    const currentBaseVersion = effectiveBase.snapshot.activationSnapshot.project.baseVersion;
     for (const row of rows) {
       let snapshot: ProjectActivationSnapshot;
       try {
@@ -2072,13 +2351,14 @@ class GovernanceControlPlane implements ControlPlane {
 
     const compiled = compileProjectActivation(this.activationCatalog, {
       projectId: project.id,
-      workspace: project.workspace,
+      workspace: this.compileWorkspace(project),
       version: base.version,
       baseVersion: Math.max(0, base.version - 1),
-      candidate: base.candidate,
+      candidate: effectiveBase.candidate,
       injectionlessRuleIds: config.tightening.templates.map((template) => template.ruleRef.id),
+      ...(currentGlobalVersion === null ? {} : { globalVersion: currentGlobalVersion }),
     });
-    if (compiled.snapshot.activationDigest !== base.snapshot.activationDigest) {
+    if (compiled.snapshot.activationDigest !== effectiveBase.snapshot.activationDigest) {
       // The runtime catalog changed since publication. Reconstructing a
       // tightening against a different base would be an unproven composition.
       throw new DomainError('catalog_invalid');
@@ -2088,12 +2368,12 @@ class GovernanceControlPlane implements ControlPlane {
     try {
       publisher = createTemporaryTighteningPublisher({
         compiler: compiled.compiler,
-        base: base.snapshot.activationSnapshot,
+        base: effectiveBase.snapshot.activationSnapshot,
         templates: config.tightening.templates,
         quota: config.tightening.quota,
         now: () => nowMs,
-        newProjectConfigVersion: `${base.snapshot.activationSnapshot.project.projectConfigVersion}+tightened`,
-        newBaseVersion: base.snapshot.activationSnapshot.project.baseVersion,
+        newProjectConfigVersion: `${effectiveBase.snapshot.activationSnapshot.project.projectConfigVersion}+tightened`,
+        newBaseVersion: effectiveBase.snapshot.activationSnapshot.project.baseVersion,
         recovered: {
           entries,
           ...(currentSnapshot === undefined ? {} : { currentSnapshot }),
@@ -2269,6 +2549,10 @@ class GovernanceControlPlane implements ControlPlane {
     baseSnapshot: PublishedVersion['snapshot'],
     activationSnapshot: ProjectActivationSnapshot,
   ): boolean {
+    if (projectId === GLOBAL_PROJECT_ID || workspace === '') {
+      // The global layer has no workspace artifact and no runtime receipt.
+      return true;
+    }
     try {
       const project = this.requireProjectRow(projectId);
       const config = this.readProjectConfigFor(project);
@@ -2289,6 +2573,7 @@ class GovernanceControlPlane implements ControlPlane {
         config,
         globalConfig,
         auditPath,
+        jevConfigPath: this.jevConfigPath,
         publishedAt,
       });
       const activationArtifact = `${JSON.stringify(activationSnapshot)}\n`;
@@ -2319,7 +2604,12 @@ class GovernanceControlPlane implements ControlPlane {
       }
       // A projection write is not a host receipt. Read the runtime report only
       // to make the status endpoint honest; never promote it to "effective".
-      const configDigest = hostRuntimeConfigDigest({ config, globalConfig, auditPath });
+      const configDigest = hostRuntimeConfigDigest({
+        config,
+        globalConfig,
+        auditPath,
+        jevConfigPath: this.jevConfigPath,
+      });
       readRuntimeStatus(
         workspace,
         {

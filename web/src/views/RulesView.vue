@@ -6,13 +6,14 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RuleInspector from '@/components/rules/RuleInspector.vue'
 import RuleMatrix from '@/components/rules/RuleMatrix.vue'
-import { useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { t, type MessageKey } from '@/i18n'
 import type { RuleOnHit, RuleExpressivity, RulePolicyClass, RuleEnforcement } from '@/types'
 
 const governance = useGovernanceStore()
 const route = useRoute()
 const router = useRouter()
+const isGlobal = computed(() => isGlobalProject(governance.activeProject))
 
 const search = ref('')
 const dimension = ref('')
@@ -125,7 +126,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 
 <template>
   <div class="page space-y-4">
-    <PageHeader :title="t('rules.title')" :description="t('rules.description')">
+    <PageHeader :title="t(isGlobal || !governance.activeProject ? 'rules.title' : 'rules.titleSupplementary')" :description="t(isGlobal || !governance.activeProject ? 'rules.description' : 'rules.descriptionSupplementary')">
       <template #actions>
         <RouterLink to="/editor" class="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">{{ t('rules.edit') }}</RouterLink>
       </template>
@@ -140,8 +141,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         <section ref="tableContainer" class="panel min-w-0">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">{{ t('rules.tableTitle') }}</h2>
-              <p class="panel-kicker">{{ t('rules.tableKicker', { version: governance.policy.version, shown: filtered.length, total: rules.length, selected: rules.filter(r => locallySelected(r.id)).length }) }}</p>
+              <h2 class="panel-title">{{ t(isGlobal ? 'rules.tableTitle' : 'rules.tableTitleSupplementary') }}</h2>
+              <p class="panel-kicker">{{ t(isGlobal ? 'rules.tableKicker' : 'rules.tableKickerSupplementary', { version: governance.policy.version, shown: filtered.length, total: rules.length, selected: rules.filter(r => locallySelected(r.id)).length }) }}</p>
             </div>
           </div>
           <div class="filterbar">
@@ -178,7 +179,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
                 <tr>
                   <th>{{ t('rules.columnRule') }}</th>
                   <th>{{ t('ruleFields.dimension') }}</th>
-                  <th>{{ t('rules.columnSelection') }}</th>
+                  <th>{{ t(isGlobal ? 'rules.columnSelectionGlobal' : 'rules.columnSelection') }}</th>
                   <th>{{ t('rules.columnOnHit') }}</th>
                   <th>{{ t('rules.columnEnforcement') }}</th>
                   <th>{{ t('ruleFields.source') }}</th>

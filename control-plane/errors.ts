@@ -23,10 +23,13 @@ export type DomainErrorCode =
   | 'tightening_disabled'
   | 'tightening_denied'
   | 'tightening_expired'
+  | 'global_tightening_active'
+  | 'global_project_unsupported'
   | 'clock_regression'
   | 'rollout_denied'
   | 'evidence_unbound'
   | 'reviewer_migration_required'
+  | 'jev_not_configured'
   | 'database_busy'
   | 'database_corrupt'
   | 'database_incompatible'
@@ -50,10 +53,13 @@ export const DOMAIN_ERROR_STATUS: Readonly<Record<DomainErrorCode, number>> = {
   tightening_disabled: 409,
   tightening_denied: 403,
   tightening_expired: 409,
+  global_tightening_active: 409,
+  global_project_unsupported: 400,
   clock_regression: 409,
   rollout_denied: 403,
   evidence_unbound: 409,
   reviewer_migration_required: 409,
+  jev_not_configured: 409,
   database_busy: 503,
   database_corrupt: 500,
   database_incompatible: 409,

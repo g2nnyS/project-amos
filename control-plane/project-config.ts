@@ -54,7 +54,12 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalHarnessConfig = deepFreeze({
 const DEFAULT_GRANT_TTL_MS = 20_000;
 const MAX_GRANT_TTL_MS = 60_000;
 const MAX_TIGHTENING_TEMPLATES = 64;
-const MAX_JEV_CONFIG_PATH = 4_096;
+/**
+ * Placeholder handed to the repo-format workflow-gate parser only when a Jev
+ * consumer is enabled. The database never stores it and projections never emit
+ * it: builds substitute the deployment-global path.
+ */
+const PARSE_ONLY_JEV_CONFIG_PATH = 'jev.local.json';
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
@@ -66,7 +71,6 @@ const MANAGED_FIELDS = [
   'requirementEgress',
   'grantTtlMs',
   'reviewer',
-  'jevConfigPath',
   'reviewEndpoint',
   'reviewModel',
   'apiKeyEnv',
@@ -80,7 +84,6 @@ const WORKFLOW_KEYS = [
   'guidance',
   'shellGate',
   'completionReview',
-  'jevConfigPath',
   'actionAssessment',
   'requirementEgress',
 ] as const;
@@ -101,7 +104,6 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
     guidance: false,
     shellGate: false,
     completionReview: false,
-    jevConfigPath: null,
     actionAssessment: false,
     requirementEgress: 'denied',
   },
@@ -110,7 +112,6 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = deepFreeze({
     requirementEgress: 'denied',
     grantTtlMs: DEFAULT_GRANT_TTL_MS,
     reviewer: null,
-    jevConfigPath: null,
     reviewEndpoint: null,
     reviewModel: null,
     apiKeyEnv: null,
@@ -221,7 +222,12 @@ export function normalizeProjectConfig(
   }
   return deepFreeze({
     harness,
-    workflowGate: normalizeWorkflowGate(raw.workflowGate, workspace, existing.workflowGate),
+    workflowGate: normalizeWorkflowGate(
+      raw.workflowGate,
+      workspace,
+      existing.workflowGate,
+      options.stored === true,
+    ),
     managed: normalizeManaged(raw.managed, existing.managed, options.stored === true),
     tightening: normalizeTightening(raw.tightening, existing.tightening),
     rollout: normalizeRollout(raw.rollout, existing.rollout),
@@ -273,20 +279,28 @@ function normalizeWorkflowGate(
   value: unknown,
   workspace: string,
   existing: ProjectWorkflowGateConfig,
+  stored: boolean,
 ): ProjectWorkflowGateConfig {
   if (value === undefined) return existing;
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new DomainError('invalid_request');
   }
-  const raw = value as Record<string, unknown>;
+  const raw = { ...(value as Record<string, unknown>) };
+  // A pre-globalization row stored the per-project path. Only that removed key
+  // is tolerated on read; projections substitute the deployment-global path.
+  if (stored) delete raw.jevConfigPath;
   for (const key of Object.keys(raw)) {
     if (!(WORKFLOW_KEYS as readonly string[]).includes(key)) {
       throw new DomainError('invalid_request');
     }
   }
+  const merged: Record<string, unknown> = { ...existing, ...raw };
+  if (merged.completionReview === true || merged.actionAssessment === true) {
+    merged.jevConfigPath = PARSE_ONLY_JEV_CONFIG_PATH;
+  }
   let parsed: WorkflowGateConfig | null;
   try {
-    parsed = parseWorkflowGateConfig({ ...existing, ...raw }, workspace);
+    parsed = parseWorkflowGateConfig(merged, workspace);
   } catch {
     throw new DomainError('invalid_request');
   }
@@ -296,7 +310,6 @@ function normalizeWorkflowGate(
     guidance: parsed.guidance,
     shellGate: parsed.shellGate,
     completionReview: parsed.completionReview,
-    jevConfigPath: parsed.jevConfigPath,
     actionAssessment: parsed.actionAssessment,
     requirementEgress: parsed.requirementEgress,
   });
@@ -311,7 +324,10 @@ function normalizeManaged(
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new DomainError('invalid_request');
   }
-  const raw = value as Record<string, unknown>;
+  const raw = { ...(value as Record<string, unknown>) };
+  // A pre-globalization row stored the per-project path. Only that removed key
+  // is tolerated on read; projections substitute the deployment-global path.
+  if (stored) delete raw.jevConfigPath;
   for (const key of Object.keys(raw)) {
     if (!(MANAGED_FIELDS as readonly string[]).includes(key)) {
       throw new DomainError('invalid_request');
@@ -332,10 +348,6 @@ function normalizeManaged(
   }
 
   const reviewer = normalizeReviewer(merged.reviewer);
-  const jevConfigPath = optionalText(merged.jevConfigPath, MAX_JEV_CONFIG_PATH);
-  if (jevConfigPath !== null && !isAbsolute(jevConfigPath)) {
-    throw new DomainError('invalid_request');
-  }
   const reviewEndpoint = optionalText(merged.reviewEndpoint, 2_048);
   const reviewModel = optionalText(merged.reviewModel, 256);
   const apiKeyEnv = optionalText(merged.apiKeyEnv, 128);
@@ -354,11 +366,11 @@ function normalizeManaged(
   const legacyReviewer =
     reviewEndpoint !== null || reviewModel !== null || apiKeyEnv !== null;
   if (reviewer === 'jev') {
-    // A Jev reviewer carries its own config path; the retired HTTP reviewer
-    // fields cannot be mixed in.
+    // A Jev reviewer is bound to its policy, calibration and ceiling; the
+    // deployment-global config path is injected by the service. The retired
+    // HTTP reviewer fields cannot be mixed in.
     if (legacyReviewer) throw new DomainError('invalid_request');
     if (
-      jevConfigPath === null ||
       reviewPolicy === null ||
       reviewCalibration === null ||
       ceilingDigest === null
@@ -378,7 +390,6 @@ function normalizeManaged(
     // rewritten, and projects `review: null` so the host stops instead.
     if (legacyReviewer) throw new DomainError('reviewer_migration_required');
     if (
-      jevConfigPath !== null ||
       ceilingDigest !== null ||
       reviewPolicy !== null ||
       reviewCalibration !== null
@@ -392,7 +403,6 @@ function normalizeManaged(
     requirementEgress: merged.requirementEgress,
     grantTtlMs: merged.grantTtlMs,
     reviewer,
-    jevConfigPath,
     reviewEndpoint,
     reviewModel,
     apiKeyEnv,
@@ -556,7 +566,7 @@ function normalizeReviewPolicy(value: unknown): ReviewerPolicy | null {
 
 function normalizeCalibration(value: unknown): CalibrationEvidence | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new DomainError('invalid_request');
   }
   const raw = value as Record<string, unknown>;
@@ -613,6 +623,8 @@ export interface HostRuntimeConfigInput {
   readonly config: ProjectConfig;
   readonly globalConfig?: GlobalHarnessConfig;
   readonly auditPath: string;
+  /** Deployment-global Jev config path, or null when none is configured. */
+  readonly jevConfigPath: string | null;
 }
 
 export interface ManagedProjectionInput extends HostRuntimeConfigInput {
@@ -627,25 +639,43 @@ export interface ManagedProjectionInput extends HostRuntimeConfigInput {
 function buildHostRuntimeConfig(input: HostRuntimeConfigInput): Record<string, unknown> {
   const config = input.config;
   const managed = config.managed;
+  const globalPath = input.jevConfigPath;
   const harness = resolveHarnessConfig(
     config,
     input.globalConfig ?? DEFAULT_GLOBAL_CONFIG,
   );
-  const review =
+  let review: Record<string, unknown> | null = null;
+  if (
     managed.reviewer === 'jev' &&
-    managed.jevConfigPath !== null &&
     managed.ceilingDigest !== null &&
     managed.reviewPolicy !== null &&
     managed.reviewCalibration !== null
-      ? {
-          reviewer: 'jev' as const,
-          jevConfigPath: managed.jevConfigPath,
-          policy: managed.reviewPolicy,
-          calibration: managed.reviewCalibration,
-          ceilingDigest: managed.ceilingDigest,
-          grantTtlMs: managed.grantTtlMs,
-        }
-      : null;
+  ) {
+    if (globalPath === null) throw new DomainError('jev_not_configured');
+    review = {
+      reviewer: 'jev' as const,
+      jevConfigPath: globalPath,
+      policy: managed.reviewPolicy,
+      calibration: managed.reviewCalibration,
+      ceilingDigest: managed.ceilingDigest,
+      grantTtlMs: managed.grantTtlMs,
+    };
+  }
+  const gate = config.workflowGate;
+  const gateConsumesJev =
+    gate.enabled && (gate.completionReview || gate.actionAssessment);
+  if (gateConsumesJev && globalPath === null) {
+    throw new DomainError('jev_not_configured');
+  }
+  const workflowGate = {
+    enabled: gate.enabled,
+    guidance: gate.guidance,
+    shellGate: gate.shellGate,
+    completionReview: gate.completionReview,
+    jevConfigPath: gateConsumesJev ? globalPath : null,
+    actionAssessment: gate.actionAssessment,
+    requirementEgress: gate.requirementEgress,
+  };
   return deepFreeze({
     harness,
     managed: {
@@ -654,10 +684,10 @@ function buildHostRuntimeConfig(input: HostRuntimeConfigInput): Record<string, u
       requirementEgress: managed.requirementEgress,
       grantTtlMs: managed.grantTtlMs,
       reviewer: managed.reviewer,
-      jevConfigPath: managed.jevConfigPath,
+      jevConfigPath: managed.reviewer === 'jev' ? globalPath : null,
       review,
     },
-    workflowGate: config.workflowGate,
+    workflowGate,
     tightening: config.tightening,
     rollout: config.rollout,
   });

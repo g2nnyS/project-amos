@@ -2,10 +2,10 @@
 
 ## 范围与边界
 
-本轮实现单机、单人使用的真实治理服务与中文 Web 控制台：项目、规则、不可变提案、人类审批、原子发布、历史版本、回滚提案、YAML 导入导出与审计。
-服务端使用 Node 26 内置 HTTP 与 SQLite，不引入 HTTP 框架或 ORM；`web/` 中的 Vue 治理工作台在构建时编译为静态资源，由同一服务提供。项目边界、规则矩阵、检查器、提案、版本和审计均来自真实治理 API，没有营收、计费或模拟业务数据；界面与数据限制见 [前端交接](../web/FRONTEND-HANDOFF.md)。
+本轮实现单机、单人使用的真实治理服务与中文 Web 控制台：内置 Global Project、工作区项目、规则继承、不可变提案、人类审批、原子发布、历史版本、回滚提案、YAML 导入导出与审计。
+服务端使用 Node 26 内置 HTTP 与 SQLite，不引入 HTTP 框架或 ORM；`web/` 中的 Vue 治理工作台在构建时编译为静态资源，由同一服务提供。登录后默认进入 Global Project，可直接维护由所有工作区项目继承的全局规则；已保存的项目偏好仍优先恢复。项目边界、规则矩阵、检查器、提案、版本和审计均来自真实治理 API，没有营收、计费或模拟业务数据；界面与数据限制见 [前端交接](../web/FRONTEND-HANDOFF.md)。
 数据库与凭据默认存放于工作区外。它是本地治理产品，不是已完成的受信控制面：同 UID Agent 仍可读取凭据或改写存储。
-安全适配器继续 Stage A `log-only`；发布不修改 YAML、Harness 配置或现有运行时快照，不是工具调用授权。
+安全适配器继续 Stage A `log-only`；发布不修改仓库规则 YAML，也不是单次工具调用授权。写入的激活与 managed 产物须由助手重新加载，实际状态以运行回执为准。
 
 ## 启动与日常使用
 
@@ -26,11 +26,12 @@ npm run console:serve -- --port 4310 --data-dir /absolute/path/outside-workspace
 也可只初始化而不启动：`npm run console:init`。`Ctrl-C` 正常关闭；重启保留项目/提案/版本/审计，但浏览器会话失效，须重新登录。
 Tauri 启动时复用同状态目录中健康且带控制台的服务，关闭窗口不会停止该已有实例；桌面自己启动的服务仍随窗口关闭。纯 API 服务没有控制台资源，桌面会提示先停止该服务或改用 API/其他客户端，不会打开返回 404 的页面。
 
-1. 创建项目并填写规范化绝对 workspace；该路径用于策略绑定，不授权网页读取该目录。
-2. 导入仓库规则或从已发布版本开始，编辑确定性安全/工程规则、纯建议性工程规范/设计偏好（`expressivity: advisory_only`、`predicate: null`、`policy_class: engineering`）及激活/排除集合与动态注入配置（`injection.baselineRuleIds`、`injection.routes`），先校验再提交提案。
-3. 审阅当前/候选差异，批准并发布或拒绝；不可修改已提交正文，修订须新提案。
-4. 在版本页导出已批准的有效规则 YAML 或完整版本 JSON；回滚生成新提案，不回退版本号。
-5. 治理审计记录状态变化，不复制规则正文或自由文本审批备注。规则和提案详情包含敏感策略信息，仅供本机有权限用户查看。
+1. 登录后在内置 Global Project 中维护共享规则。全局版本独立于工作区项目版本，全局项目没有工作区配置、运行回执、临时收紧、探测或 rollout。
+2. 需要项目差异时，创建项目并填写规范化绝对 workspace；该路径用于策略绑定，不授权网页读取该目录。项目候选保存自身补充规则，发布时与当前全局层组合。
+3. 导入仓库规则或从已发布版本开始，编辑确定性安全/工程规则、纯建议性工程规范/设计偏好（`expressivity: advisory_only`、`predicate: null`、`policy_class: engineering`）及激活/排除集合与动态注入配置（`injection.baselineRuleIds`、`injection.routes`），先校验再提交提案。
+4. 审阅当前/候选差异，批准并发布或拒绝；不可修改已提交正文，修订须新提案。
+5. 在版本页导出已批准的有效规则 YAML 或完整版本 JSON；回滚生成新提案，不回退版本号。
+6. 治理审计记录状态变化，不复制规则正文或自由文本审批备注。规则和提案详情包含敏感策略信息，仅供本机有权限用户查看。
 
 可选观察日志只在启动时指定，网页不能指定服务器文件路径：
 
@@ -49,7 +50,12 @@ npm run console:serve -- --audit-log /absolute/path/to/opencode.jsonl
 
 ## 不可变条件
 
+- 内置 Global Project 使用稳定 ID `global`、`kind = 'global'`、`workspace = null`，始终位于项目列表首位；普通项目继续使用 `kind = 'project'` 和规范化绝对 workspace。
 - 新项目 `currentVersion = null`，显示“尚未发布”，不能制造空的已批准策略。
+- 全局与项目采用“全局继承 + 项目补充”。项目可新增规则、激活项和注入路由；重定义已发布全局规则会被拒绝，项目排除集合也不会移除全局已激活规则。仓库固定 catalog 的 `mandatory_exclusion` 与 `global_rule_conflict` 防护继续生效。
+- 全局项目自身没有工作区产物。全局发布事务会先组合校验所有已发布项目，再提交全局版本，随后向这些项目扇出重写激活与 managed 产物；项目版本号和历史记录保持不变。任一项目存在临时收紧状态时，全局发布以 `global_tightening_active` 停止。
+- 审查服务（Jev）是全局配置，不按项目设置：单一私有文件保存在服务数据目录（0700/0600），由 `/api/jev` 全局读写与测试；所有宿主投影中的 Jev 路径由服务注入。项目配置不存储 Jev 路径，旧库行中的历史路径在读取时剥离；启用 Jev reviewer 或工作流闸门消费方而全局服务未配置时，配置编辑与投影以 `jev_not_configured` 停止。历史项目级 Jev 文件保留在数据目录中但不再读取。
+- 项目版本保留原始项目候选和发布时的有效快照。后续全局发布由运行时状态、模拟和产物重写使用最新全局层，项目历史版本保持不可变；产物写入失败通过 `never`/`stale` 状态呈现。
 - 规则校验复用 `constraints/schema.json` 与 `engine/assertValidTable`，保留全部字段和七个操作符。
 - 候选包含完整规则及 `activation: { includedRuleIds: string[] | null, excludedRuleIds: string[] }`。null 表示全部；显式 included 不得与 excluded 重叠；拒绝重复、未知 ID 和空的有效规则集。
 - 只有 `${SESSION_WORKSPACE}` 的既有 glob 替换可用。项目 workspace 必须是已规范化绝对路径，创建后不可变。
@@ -68,7 +74,7 @@ npm run console:serve -- --audit-log /absolute/path/to/opencode.jsonl
 `control-plane/contracts.ts` 是领域服务与 HTTP 的共享类型合同；浏览器 JSON 形状与其保持一致。
 
 - `Actor = { id: string, role: 'human' | 'agent' }`，由服务端认证构造，不能从请求正文采信。
-- `Project = { id, name, workspace, currentVersion: number | null, createdAt }`。
+- `Project = { id, name, workspace: string | null, currentVersion: number | null, createdAt, kind: 'global' | 'project' }`；仅内置全局项目的 workspace 为 null。
 - `Candidate = { rules: RuleRecord[], activation }`，RuleRecord 完整保留现有 YAML 字段。
 - `Proposal = { id, projectId, title, rationale, baseVersion, candidate, digest, author: Actor, createdAt, expiresAt, status, decision, publishedVersion: number | null, restoreFromVersion: number | null }`。
 - `status = pending | approved | rejected | withdrawn | expired`；`decision = { decision: 'approve' | 'reject', note, actor: Actor, decidedAt } | null`。
@@ -112,7 +118,7 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | POST | `/api/login` | `{method:"password",password}`、`{method:"system",proof}` 或 `{token}` → 新 human 会话；轮换会话 ID 和 CSRF |
 | POST | `/api/logout` | 撤销服务端会话 |
 | GET | `/api/status` | `{mode:'log-only', enforcement:false, trustBoundary:false}` 与可选计数 |
-| GET/POST | `/api/projects` | 列表 / `{name,workspace}` 创建尚未配置项目 |
+| GET/POST | `/api/projects` | 列表（内置 Global Project 始终首位）/ `{name,workspace}` 创建尚未配置的工作区项目 |
 | GET | `/api/projects/:id` | Project |
 | GET | `/api/projects/:id/policy` | PublishedVersion 或 null |
 | GET | `/api/projects/:id/versions` | PublishedVersion[] |
@@ -129,6 +135,9 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | GET | `/api/audit/observations` | 启动时配置的脱敏观察日志与覆盖缺口；未配置返回 available:false |
 | GET | `/api/schema` | 固定规则 JSON Schema |
 | GET | `/api/seed` | 仓库固定规则导入候选；读取不创建、不批准项目 |
+| GET | `/api/jev` | JevSettingsView；全局审查服务配置，密钥只回显“已保存”状态 |
+| POST | `/api/jev` | SaveJevSettingsInput → JevSettingsView；仅 human 浏览器变更，密钥写入私有文件且不回显 |
+| POST | `/api/jev/test` | `{}` → `{ok,model}`；仅 human 浏览器变更，用已保存密钥发起一次真实连接测试 |
 
 校验/提案也接受 `{yaml: '...', activation?}` 代替 candidate，YAML 只在服务器有界解析，必须通过同一规则校验。浏览器端是否提供对应入口以界面为准。
 浏览器先 GET session 获取 CSRF，所有 POST（含登录）须精确 Origin、application/json 与 `X-CSRF-Token`；human cookie 为 HttpOnly/SameSite=Strict/host-only，有服务端有效期、退出撤销。明文 localhost 不宣称 Secure cookie。
@@ -147,8 +156,8 @@ npm test
 npm run build && node --test dist/control-plane/*.test.js
 ```
 
-- 领域测试覆盖规则/TTL/激活校验、持久化重启、回滚新版本、两 SQLite 连接的 stale/重复审批、角色权限、失败事务回滚及 digest 绑定。
-- HTTP 测试使用真实 loopback 请求覆盖 Host/Origin/CSRF、混用认证、登录/退出/过期、Agent 禁止审批、请求体边界、固定文件路由和日志脱敏。
-- 浏览器验收覆盖创建项目→种子导入→编辑确定性规则→校验→提案→审批发布→下载→回滚，以及重登、服务重启、跨项目草稿隔离；桌面与 390px 窄屏均需检查。
+- 领域测试覆盖规则/TTL/激活校验、持久化重启、回滚新版本、两 SQLite 连接的 stale/重复审批、角色权限、失败事务回滚及 digest 绑定；全局用例覆盖默认内置行、旧库重开（含历史项目级 Jev 路径剥离）、继承与冲突、多项目扇出、零全局产物、未来项目继承和临时收紧屏障。
+- HTTP 测试使用真实 loopback 请求覆盖 Host/Origin/CSRF、混用认证、登录/退出/过期、Agent 禁止审批、请求体边界、固定文件路由和日志脱敏，并验证全局项目的工作区专属接口拒绝行为；Jev 用例覆盖全局读写、密钥保留、连接测试与 Agent 拒写。
+- 浏览器验收覆盖默认 Global Project→全局编辑→校验→提案→审批发布→版本历史，全局 Jev 设置→保存→重载→连接测试→切换 Global Project 后配置一致，以及创建项目→种子导入→编辑补充规则→校验→提案→审批发布→下载→回滚；项目产物断言同时包含全局与补充规则，另覆盖重登、跨项目草稿隔离、桌面与 390px 窄屏；服务重启持久化由领域测试覆盖。
 - 非 root 环境会跳过需构造其他 UID 文件的属主测试；两连接测试不等于跨进程锁竞争压力测试，也未建立断电/文件系统故障或受信执行隔离保证。
 - 安全敏感改动仍须人类审阅；本地治理检查通过不代表运行期强制执行已满足 G0 条件。

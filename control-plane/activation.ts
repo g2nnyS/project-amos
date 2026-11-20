@@ -62,6 +62,12 @@ export interface PublishCompileInput {
    * advisory projection. Publication omits this hint.
    */
   readonly injectionlessRuleIds?: readonly string[];
+  /**
+   * Published global version participating in this effective snapshot. It is
+   * part of the runtime identity labels so an old tightening generation cannot
+   * be mistaken for the current global base.
+   */
+  readonly globalVersion?: number;
 }
 
 export interface PublishCompilation {
@@ -183,11 +189,13 @@ export function compileProjectActivation(
     selectedRuleRefs.push({ id, version });
   }
   const injection = input.candidate.injection;
+  const globalSuffix =
+    input.globalVersion === undefined ? '' : `+global-v${input.globalVersion}`;
   const project: ProjectActivationInput = {
     projectId: input.projectId,
     workspace: input.workspace,
-    projectConfigVersion: `policy-v${input.version}`,
-    baseVersion: `base-v${input.baseVersion}`,
+    projectConfigVersion: `policy-v${input.version}${globalSuffix}`,
+    baseVersion: `base-v${input.baseVersion}${globalSuffix}`,
     epoch: input.version,
     selectedRuleRefs,
     excludedRuleIds: [...input.candidate.activation.excludedRuleIds],
