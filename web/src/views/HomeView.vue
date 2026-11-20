@@ -10,7 +10,7 @@ import { useToast } from '@/composables/useToast'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { t } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
-import { useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 
 type ModeState = 'managed' | 'logOnly' | 'disabled'
 interface Note { key: string; tone: StatusTone; text: string; alert?: boolean }
@@ -19,6 +19,7 @@ interface AttentionItem { key: string; tone: StatusTone; text: string; to: strin
 const governance = useGovernanceStore()
 const auth = useAuthStore()
 const { toast } = useToast()
+const isGlobal = computed(() => isGlobalProject(governance.activeProject))
 const pendingTarget = ref<boolean | null>(null)
 const switchError = ref('')
 const refreshing = ref(false)
@@ -48,7 +49,7 @@ const modeSource = computed(() => {
 
 const reviewReady = computed(() => {
   const managed = config.value?.managed
-  return !!managed && managed.reviewer === 'jev' && managed.jevConfigPath !== null && managed.ceilingDigest !== null && managed.reviewPolicy !== null && managed.reviewCalibration !== null
+  return !!managed && managed.reviewer === 'jev' && governance.jev?.config != null && managed.ceilingDigest !== null && managed.reviewPolicy !== null && managed.reviewCalibration !== null
 })
 const projection = computed(() => projectionView(governance.runtime?.projection?.status))
 const harnessRows = computed(() => harnessDefinitions.map(definition => {
@@ -90,26 +91,32 @@ const modeNotes = computed<Note[]>(() => {
   return notes
 })
 
-const stats = computed(() => [
-  {
-    key: 'version', to: '/versions', label: t('home.stats.version'),
-    value: policy.value ? `v${policy.value.version}` : t('common.notYetPublished'),
-    note: policy.value ? t('home.stats.versionNote', { date: formatDate(policy.value.createdAt) }) : t('home.stats.versionEmpty'),
-  },
-  { key: 'rules', to: '/rules', label: t('home.stats.rules'), value: `${activeRules.value} / ${totalRules.value}`, note: t('home.stats.rulesNote') },
-  {
-    key: 'proposals', to: '/proposals', label: t('home.stats.proposals'), value: String(pendingProposals.value.length),
-    note: staleProposals.value.length ? t('home.stats.proposalsStale', { count: staleProposals.value.length }) : pendingProposals.value.length ? t('home.stats.proposalsNote') : t('home.stats.proposalsNone'),
-  },
-  { key: 'review', to: '/boundary', label: t('home.stats.review'), value: reviewReady.value ? t('home.stats.reviewReady') : t('home.stats.reviewMissing'), note: t('home.stats.reviewNote') },
-])
+const stats = computed(() => {
+  const items = [
+    {
+      key: 'version', to: '/versions', label: t('home.stats.version'),
+      value: policy.value ? `v${policy.value.version}` : t('common.notYetPublished'),
+      note: policy.value ? t('home.stats.versionNote', { date: formatDate(policy.value.createdAt) }) : t('home.stats.versionEmpty'),
+    },
+    { key: 'rules', to: '/rules', label: isGlobal.value ? t('home.stats.rules') : t('home.stats.rulesSupplementary'), value: `${activeRules.value} / ${totalRules.value}`, note: isGlobal.value ? t('home.stats.rulesNote') : t('home.stats.rulesNoteSupplementary') },
+    {
+      key: 'proposals', to: '/proposals', label: t('home.stats.proposals'), value: String(pendingProposals.value.length),
+      note: staleProposals.value.length ? t('home.stats.proposalsStale', { count: staleProposals.value.length }) : pendingProposals.value.length ? t('home.stats.proposalsNote') : t('home.stats.proposalsNone'),
+    },
+  ]
+  if (!isGlobal.value) {
+    items.push({ key: 'review', to: '/boundary', label: t('home.stats.review'), value: reviewReady.value ? t('home.stats.reviewReady') : t('home.stats.reviewMissing'), note: t('home.stats.reviewNote') })
+  }
+  return items
+})
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
   if (pendingProposals.value.length) items.push({ key: 'pending', tone: 'info', text: t('home.attention.pending', { count: pendingProposals.value.length }), to: '/proposals' })
   if (staleProposals.value.length) items.push({ key: 'stale', tone: 'warning', text: t('home.attention.stale', { count: staleProposals.value.length }), to: '/proposals' })
   if (!policy.value) items.push({ key: 'unpublished', tone: 'warning', text: t('home.attention.unpublished'), to: '/editor' })
-  else if (governance.runtime && governance.runtime.projection.status !== 'written') items.push({ key: 'projection', tone: projection.value.tone, text: t('home.attention.projection', { status: projection.value.label }), to: '/boundary' })
+  if (isGlobal.value) return items
+  if (policy.value && governance.runtime && governance.runtime.projection.status !== 'written') items.push({ key: 'projection', tone: projection.value.tone, text: t('home.attention.projection', { status: projection.value.label }), to: '/boundary' })
   if (savedState.value === 'managed' && !reviewReady.value) items.push({ key: 'reviewer', tone: 'warning', text: t('home.attention.reviewer'), to: '/boundary' })
   for (const row of harnessRows.value) {
     if (row.observation?.status === 'stale') items.push({ key: `report-${row.id}`, tone: 'warning', text: t('home.attention.staleReport', { harness: row.name }), to: '/boundary' })
@@ -153,23 +160,50 @@ async function refreshStatus() {
   try { await governance.refreshRuntime() } finally { refreshing.value = false }
 }
 
-onMounted(() => { void governance.refreshRuntime() })
+onMounted(() => { if (!isGlobal.value) void governance.refreshRuntime() })
 </script>
 
 <template>
   <div class="page">
-    <PageHeader :title="t('home.title')" :description="t('home.description')" />
+    <PageHeader :title="t('home.title')" :description="t(isGlobal ? 'home.global.pageDescription' : 'home.description')" />
 
     <div v-if="governance.error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.activeProjectId ? governance.refreshProject() : governance.initialize()">{{ t('common.retry') }}</button></div>
     <div v-if="governance.loading && !config" class="py-8 text-sm text-muted-foreground" role="status">{{ t('home.loading') }}</div>
     <EmptyState v-else-if="!governance.activeProject" :title="t('home.emptyTitle')" :description="t('home.emptyDescription')" />
 
     <template v-else>
-      <section class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
+      <section v-if="isGlobal" class="panel home-mode mb-4" data-state="global" aria-labelledby="home-mode-title">
+        <div class="panel-header">
+          <div class="min-w-0">
+            <p class="panel-title truncate">{{ t('app.globalProject') }}</p>
+            <p class="panel-kicker truncate">{{ t('home.global.description') }}</p>
+          </div>
+          <span class="global-badge">{{ t('app.globalBadge') }}</span>
+        </div>
+        <div class="home-mode-body">
+          <div class="min-w-0">
+            <p class="eyebrow">{{ t('home.global.scopeEyebrow') }}</p>
+            <h2 id="home-mode-title" class="home-mode-title">{{ t('home.global.title') }}</h2>
+            <p id="home-mode-description" class="home-mode-description">{{ t('home.global.noConfig') }}</p>
+          </div>
+        </div>
+        <ul class="home-mode-notes" role="status">
+          <li class="flex items-start gap-2 text-muted-foreground">
+            <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ t('home.global.noRuntime') }}</span>
+          </li>
+          <li class="flex items-start gap-2 text-muted-foreground">
+            <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ t('home.global.noReview') }}</span>
+          </li>
+        </ul>
+      </section>
+
+      <section v-else class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
         <div class="panel-header">
           <div class="min-w-0">
             <p class="panel-title truncate">{{ governance.activeProject.name }}</p>
-            <p class="panel-kicker truncate font-mono" :title="governance.activeProject.workspace">{{ governance.activeProject.workspace }}</p>
+            <p class="panel-kicker truncate font-mono" :title="governance.activeProject.workspace ?? undefined">{{ governance.activeProject.workspace }}</p>
           </div>
           <RouterLink to="/boundary" class="shrink-0 text-xs text-muted-foreground hover:text-foreground">{{ t('home.harness.details') }}</RouterLink>
         </div>
@@ -203,7 +237,7 @@ onMounted(() => { void governance.refreshRuntime() })
         </ul>
       </section>
 
-      <section class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section class="mb-4 grid gap-3 sm:grid-cols-2" :class="stats.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'">
         <RouterLink v-for="stat in stats" :key="stat.key" :to="stat.to" class="panel home-stat p-3" :data-stat="stat.key">
           <p class="eyebrow">{{ stat.label }}</p>
           <p class="mt-3 text-xl font-semibold tabular">{{ stat.value }}</p>
@@ -211,8 +245,8 @@ onMounted(() => { void governance.refreshRuntime() })
         </RouterLink>
       </section>
 
-      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <section class="panel">
+      <div class="grid grid-cols-1 gap-4" :class="isGlobal ? '' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'">
+        <section v-if="!isGlobal" class="panel">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('home.harness.title') }}</h2>
@@ -240,7 +274,7 @@ onMounted(() => { void governance.refreshRuntime() })
           </ul>
         </section>
 
-        <section class="panel">
+        <section class="panel" :class="isGlobal ? 'lg:col-span-1' : ''">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('home.attention.title') }}</h2>

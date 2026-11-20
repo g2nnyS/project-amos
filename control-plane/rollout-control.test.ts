@@ -414,6 +414,7 @@ test('rollout promotion keeps the written v2 projection and loaded v2 receipts',
     now: clock.now,
     managedAuditDir: auditDir,
     writeArtifacts: writeProjectArtifacts,
+    jevConfigPath: join(dir, 'jev', 'jev.local.json'),
   });
   t.after(() => cp.close());
   const project = createProject(cp, workspace);
@@ -539,7 +540,7 @@ test('rollout promotion keeps the written v2 projection and loaded v2 receipts',
 
   cp.updateProjectConfig(
     project.id,
-    { workflowGate: { enabled: true, jevConfigPath: 'jev.json' } },
+    { workflowGate: { enabled: true, completionReview: true } },
     human(),
   );
   const withWorkflowGate = readProjection().configDigest;

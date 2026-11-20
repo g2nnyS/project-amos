@@ -37,6 +37,7 @@ function open(
   t: Parameters<typeof makeTempDir>[0],
   clock: ReturnType<typeof createTestClock>,
   databasePath?: string,
+  jevConfigPath?: string,
 ): Fixture {
   const dir = makeTempDir(t);
   const workspace = join(dir, 'workspace');
@@ -50,6 +51,7 @@ function open(
     now: clock.now,
     managedAuditDir: auditDir,
     writeArtifacts: writeProjectArtifacts,
+    ...(jevConfigPath === undefined ? {} : { jevConfigPath }),
   });
   return { cp, databasePath: database, workspace, auditDir, clock };
 }
@@ -233,6 +235,7 @@ test('global defaults resolve project inheritance and re-emit only host configur
     advisoryInjection: false,
   });
   assert.equal(fixture.cp.getProjectConfig(inherited.id).effectiveHarness.enabled, false);
+  assert.ok(inherited.workspace !== null);
   assert.equal(existsSync(join(inherited.workspace, '.pi', 'amos.managed.json')), false);
   projection = JSON.parse(
     readFileSync(join(fixture.workspace, '.pi', 'amos.managed.json'), 'utf8'),
@@ -1121,13 +1124,13 @@ test('a backward restart clock fails closed instead of extending a tightening', 
 });
 
 const JEV_POLICY_DIGEST = `sha256:${'d'.repeat(64)}`;
+const JEV_GLOBAL_PATH = '/var/lib/amos/jev/jev.local.json';
 
 function jevManagedConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const now = Date.parse(START);
   return {
     enabled: true,
     reviewer: 'jev',
-    jevConfigPath: '/etc/amos/jev.json',
     ceilingDigest: `sha256:${'e'.repeat(64)}`,
     reviewPolicy: {
       id: 'policy-jev',
@@ -1181,7 +1184,7 @@ function projectionKeys(value: unknown, keys: string[] = []): string[] {
 
 test('a Jev reviewer publishes a bound review projection without legacy reviewer fields', (t) => {
   const clock = createTestClock(START);
-  const fixture = open(t, clock);
+  const fixture = open(t, clock, undefined, JEV_GLOBAL_PATH);
   t.after(() => fixture.cp.close());
   const project = createProject(fixture.cp, fixture.workspace);
 
@@ -1191,7 +1194,7 @@ test('a Jev reviewer publishes a bound review projection without legacy reviewer
     human(),
   );
   assert.equal(updated.managed.reviewer, 'jev');
-  assert.equal(updated.managed.jevConfigPath, '/etc/amos/jev.json');
+  assert.equal('jevConfigPath' in updated.managed, false);
 
   publishFixture(fixture, project.id);
   const projection = readManagedProjection(fixture.workspace) as {
@@ -1210,7 +1213,7 @@ test('a Jev reviewer publishes a bound review projection without legacy reviewer
     };
   };
   assert.equal(projection.managed.reviewer, 'jev');
-  assert.equal(projection.managed.jevConfigPath, '/etc/amos/jev.json');
+  assert.equal(projection.managed.jevConfigPath, JEV_GLOBAL_PATH);
   assert.notEqual(projection.managed.review, null);
   assert.deepEqual(Object.keys(projection.managed.review ?? {}).sort(), [
     'calibration',
@@ -1221,7 +1224,7 @@ test('a Jev reviewer publishes a bound review projection without legacy reviewer
     'reviewer',
   ]);
   assert.equal(projection.managed.review?.reviewer, 'jev');
-  assert.equal(projection.managed.review?.jevConfigPath, '/etc/amos/jev.json');
+  assert.equal(projection.managed.review?.jevConfigPath, JEV_GLOBAL_PATH);
   assert.equal(projection.managed.review?.policy.id, 'policy-jev');
   assert.equal(projection.managed.review?.calibration.format, 'amos-review-calibration');
   assert.equal(projection.managed.review?.ceilingDigest, `sha256:${'e'.repeat(64)}`);
@@ -1280,7 +1283,7 @@ test('a legacy independent-HTTP reviewer config stops with reviewer_migration_re
   assert.equal(existsSync(join(fixture.workspace, '.pi', 'amos.managed.json')), false);
 });
 
-test('a Jev reviewer requires the full binding and rejects the retired fields', (t) => {
+test('a Jev reviewer requires the full binding and the deployment-global config path', (t) => {
   const clock = createTestClock(START);
   const fixture = open(t, clock);
   t.after(() => fixture.cp.close());
@@ -1288,15 +1291,6 @@ test('a Jev reviewer requires the full binding and rejects the retired fields', 
 
   expectDomainError(
     () => fixture.cp.updateProjectConfig(project.id, { managed: { reviewer: 'jev' } }, human()),
-    'invalid_request',
-  );
-  expectDomainError(
-    () =>
-      fixture.cp.updateProjectConfig(
-        project.id,
-        { managed: jevManagedConfig({ jevConfigPath: null }) },
-        human(),
-      ),
     'invalid_request',
   );
   expectDomainError(
@@ -1327,20 +1321,77 @@ test('a Jev reviewer requires the full binding and rejects the retired fields', 
     () =>
       fixture.cp.updateProjectConfig(
         project.id,
-        { managed: jevManagedConfig({ jevConfigPath: 'relative/jev.json' }) },
-        human(),
-      ),
-    'invalid_request',
-  );
-  expectDomainError(
-    () =>
-      fixture.cp.updateProjectConfig(
-        project.id,
         { managed: jevManagedConfig({ reviewer: 'other' }) },
         human(),
       ),
     'invalid_request',
   );
+
+  // Without a deployment-global config, enabling any Jev consumer stops.
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { managed: jevManagedConfig() },
+        human(),
+      ),
+    'jev_not_configured',
+    409,
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { workflowGate: { enabled: true, completionReview: true } },
+        human(),
+      ),
+    'jev_not_configured',
+    409,
+  );
+  expectDomainError(
+    () =>
+      fixture.cp.updateProjectConfig(
+        project.id,
+        { workflowGate: { enabled: true, actionAssessment: true, shellGate: true } },
+        human(),
+      ),
+    'jev_not_configured',
+    409,
+  );
+
+  const globalFixture = open(t, clock, undefined, JEV_GLOBAL_PATH);
+  t.after(() => globalFixture.cp.close());
+  const globalProject = createProject(globalFixture.cp, globalFixture.workspace);
+  const updated = globalFixture.cp.updateProjectConfig(
+    globalProject.id,
+    { managed: jevManagedConfig() },
+    human(),
+  );
+  assert.equal(updated.managed.reviewer, 'jev');
+  assert.equal('jevConfigPath' in updated.managed, false);
+
+  globalFixture.cp.updateProjectConfig(
+    globalProject.id,
+    { workflowGate: { enabled: true, completionReview: true } },
+    human(),
+  );
+  publishFixture(globalFixture, globalProject.id);
+  const projection = readManagedProjection(globalFixture.workspace) as {
+    managed: { jevConfigPath: string | null; review: { jevConfigPath: string } | null };
+    workflowGate: Record<string, unknown>;
+  };
+  assert.equal(projection.managed.jevConfigPath, JEV_GLOBAL_PATH);
+  assert.equal(projection.managed.review?.jevConfigPath, JEV_GLOBAL_PATH);
+  assert.equal(projection.workflowGate.jevConfigPath, JEV_GLOBAL_PATH);
+  assert.deepEqual(Object.keys(projection.workflowGate).sort(), [
+    'actionAssessment',
+    'completionReview',
+    'enabled',
+    'guidance',
+    'jevConfigPath',
+    'requirementEgress',
+    'shellGate',
+  ]);
 });
 
 test('managed without a semantic reviewer stays valid and projects a null review', (t) => {
@@ -1356,7 +1407,7 @@ test('managed without a semantic reviewer stays valid and projects a null review
   );
   assert.equal(updated.managed.enabled, true);
   assert.equal(updated.managed.reviewer, null);
-  assert.equal(updated.managed.jevConfigPath, null);
+  assert.equal('jevConfigPath' in updated.managed, false);
 
   publishFixture(fixture, project.id);
   const projection = readManagedProjection(fixture.workspace) as {
@@ -1370,7 +1421,7 @@ test('managed without a semantic reviewer stays valid and projects a null review
 
 test('a stored pre-Jev reviewer stays readable, stops the host, and migrates in place', (t) => {
   const clock = createTestClock(START);
-  const fixture = open(t, clock);
+  const fixture = open(t, clock, undefined, JEV_GLOBAL_PATH);
   t.after(() => fixture.cp.close());
   const project = createProject(fixture.cp, fixture.workspace);
 

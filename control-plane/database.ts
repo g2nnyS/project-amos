@@ -9,6 +9,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { COMPILER_VERSION } from './compiler.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import { classifyOpenError } from './sqlite-errors.ts';
+import {
+  GLOBAL_PROJECT_ID,
+  GLOBAL_PROJECT_NAME,
+  GLOBAL_WORKSPACE_SENTINEL,
+} from './global.ts';
 import { DEFAULT_GLOBAL_CONFIG, DEFAULT_PROJECT_CONFIG } from './project-config.ts';
 
 export const DATABASE_SCHEMA_VERSION = 3;
@@ -86,6 +91,7 @@ export function openGovernanceDatabase(
       nowMs,
       createdByThisOperation || databasePath === ':memory:',
     );
+    ensureGlobalProject(db, nowMs);
     return { db, migratedFrom };
   } catch (error) {
     try {
@@ -603,6 +609,72 @@ function insertMetadata(
   insert.run('compiler_version', COMPILER_VERSION);
   insert.run('rule_schema_digest', schemaDigest);
   insert.run('created_at', new Date(nowMs).toISOString());
+}
+
+/**
+ * Ensure the built-in Global Project exists with its default configuration.
+ * This runs once per service construction, on new and existing databases.
+ * Startup writes no governance event because this is a built-in row, not a user
+ * project creation.
+ */
+function ensureGlobalProject(db: DatabaseSync, nowMs: number): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const conflictingSentinel = db
+      .prepare('SELECT id FROM projects WHERE workspace = ? AND id <> ?')
+      .get(GLOBAL_WORKSPACE_SENTINEL, GLOBAL_PROJECT_ID) as
+      | { id?: unknown }
+      | undefined;
+    if (conflictingSentinel !== undefined) {
+      throw new DomainError('database_corrupt');
+    }
+
+    const existing = db
+      .prepare(
+        'SELECT id, name, workspace, current_version FROM projects WHERE id = ?',
+      )
+      .get(GLOBAL_PROJECT_ID) as
+      | { id: string; name: string; workspace: string; current_version: number | null }
+      | undefined;
+
+    if (existing === undefined) {
+      db.prepare(
+        'INSERT INTO projects (id, name, workspace, current_version, created_at) VALUES (?, ?, ?, NULL, ?)',
+      ).run(
+        GLOBAL_PROJECT_ID,
+        GLOBAL_PROJECT_NAME,
+        GLOBAL_WORKSPACE_SENTINEL,
+        new Date(nowMs).toISOString(),
+      );
+    } else if (
+      existing.name !== GLOBAL_PROJECT_NAME ||
+      existing.workspace !== GLOBAL_WORKSPACE_SENTINEL
+    ) {
+      // A reserved row with a different identity is never adopted or replaced.
+      throw new DomainError('database_corrupt');
+    }
+
+    const configuredAt = new Date(nowMs).toISOString();
+    db.prepare(
+      `INSERT INTO project_configs (project_id, config_json, updated_at, updated_by_json)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(project_id) DO NOTHING`,
+    ).run(
+      GLOBAL_PROJECT_ID,
+      JSON.stringify(DEFAULT_PROJECT_CONFIG),
+      configuredAt,
+      JSON.stringify({ id: 'system', role: 'human' }),
+    );
+
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // preserve the original failure
+    }
+    throw error;
+  }
 }
 
 function verifySchema(db: DatabaseSync, schemaDigest: string): void {

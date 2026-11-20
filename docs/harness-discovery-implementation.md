@@ -19,28 +19,17 @@ Claude Code 和 DSH 仅参与探测。DSH 的未来接入形式为 DSH 插件。
 
 ### `control-plane/harness-discovery.ts`
 
-`discoverHarnessInstallations()` 执行只读、纯文件系统探测，不启动 Harness 或执行其版本命令。
+`discoverHarnessInstallations()` 对全部六个 Harness 执行同一套终端命令探测，流程为“定位 → 版本 → 组装”：
 
-安装发现来源包括：
+1. 定位：执行 `sh -c 'command -v <command>'`。退出码为 0 且 stdout 首行非空即视为终端可达；首行去空白后就是安装路径，非绝对路径经 `resolve()` 转换。非零退出、shell 启动错误、超时或空输出均视为未探测到。
+2. 版本：执行 `sh -c '<command> --version'`，5 秒超时，`maxBuffer` 为 64 KiB。合并 stdout 与 stderr，取第一个版本形状的 token（`/[0-9]+(?:\.[0-9A-Za-z._+-]+)*/`），去空白并截断到 64 字符；无匹配、失败或超时返回 `null`。非零退出仍允许解析已打印的文本。
+3. 组装：每个定义只保留一次探测结果；Pi/OpenCode 在探测到时额外写入 `installations` 条目，其余字段与既有契约一致。
 
-1. 调用进程 `PATH` 中的 `pi`、`opencode`、`codex`、`claude`、`dsh` 和 `omp`；
-2. 常见补充位置：`~/.local/bin`、`~/.local/share/mise/shims` 和 `~/.local/share/mise/command-wrappers/bin`；
-3. 常见安装、配置和数据候选目录；DSH 同时支持 `$DSH_HOME`，默认使用 `~/.dsh`。
+Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`，Oh My Pi 使用 `omp`。命令名为模块内固定常量。
 
-Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`，Oh My Pi 使用 `omp`。
+探测需要 POSIX shell。模块依次定位 `/bin/sh`、`/usr/bin/sh`、`/usr/local/bin/sh`，并以绝对路径启动：`spawnSync` 通过子进程 `PATH` 解析可执行文件，而探测会注入自定义 `PATH`，直接使用 `'sh'` 会在该 `PATH` 不含 shell 时失败。shell 不可用时所有探测失败，Harness 报告未探测到。
 
-解析规则：
-
-- 跟随普通符号链接，并从真实可执行文件位置向上有界查找包元数据；
-- mise 多调用 shim 保留原命令路径，并要求对应 `installs/<tool>/latest` 下存在真实安装标记；残留 shim 不计为已安装；
-- mise 原生单文件安装可从 `installs/<tool>/<version>/` 真实路径取得版本；
-- Homebrew Cellar 安装（如 `/Cellar/opencode/2.1.2/bin/opencode`）从 Cellar 版本目录名取得版本；
-- OpenCode 支持 `node_modules/@opencode/cli/package.json` 和 `node_modules/opencode-ai/package.json`；
-- Claude Code 支持 `@anthropic-ai/claude-code`，DSH 支持 `@deepseek-ai/dsh`，Oh My Pi 支持 `@oh-my-pi/pi-coding-agent`；
-- Pi 和 Codex 继续支持各自包元数据及兼容版本文件；
-- 配置或数据目录只有存在可执行文件或匹配包标记时才计为已安装；
-- 无法取得版本时返回 `null`，不执行外部命令补全版本；
-- 不存在路径、权限错误和损坏符号链接按未命中处理，不中断整次扫描。
+安装判定与路径只来自终端命令执行结果；探测不读取包元数据，也不解析 mise 或 Homebrew 安装路径。
 
 Amos 插件从配置根检测：
 
@@ -76,7 +65,7 @@ interface HarnessDiscoveryItem {
 ## HTTP 与存储
 
 - `control-plane/store.ts` 调用探测逻辑并返回冻结结果；
-- `GET /api/harnesses` 要求认证，每次请求重新扫描，不使用缓存；
+- `GET /api/harnesses` 要求认证，每次请求重新执行终端探测，不使用缓存；
 - 响应仅包含路径、版本、支持说明和状态，不返回 Harness 配置正文或凭据。
 
 ## 前端实现
@@ -95,24 +84,20 @@ interface HarnessDiscoveryItem {
 
 ## 测试与边界
 
-`control-plane/harness-discovery.test.ts` 使用临时目录并注入 `env` 和 `home`，覆盖：
+`control-plane/harness-discovery.test.ts` 使用真实 `sh` 与临时 home/bin 目录（脚本为 `#!/bin/sh` 并 `chmod 0o755`，注入 `env: { PATH: binDir, HOME: home }`），覆盖：
 
-- 空环境返回完整六项目录且配置目录不误判为安装；
-- mise 风格 OpenCode 符号链接和嵌套包版本；
-- Homebrew Cellar 安装的版本提取与名称不匹配目录的拒绝；
-- 有效 mise 多调用 shim 与真实安装的绑定；
-- OpenCode Amos 插件状态；
-- Codex、Claude Code、DSH 的未来支持及永不受管状态；
-- DSH 残留 shim 的未探测结果；
-- Oh My Pi 的当前支持、Pi 兼容说明、mise 原生版本及旧契约隔离；
-- 文件系统错误的容错。
+- 六项目录顺序与支持说明；opencode/pi 的终端路径与版本；dsh 退出失败时仍探测到但版本为 `null`；codex、claude-code、oh-my-pi 未探测；
+- bin 目录中的非可执行同名文件不被 `command -v` 视为可执行；
+- Pi 与 OpenCode 的 Amos 插件标记，`managed` 状态及 `installations` 路径、版本、插件字段；
+- 空机器：六项全部未探测，`installations` 为空数组；
+- 版本解析：`Something v10.1.2-beta+1 (build 42)` 得到 `10.1.2-beta+1`，无输出得到 `null`。
 
 主要验证命令：
 
 ```bash
-npm run build
+npm run build:service
 node --test dist/control-plane/harness-discovery.test.js
 npm run typecheck
 ```
 
-探测结果是调用时刻的静态快照。自定义安装位置、插件功能完整性和实际运行状态不属于该文件系统探测的证明范围。Oh My Pi 的兼容验证版本及项目级加载范围以 `docs/pi-adapter.md` 的记录为准。
+探测结果是调用时刻的快照。执行 `command -v` 与 `--version` 说明终端可达并返回了自报版本，不代表 Harness 功能完好、插件已加载或治理规则已生效；实际运行状态以对应 Harness 加载报告为准。Oh My Pi 的兼容验证版本及项目级加载范围以 `docs/pi-adapter.md` 的记录为准。

@@ -109,8 +109,11 @@ test('version 1 databases migrate to full project configuration without losing r
 
   const cp = createControlPlane({ databasePath, rawSchema, now: () => Date.parse(createdAt) });
   t.after(() => cp.close());
-  assert.equal(cp.listProjects().length, 1);
-  assert.equal(cp.listProjects()[0]?.name, 'Legacy project');
+  assert.equal(cp.listProjects().length, 2);
+  assert.equal(cp.listProjects()[0]?.id, 'global');
+  assert.equal(cp.listProjects()[0]?.kind, 'global');
+  assert.equal(cp.listProjects()[0]?.workspace, null);
+  assert.equal(cp.listProjects()[1]?.name, 'Legacy project');
   const config = cp.getProjectConfig('project-1');
   assert.equal(config.managed.enabled, false);
   assert.deepEqual(config.harness, {
@@ -279,7 +282,7 @@ test('a v2 database re-emits v2 projections only for published projects on the m
     writeArtifacts: writeProjectArtifacts,
   });
   t.after(() => migrated.close());
-  assert.equal(migrated.listProjects().length, 2);
+  assert.equal(migrated.listProjects().length, 3);
   const projection = readManagedProjection(publishedWorkspace);
   assert.equal(projection.version, 2);
   assert.equal(projection.projectId, published.id);
@@ -563,4 +566,58 @@ test('a schema digest mismatch fails the version 1 migration closed', (t) => {
     () => createControlPlane({ databasePath, rawSchema: readSchema() }),
     (error: unknown) => (error as { code?: string }).code === 'database_incompatible',
   );
+});
+
+test('a stored per-project Jev path reopens, is dropped, and projects the global path', (t) => {
+  const dir = makeTempDir(t);
+  const databasePath = join(dir, 'governance.sqlite');
+  const workspace = join(dir, 'workspace');
+  const auditDir = join(dir, 'audit');
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(auditDir, { recursive: true });
+  const clock = createTestClock('2026-11-01T00:00:00.000Z');
+  const globalPath = join(dir, 'jev', 'jev.local.json');
+
+  const setup = createControlPlane({
+    databasePath,
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+  });
+  const project = setup.createProject({ name: 'Legacy Jev', workspace }, human());
+  setup.close();
+
+  const db = new DatabaseSync(databasePath);
+  const row = db
+    .prepare('SELECT config_json FROM project_configs WHERE project_id = ?')
+    .get(project.id) as { config_json: string };
+  const stored = JSON.parse(row.config_json) as {
+    managed: Record<string, unknown>;
+    workflowGate: Record<string, unknown>;
+  };
+  stored.managed = {
+    ...stored.managed,
+    jevConfigPath: join(dir, 'legacy', 'managed-jev.json'),
+  };
+  stored.workflowGate = {
+    ...stored.workflowGate,
+    jevConfigPath: 'legacy/workflow-jev.json',
+  };
+  db.prepare('UPDATE project_configs SET config_json = ? WHERE project_id = ?')
+    .run(JSON.stringify(stored), project.id);
+  db.close();
+
+  const reopened = createControlPlane({
+    databasePath,
+    rawSchema: readSchema(),
+    now: clock.now,
+    managedAuditDir: auditDir,
+    jevConfigPath: globalPath,
+  });
+  t.after(() => reopened.close());
+  const config = reopened.getProjectConfig(project.id);
+  assert.equal('jevConfigPath' in config.managed, false);
+  assert.equal('jevConfigPath' in config.workflowGate, false);
+  assert.equal(config.managed.enabled, false);
+  assert.equal(config.workflowGate.enabled, false);
 });
