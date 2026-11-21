@@ -938,7 +938,7 @@ const zhCN = {
     futureNote: '这个 Harness 还在计划支持中，本机也没有检测到安装。',
     noneTitle: '没有检测到 Harness',
     noneDescription: '没有找到任何已支持或计划支持的 Harness。',
-    noteDsh: '计划以 DSH 插件形式支持',
+    noteDsh: '计划以 DeepSeek Harness 插件形式支持',
     noteOhMyPi: '兼容 Pi，使用 Pi 插件',
     install: {
       action: '接入 Amos 插件',

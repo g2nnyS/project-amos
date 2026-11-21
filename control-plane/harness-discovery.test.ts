@@ -55,7 +55,7 @@ test('probes each harness through the terminal and reports path and version', (t
   );
   assert.deepEqual(
     result.harnesses.map((harness) => harness.supportNote),
-    [null, null, null, null, '未来以 DSH 插件形式支持', 'Pi 兼容，使用 Pi 适配器'],
+    [null, null, null, null, '未来以 DeepSeek Harness 插件形式支持', 'Pi 兼容，使用 Pi 适配器'],
   );
 
   const opencode = findHarness(result, 'opencode');
@@ -70,6 +70,7 @@ test('probes each harness through the terminal and reports path and version', (t
   assert.equal(pi.version, '0.9.2');
 
   const dsh = findHarness(result, 'dsh');
+  assert.equal(dsh.name, 'DeepSeek Harness');
   assert.equal(dsh.detected, true);
   assert.equal(dsh.path, join(binDir, 'dsh'));
   assert.equal(dsh.version, null);

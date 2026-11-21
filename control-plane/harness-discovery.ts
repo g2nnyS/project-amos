@@ -128,9 +128,9 @@ const HARNESS_DEFINITIONS: readonly HarnessDefinition[] = [
   },
   {
     id: 'dsh',
-    name: 'DSH',
+    name: 'DeepSeek Harness',
     support: 'future',
-    supportNote: '未来以 DSH 插件形式支持',
+    supportNote: '未来以 DeepSeek Harness 插件形式支持',
     command: 'dsh',
   },
   {
