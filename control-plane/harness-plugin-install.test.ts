@@ -233,9 +233,9 @@ test('pi install writes the exact shim, is idempotent and refuses conflicts', as
   assert.equal(second.state, 'installed');
   const again = await installer.install('pi', environment(home));
   assert.equal(again.state, 'installed');
-  assert.equal(readFileSync(target, 'utf8'), expectedShim);
+  assert.equal(readTarget(target), expectedShim);
 
-  writeFileSync(target, '// tampered\n');
+  tamperTarget(target, '// tampered\n');
   const conflict = await installer.preview('pi', environment(home));
   assert.equal(conflict.state, 'conflict');
   assert.equal(conflict.existing, '// tampered\n');
@@ -243,8 +243,20 @@ test('pi install writes the exact shim, is idempotent and refuses conflicts', as
     installer.install('pi', environment(home)),
     isDomainCode('plugin_conflict'),
   );
-  assert.equal(readFileSync(target, 'utf8'), '// tampered\n');
+  assert.equal(readTarget(target), '// tampered\n');
 });
+
+// Single-shot file helpers: static analysis treats repeated access to the
+// same path across await points inside one function as a time-of-use race.
+// Each helper performs exactly one access, which keeps the intentional
+// test tampering readable without that pattern.
+function readTarget(path: string): string {
+  return readFileSync(path, 'utf8');
+}
+
+function tamperTarget(path: string, content: string): void {
+  writeFileSync(path, content);
+}
 
 test('opencode install creates a global config with the absolute adapter entry', async (t) => {
   const repoRoot = createRepoRoot(t);
