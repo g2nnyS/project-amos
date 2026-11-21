@@ -625,6 +625,28 @@ export interface HarnessDiscoveryResult {
   readonly harnesses: readonly HarnessDiscoveryItem[];
 }
 
+export type InstallableHarnessId = 'pi' | 'opencode';
+
+export interface HarnessPluginInstallPreview {
+  readonly harness: InstallableHarnessId;
+  /** fresh = will write; installed = already installed; conflict = existing content differs, never auto-overwritten */
+  readonly state: 'fresh' | 'installed' | 'conflict';
+  readonly targetPath: string;
+  /** Exact planned file content (pi) or pretty-printed plugin entry (opencode) for the preview dialog. */
+  readonly planned: string;
+  /** Present content/entry for the conflict state; null otherwise. */
+  readonly existing: string | null;
+  /** True when an existing opencode.jsonc is merged into rather than created. Always false for pi. */
+  readonly mergeIntoExisting: boolean;
+}
+
+export interface HarnessPluginInstallResult {
+  readonly harness: InstallableHarnessId;
+  readonly state: 'installed';
+  readonly targetPath: string;
+  readonly planned: string;
+}
+
 export interface ControlPlane {
   close(): void;
   listProjects(): Project[];

@@ -48,6 +48,29 @@ test('Jev settings use global routes, CSRF mutations and public response contrac
   for (const call of calls.slice(2)) assert.equal((call.init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
 })
 
+test('harness plugin install uses the preview and install routes with a CSRF mutation', async () => {
+  const calls: Array<{ path: string; init?: RequestInit }> = []
+  const preview = { harness: 'pi' as const, state: 'fresh' as const, targetPath: '/home/u/.pi/agent/extensions/amos.js', planned: 'export { default } from "/amos/dist/adapters/pi/index.js";\n', existing: null, mergeIntoExisting: false }
+  const installed = { harness: 'pi' as const, state: 'installed' as const, targetPath: preview.targetPath, planned: preview.planned }
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path: String(path), init })
+    if (String(path) === '/api/session') return json(human)
+    if (String(path) === '/api/harnesses/plugin?harness=pi') return json(preview)
+    if (String(path) === '/api/harnesses/plugin') return json(installed)
+    throw new Error('unexpected')
+  })
+  await client.session()
+  assert.deepEqual(await client.harnessPluginPreview('pi'), preview)
+  assert.deepEqual(await client.installHarnessPlugin('pi'), installed)
+  assert.deepEqual(calls.map(c => [c.path, c.init?.method]), [
+    ['/api/session', 'GET'],
+    ['/api/harnesses/plugin?harness=pi', 'GET'],
+    ['/api/harnesses/plugin', 'POST']
+  ])
+  assert.equal(calls[2].init?.body, JSON.stringify({ harness: 'pi' }))
+  assert.equal((calls[2].init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
+})
+
 test('HTTP, protocol and network errors reject without disclosing response contents', async () => {
   const client = new ApiClient(async () => new Response('secret hostile text', { status: 403 }))
   await assert.rejects(client.projects(), (e: unknown) => e instanceof ApiError && e.code === 'forbidden' && !e.message.includes('secret'))

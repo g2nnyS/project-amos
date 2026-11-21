@@ -30,6 +30,9 @@ export type DomainErrorCode =
   | 'evidence_unbound'
   | 'reviewer_migration_required'
   | 'jev_not_configured'
+  | 'plugin_conflict'
+  | 'plugin_config_invalid'
+  | 'plugin_install_unavailable'
   | 'database_busy'
   | 'database_corrupt'
   | 'database_incompatible'
@@ -60,6 +63,9 @@ export const DOMAIN_ERROR_STATUS: Readonly<Record<DomainErrorCode, number>> = {
   evidence_unbound: 409,
   reviewer_migration_required: 409,
   jev_not_configured: 409,
+  plugin_conflict: 409,
+  plugin_config_invalid: 400,
+  plugin_install_unavailable: 503,
   database_busy: 503,
   database_corrupt: 500,
   database_incompatible: 409,

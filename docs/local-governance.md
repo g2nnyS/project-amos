@@ -135,6 +135,9 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | GET | `/api/audit/observations` | 启动时配置的脱敏观察日志与覆盖缺口；未配置返回 available:false |
 | GET | `/api/schema` | 固定规则 JSON Schema |
 | GET | `/api/seed` | 仓库固定规则导入候选；读取不创建、不批准项目 |
+| GET | `/api/harnesses` | HarnessDiscoveryResult：六个助手的终端探测、插件接入状态与安装信息 |
+| GET | `/api/harnesses/plugin?harness=pi\|opencode` | Amos 插件安装预览：目标路径、计划内容与现有内容状态；任意已认证角色 |
+| POST | `/api/harnesses/plugin` | `{harness}` → 用户级安装 Amos 插件；仅 human 浏览器变更，冲突（409）不自动覆盖 |
 | GET | `/api/jev` | JevSettingsView；全局审查服务配置，密钥只回显“已保存”状态 |
 | POST | `/api/jev` | SaveJevSettingsInput → JevSettingsView；仅 human 浏览器变更，密钥写入私有文件且不回显 |
 | POST | `/api/jev/test` | `{}` → `{ok,model}`；仅 human 浏览器变更，用已保存密钥发起一次真实连接测试 |

@@ -22,7 +22,7 @@
 每行提供两个独立状态：
 
 - **已探测到**：终端命令 `command -v <命令>` 解析到了该 Harness 的可执行文件；
-- **已受到管理**：在 Pi 或 OpenCode 的配置根中找到了 Amos 插件标记。
+- **已受到管理**：检测到 Amos 插件——Pi 在 `~/.pi/agent/extensions/amos(.js)`（含兼容标记），OpenCode 在全局 `opencode.jsonc` 的 Amos 插件项或配置根 `plugins/amos` 标记。
 
 未探测到的行显示为灰色。已探测到但未找到 Amos 插件的 Harness 显示“未受管理”。未来支持项即使已安装，也不会因此变为当前支持或已受到管理。
 
@@ -40,6 +40,17 @@ Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项�
 探测需要 POSIX shell（`sh`）。服务进程无法启动 shell 时，所有 Harness 均报告未探测到。
 
 Amos 插件按文件系统标记检测（Pi 的 `~/.pi` 与 OpenCode 配置根），与 Harness 二进制探测相互独立；安装判定与路径只来自终端命令执行结果，不读取包元数据。
+
+## 一键接入 Amos 插件
+
+对已探测到的 Pi 或 OpenCode，行内提供“接入 Amos 插件”按钮，把编译后的 Amos 适配器接入本机：
+
+1. **Pi**：写入 `~/.pi/agent/extensions/amos.js`，内容一行转发到本仓编译产物 `dist/adapters/pi/index.js`。这是 Pi 的用户级扩展目录，随 Pi 自动加载；项目级 `.pi/extensions` 仍需 `--approve`。
+2. **OpenCode**：在全局配置 `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc` 中追加 Amos 插件项（`package` 指向本仓 `dist/adapters/opencode-v2`，`rulesPath`/`schemaPath`/`logPath` 均为绝对路径）。已存在的配置、其他插件项与注释保持原样；现有配置无法安全解析时拒绝写入并提示人工处理。
+
+确认前界面展示写入位置与完整内容；已安装时幂等跳过；已有内容与计划不同时报冲突，不会自动覆盖。安装是用户级一次性动作，所有项目生效；助手重新加载后加载插件，插件本身仍是 Stage A 观察者，managed 模式需按项目显式开启。
+
+API：`GET /api/harnesses/plugin?harness=pi|opencode` 返回预览；`POST /api/harnesses/plugin`（human + 浏览器变更）执行安装。
 
 ## 统计与详情
 
@@ -132,7 +143,7 @@ Amos 插件按文件系统标记检测（Pi 的 `~/.pi` 与 OpenCode 配置根�
 
 ## 注意事项
 
-1. 探测会执行 `command -v` 和 `<命令> --version`（5 秒超时），不会启动交互式会话，也不修改安装或配置。
+1. 探测会执行 `command -v` 和 `<命令> --version`（5 秒超时），不会启动交互式会话，也不修改安装或配置；插件修改只由“一键接入”显式触发。
 2. 结果是请求时刻的快照；安装或插件变更后需手动刷新。
 3. 探测使用服务进程的环境（包括 `PATH`），可能与交互式终端不同，因此结果可能与手动执行 `command -v` 不一致。每行显示的安装位置可用于确认实际探测环境。
 4. 版本为尽力而为：命令未输出可识别版本、退出失败或超时均显示为未知。

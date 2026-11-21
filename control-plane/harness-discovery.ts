@@ -20,16 +20,17 @@
  * desktop app inherits launchd's minimal PATH, so Homebrew, nvm and `~/.local`
  * installations stay invisible to the probe otherwise.
  *
- * Amos plugin presence is still detected from filesystem markers under the Pi
- * and OpenCode config roots, because that marker describes the plugin rather
- * than the harness binary.
+ * Amos plugin presence comes from filesystem markers under the Pi and OpenCode
+ * config roots and, for OpenCode, from an amos plugin entry in the global
+ * `opencode.jsonc`, because those describe the plugin rather than the harness
+ * binary.
  *
  * Detection is best-effort and read-only for governance state. It does not
  * verify that a detected harness is functional beyond executing `--version`.
  */
 
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import type {
@@ -37,6 +38,7 @@ import type {
   HarnessDiscoveryResult,
   HarnessInstallation,
 } from './contracts.ts';
+import { findAmosPluginEntry } from './jsonc.ts';
 
 type HarnessKind =
   | 'pi'
@@ -81,12 +83,19 @@ const OPENCODE_PLUGIN_MARKERS = [
 ];
 
 const PI_PLUGIN_MARKERS = [
+  'agent/extensions/amos',
+  'agent/extensions/amos.js',
+  'agent/extensions/amos.ts',
   'extensions/amos',
   'extensions/amos.js',
   'extensions/amos.ts',
   'node_modules/@amos/pi-plugin',
   '.pi-extensions/amos',
 ];
+
+const OPENCODE_CONFIG_FILE = 'opencode.jsonc';
+/** Presence-only probe; the adapter path is irrelevant to detection. */
+const AMOS_OPENCODE_ADAPTER_HINT = 'dist/adapters/opencode-v2';
 
 const HARNESS_DEFINITIONS: readonly HarnessDefinition[] = [
   {
@@ -160,14 +169,6 @@ function resolveProbeShell(): string {
 }
 
 const PROBE_SHELL = resolveProbeShell();
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Resolve a harness command to an executable path through a POSIX shell.
@@ -297,12 +298,28 @@ function resolveLoginPath(env: NodeJS.ProcessEnv): string | null {
   return path;
 }
 
-function openCodeConfigRoot(env: NodeJS.ProcessEnv, home: string): string {
+export function resolveOpenCodeConfigRoot(
+  env: NodeJS.ProcessEnv,
+  home: string,
+): string {
   const xdgConfigHome = env.XDG_CONFIG_HOME;
   if (typeof xdgConfigHome === 'string' && xdgConfigHome.length > 0) {
     return join(xdgConfigHome, 'opencode');
   }
   return join(home, '.config/opencode');
+}
+
+/**
+ * Read an OpenCode config file and report whether it wires the amos adapter.
+ * Unreadable or malformed configs simply do not count as a plugin marker.
+ */
+function hasAmosOpencodePluginEntry(path: string): boolean {
+  try {
+    const text = readFileSync(path, 'utf8');
+    return findAmosPluginEntry(text, AMOS_OPENCODE_ADAPTER_HINT).present;
+  } catch {
+    return false;
+  }
 }
 
 function detectAmosPlugin(
@@ -311,17 +328,19 @@ function detectAmosPlugin(
   home: string,
 ): string | null {
   if (id === 'opencode') {
-    const root = openCodeConfigRoot(env, home);
-    if (!isDirectory(root)) return null;
+    const root = resolveOpenCodeConfigRoot(env, home);
     for (const marker of OPENCODE_PLUGIN_MARKERS) {
       const markerPath = join(root, marker);
       if (existsSync(markerPath)) return markerPath;
+    }
+    const configPath = join(root, OPENCODE_CONFIG_FILE);
+    if (existsSync(configPath) && hasAmosOpencodePluginEntry(configPath)) {
+      return configPath;
     }
     return null;
   }
 
   const root = join(home, '.pi');
-  if (!isDirectory(root)) return null;
   for (const marker of PI_PLUGIN_MARKERS) {
     const markerPath = join(root, marker);
     if (existsSync(markerPath)) return markerPath;
