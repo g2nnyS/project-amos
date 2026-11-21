@@ -938,7 +938,7 @@ const enUS: Messages = {
     futureNote: 'This harness is still planned and no install was detected on this machine.',
     noneTitle: 'No harnesses found',
     noneDescription: 'No supported or planned harnesses were found.',
-    noteDsh: 'Planned as a DSH plugin',
+    noteDsh: 'Planned as a DeepSeek Harness plugin',
     noteOhMyPi: 'Pi-compatible; uses the Pi plugin',
     install: {
       action: 'Connect the Amos plugin',

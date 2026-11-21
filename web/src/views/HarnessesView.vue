@@ -4,12 +4,14 @@ import { ServerCog } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { harnessIcon } from '@/components/governance/harness-icons'
+import { harnessBrandIcon, harnessFallbackIcon } from '@/components/governance/harness-icons'
 import { useToast } from '@/composables/useToast'
 import { api } from '@/lib/api'
+import { usePreferencesStore } from '@/stores/preferences'
 import { t, type MessageKey } from '@/i18n'
 import type { HarnessDiscoveryItem, HarnessDiscoveryResult, HarnessPluginInstallPreview } from '@/types'
 
+const preferences = usePreferencesStore()
 const discovery = ref<HarnessDiscoveryResult | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -175,7 +177,10 @@ async function confirmInstall() {
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40"><component :is="harnessIcon(h.id)" class="size-4" aria-hidden="true" /></span>
+                  <span class="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 p-1.5">
+                    <img v-if="harnessBrandIcon(h.id, preferences.resolvedTheme)" :src="harnessBrandIcon(h.id, preferences.resolvedTheme)!" alt="" class="size-full object-contain" />
+                    <component :is="harnessFallbackIcon()" v-else class="size-4" aria-hidden="true" />
+                  </span>
                   <h3 class="font-medium" :class="{ 'text-foreground': h.detected }">{{ h.name }}</h3>
                   <span
                     class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
@@ -238,12 +243,12 @@ async function confirmInstall() {
     </template>
 
     <Dialog v-model:open="installOpen">
-      <DialogContent class="max-w-[calc(100%-2rem)] rounded-md border border-border sm:max-w-2xl">
-        <DialogHeader>
+      <DialogContent class="max-h-[calc(100vh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_1fr_auto] rounded-md border border-border sm:max-w-2xl">
+        <DialogHeader class="shrink-0">
           <DialogTitle>{{ t('harnesses.install.title') }}</DialogTitle>
           <DialogDescription>{{ t('harnesses.install.description') }}</DialogDescription>
         </DialogHeader>
-        <div class="space-y-3">
+        <div class="min-w-0 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
           <p v-if="installLoading" class="text-sm text-muted-foreground" role="status">{{ t('harnesses.install.loading') }}</p>
           <template v-else-if="installPreview">
             <dl class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-xs">
@@ -254,16 +259,16 @@ async function confirmInstall() {
             <div v-if="installPreview.state === 'conflict'" class="rounded-md border border-warning/30 bg-warning/5 p-3 text-[11.5px] leading-relaxed text-warning" role="alert">
               <p>{{ t('harnesses.install.conflictNote') }}</p>
               <p class="mt-2 font-semibold">{{ t('harnesses.install.existing') }}</p>
-              <pre class="mt-1 max-h-40 overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.existing }}</pre>
+              <pre class="mt-1 max-h-40 max-w-full overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.existing }}</pre>
             </div>
             <div>
               <p class="text-[11.5px] font-semibold text-foreground">{{ t('harnesses.install.planned') }}</p>
-              <pre class="mt-1 max-h-56 overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.planned }}</pre>
+              <pre class="mt-1 max-h-56 max-w-full overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.planned }}</pre>
             </div>
           </template>
           <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
         </div>
-        <DialogFooter>
+        <DialogFooter class="shrink-0">
           <Button variant="outline" size="sm" @click="installOpen = false">{{ t('common.cancel') }}</Button>
           <Button size="sm" :disabled="installPreview?.state !== 'fresh' || installSaving" @click="confirmInstall">{{ installSaving ? t('common.saving') : t('harnesses.install.confirm') }}</Button>
         </DialogFooter>
