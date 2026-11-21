@@ -37,6 +37,7 @@ import { parse as parseYaml } from 'yaml';
 
 import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts.ts';
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
+import { HarnessPluginInstaller } from './harness-plugin-install.ts';
 import { JevSettingsStore } from './jev-settings.ts';
 import { ObservationLogs } from './observations.ts';
 import { PasswordStore } from './password.ts';
@@ -540,6 +541,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
     const managedAuditDir = join(paths.dataDir, 'managed-audit');
     await ensurePrivateDirectory(managedAuditDir);
     const jevSettings = new JevSettingsStore(paths.dataDir);
+    const harnessPluginInstaller = new HarnessPluginInstaller(paths.rootDir);
 
     const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
     let rawSchema: Record<string, unknown>;
@@ -610,6 +612,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
         ...(options.now === undefined ? {} : { now: options.now }),
         observations,
         jevSettings,
+        harnessPluginInstaller,
       });
     } catch {
       controlPlane.close();

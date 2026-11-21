@@ -17,6 +17,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { PasswordStore, PasswordError } from './password.ts';
 import { verifySystemProof } from './system-auth.ts';
@@ -41,6 +42,7 @@ import type {
   CreateProposalInput,
   CreateRollbackProposalInput,
   DecideProposalInput,
+  InstallableHarnessId,
   RuleRecord,
 } from './contracts.ts';
 import { MAX_CANDIDATE_BYTES } from './compiler.ts';
@@ -50,6 +52,10 @@ import {
 } from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import { GLOBAL_COMPILE_WORKSPACE } from './global.ts';
+import type {
+  HarnessPluginEnvironment,
+  HarnessPluginInstaller,
+} from './harness-plugin-install.ts';
 import {
   JevSettingsError,
   type JevSettingsStore,
@@ -149,6 +155,9 @@ export interface GovernanceServerOptions {
   readonly requestTimeoutMs?: number;
   readonly observations?: ObservationLogs | null;
   readonly jevSettings?: JevSettingsStore | null;
+  readonly harnessPluginInstaller?: HarnessPluginInstaller | null;
+  /** Test injection; defaults to the process home and environment. */
+  readonly harnessPluginEnvironment?: HarnessPluginEnvironment;
 }
 
 export interface GovernanceServer {
@@ -201,6 +210,8 @@ export function createGovernanceServer(
   const seed = normalizeSeed(options.seed);
   const observations = options.observations ?? null;
   const jevSettings = options.jevSettings ?? null;
+  const harnessPluginInstaller = options.harnessPluginInstaller ?? null;
+  const harnessPluginEnvironment = options.harnessPluginEnvironment;
   const instanceId = options.instanceId;
   let staticAssets: ReadonlyMap<string, StaticAsset> = new Map();
 
@@ -450,6 +461,37 @@ export function createGovernanceServer(
     }
 
     if (resource === 'harnesses') {
+      if (id === 'plugin') {
+        requirePath(segments, 3);
+        if (method === 'GET') {
+          requireAnyActor(req);
+          const harness = requireInstallableHarness(
+            url.searchParams.get('harness'),
+          );
+          const installer = requireHarnessPluginInstaller();
+          sendJson(
+            res,
+            200,
+            await installer.preview(harness, resolveHarnessPluginEnvironment()),
+          );
+          return;
+        }
+        requireMethod(method, 'POST');
+        requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(
+          await readJsonBody(req, maxBodyBytes, requestTimeoutMs),
+        );
+        const harness = requireInstallableHarness(body.harness);
+        const installer = requireHarnessPluginInstaller();
+        sendJson(
+          res,
+          200,
+          await installer.install(harness, resolveHarnessPluginEnvironment()),
+        );
+        return;
+      }
+
       requirePath(segments, 2);
       requireMethod(method, 'GET');
       requireAnyActor(req);
@@ -860,6 +902,22 @@ export function createGovernanceServer(
       throw new HttpError(503, 'jev_config_unavailable');
     }
     return jevSettings;
+  }
+
+  function requireHarnessPluginInstaller(): HarnessPluginInstaller {
+    if (harnessPluginInstaller === null) {
+      throw new HttpError(503, 'plugin_install_unavailable');
+    }
+    return harnessPluginInstaller;
+  }
+
+  function resolveHarnessPluginEnvironment(): HarnessPluginEnvironment {
+    return harnessPluginEnvironment ?? { home: homedir(), env: process.env };
+  }
+
+  function requireInstallableHarness(value: unknown): InstallableHarnessId {
+    if (value === 'pi' || value === 'opencode') return value;
+    throw new HttpError(400, 'invalid_body');
   }
 
   async function runJevOperation<T>(operation: () => Promise<T>): Promise<T> {

@@ -256,3 +256,58 @@ test('version probe parses the first version-shaped token and tolerates no outpu
   assert.equal(pi.version, null);
 });
 
+test('reports a Pi plugin at the global extension loader directory', (t) => {
+  const home = createTempHome(t);
+  const binDir = join(home, 'bin');
+  const pluginPath = join(home, '.pi/agent/extensions/amos.js');
+
+  writeScript(join(binDir, 'pi'), "echo 'pi 0.9.2'");
+  mkdirSync(dirname(pluginPath), { recursive: true });
+  writeFileSync(pluginPath, 'export default {};\n');
+
+  const result = discoverHarnessInstallations({
+    env: { PATH: binDir, HOME: home },
+    home,
+  });
+
+  const pi = findHarness(result, 'pi');
+  assert.equal(pi.detected, true);
+  assert.equal(pi.managed, true);
+  assert.equal(pi.amosPluginPath, pluginPath);
+});
+
+test('reports an OpenCode plugin declared in the global JSONC config', (t) => {
+  const home = createTempHome(t);
+  const binDir = join(home, 'bin');
+  const configPath = join(home, '.config/opencode/opencode.jsonc');
+
+  writeScript(join(binDir, 'opencode'), "echo 'opencode 2.2.5'");
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(
+    configPath,
+    '{\n' +
+      '  // keep this comment\n' +
+      '  "plugins": [\n' +
+      '    { "package": "/repo/dist/adapters/opencode-v2" }\n' +
+      '  ]\n' +
+      '}\n',
+  );
+
+  const result = discoverHarnessInstallations({
+    env: { PATH: binDir, HOME: home },
+    home,
+  });
+
+  const opencode = findHarness(result, 'opencode');
+  assert.equal(opencode.detected, true);
+  assert.equal(opencode.managed, true);
+  assert.equal(opencode.amosPluginPath, configPath);
+
+  const installation = result.installations.find(
+    (entry) => entry.harness === 'opencode',
+  );
+  assert.ok(installation);
+  assert.equal(installation.amosPluginInstalled, true);
+  assert.equal(installation.amosPluginPath, configPath);
+});
+

@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
 import type { ControlPlane, RuleRecord } from './contracts.ts';
+import { HarnessPluginInstaller } from './harness-plugin-install.ts';
 import {
   startGovernanceServer,
   type GovernanceServerOptions,
@@ -32,6 +33,10 @@ export interface TestClock {
 export interface HttpHarness {
   readonly dir: string;
   readonly staticDir: string;
+  /** Temp machine home used by the harness plugin installer endpoints. */
+  readonly pluginHome: string;
+  /** Temp repository checkout the installer's adapter paths point into. */
+  readonly pluginRepoRoot: string;
   readonly service: ControlPlane;
   readonly server: RunningGovernanceServer;
   readonly url: string;
@@ -53,6 +58,8 @@ export interface HarnessOptions {
   readonly requestTimeoutMs?: number;
   readonly observations?: ObservationLogs | null;
   readonly jevFetch?: typeof fetch;
+  /** Set false to exercise the unwired installer (503) path. */
+  readonly pluginInstaller?: boolean;
 }
 
 export async function createStaticDir(root: string): Promise<string> {
@@ -78,6 +85,31 @@ export async function createHarness(
 ): Promise<HttpHarness> {
   const dir = await mkdtemp(join(tmpdir(), 'amos-http-'));
   const staticDir = options.staticDir ?? (await createStaticDir(dir));
+  const pluginRepoRoot = join(dir, 'plugin-repo');
+  const pluginHome = join(dir, 'plugin-home');
+  await mkdir(join(pluginRepoRoot, 'dist/adapters/pi'), { recursive: true });
+  await writeFile(
+    join(pluginRepoRoot, 'dist/adapters/pi/index.js'),
+    'export default {};\n',
+    { encoding: 'utf8' },
+  );
+  await mkdir(join(pluginRepoRoot, 'dist/adapters/opencode-v2'), {
+    recursive: true,
+  });
+  await writeFile(
+    join(pluginRepoRoot, 'dist/adapters/opencode-v2/index.js'),
+    'export default {};\n',
+    { encoding: 'utf8' },
+  );
+  await mkdir(join(pluginRepoRoot, 'constraints'), { recursive: true });
+  await writeFile(join(pluginRepoRoot, 'constraints/rules.yaml'), '[]\n', {
+    encoding: 'utf8',
+  });
+  await writeFile(join(pluginRepoRoot, 'constraints/schema.json'), '{}\n', {
+    encoding: 'utf8',
+  });
+  await mkdir(join(pluginRepoRoot, 'spike/logs'), { recursive: true });
+  await mkdir(pluginHome, { recursive: true });
   const clock: TestClock = {
     value: Date.UTC(2026, 0, 1, 12, 0, 0),
     now() {
@@ -100,6 +132,7 @@ export async function createHarness(
   const rules = parseYaml(rulesYaml, { maxAliasCount: 50 }) as RuleRecord[];
 
   const jevSettings = new JevSettingsStore(join(dir, 'secrets'), options.jevFetch);
+  const harnessPluginInstaller = new HarnessPluginInstaller(pluginRepoRoot);
 
   const service = createControlPlane({
     databasePath: join(dir, 'governance.sqlite'),
@@ -142,11 +175,16 @@ export async function createHarness(
       ? {}
       : { observations: options.observations }),
     jevSettings,
+    harnessPluginInstaller:
+      options.pluginInstaller === false ? null : harnessPluginInstaller,
+    harnessPluginEnvironment: { home: pluginHome, env: {} },
   });
 
   return {
     dir,
     staticDir,
+    pluginHome,
+    pluginRepoRoot,
     service,
     server,
     url: server.url,

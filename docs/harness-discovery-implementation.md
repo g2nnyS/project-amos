@@ -35,8 +35,8 @@ Harness 目录项的 `id` 与命令名独立映射：Claude Code 使用 `claude`
 
 Amos 插件从配置根检测：
 
-- Pi：`~/.pi` 下的 `extensions/amos`、`extensions/amos.js`、`extensions/amos.ts` 及兼容标记；
-- OpenCode：`${XDG_CONFIG_HOME:-~/.config}/opencode` 下的 `plugins/amos`、`plugin/amos` 及对应 `.js`、`.ts` 文件。
+- Pi：`~/.pi/agent/extensions` 下的 `amos`、`amos.js`、`amos.ts`（Pi 的用户级扩展目录），兼容 `~/.pi/extensions/...`、`node_modules/@amos/pi-plugin` 与 `.pi-extensions/amos` 旧标记；
+- OpenCode：`${XDG_CONFIG_HOME:-~/.config}/opencode` 下的 `plugins/amos`、`plugin/amos` 标记文件，以及全局 `opencode.jsonc` 中 `package` 指向 `dist/adapters/opencode-v2` 的插件项（JSONC 解析，容忍注释）。
 
 新增项不进入旧版 `installations`，其 `managed` 始终为 `false`。Oh My Pi 的既有接入验证使用项目级 `.pi/amos.json` 和显式扩展加载；当前全局探测 API 没有项目上下文，因此不将其他项目的配置归为 Oh My Pi 的受管证据。
 
@@ -69,6 +69,15 @@ interface HarnessDiscoveryItem {
 - `control-plane/store.ts` 调用探测逻辑并返回冻结结果；
 - `GET /api/harnesses` 要求认证，每次请求重新执行终端探测，不使用缓存；
 - 响应仅包含路径、版本、支持说明和状态，不返回 Harness 配置正文或凭据。
+
+## 插件安装
+
+`control-plane/harness-plugin-install.ts` 提供用户级一键接入：
+
+- Pi 目标 `~/.pi/agent/extensions/amos.js`，shim 一行转发到本仓 `dist/adapters/pi/index.js`；
+- OpenCode 目标为全局 `opencode.jsonc`，`control-plane/jsonc.ts` 的注释/字符串感知扫描器只在 `plugins` 数组中插入 Amos 项，文件其余字节保持不变，插入后整体验证解析；
+- 写入均为临时文件 + rename 原子操作；`plugin_conflict`（409）表示现有内容不同且不自动覆盖，`plugin_config_invalid`（400）表示现有配置无法安全解析，`plugin_install_unavailable`（503）表示服务未接安装器；
+- `GET /api/harnesses/plugin` 预览（任意已认证角色），`POST /api/harnesses/plugin` 安装（human + 浏览器变更）。
 
 ## 前端实现
 
