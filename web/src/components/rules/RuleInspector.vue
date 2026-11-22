@@ -121,7 +121,7 @@ const activationLabel = computed(() => {
         </TabsContent>
         <TabsContent value="evidence" class="mt-0 space-y-4 text-xs">
           <div><p class="field-label">{{ t('ruleFields.probeField') }}</p><p class="mt-1.5 whitespace-pre-wrap break-words text-muted-foreground">{{ rule.probe || '—' }}</p></div>
-          <div><p class="field-label">{{ t('ruleFields.sourceField') }}</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ key }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
+          <div v-if="rule.source"><p class="field-label">{{ t('ruleFields.sourceField') }}</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ key }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
         </TabsContent>
         <TabsContent value="raw" class="mt-0 text-xs">
           <pre class="scroll-thin overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed">{{ json(rule) }}</pre>

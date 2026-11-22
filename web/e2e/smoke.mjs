@@ -441,7 +441,7 @@ try {
     await setByLabel('确认密码', password)
     await click('button', '设置密码')
     await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('全局规则')`)
-    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.includes('全局规则')`)
+    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.trim() === '全局'`)
     assert.equal(selectedGlobal, true, 'global project is not selected by default')
     const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)
@@ -491,6 +491,77 @@ try {
   await check('create project through the shell dialog', async () => {
     await createProject(projectOne, workspace)
     await waitFor(`document.body.innerText.includes(${q(projectOne)})`)
+  })
+
+  await check('global project is selectable once and its home mode switch round-trips', async () => {
+    const projects = await evaluate(`fetch('/api/projects').then(response => response.json())`)
+    const globals = projects.filter((project) => project.kind === 'global')
+    assert.equal(globals.length, 1, 'expected exactly one global project')
+    const globalId = globals[0].id
+    assert.ok(globalId, 'global project id missing')
+
+    const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(projectId && projectId !== globalId, 'active project missing')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && ${visible('#home-mode-switch')} && document.querySelector('#home-mode-switch')?.hasAttribute('aria-checked') && document.querySelector('#home-mode-title')?.textContent.trim().length > 0 && !document.querySelector('#home-mode-title')?.textContent.includes('未知')`)
+    const projectState = await evaluate(`({ checked: document.querySelector('#home-mode-switch')?.getAttribute('aria-checked'), title: document.querySelector('#home-mode-title')?.textContent.trim() })`)
+
+    const options = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).map(option => ({ value: option.value, text: option.textContent.trim() }))`)
+    assert.equal(options[0]?.value, globalId, 'first option is not the global project')
+    assert.equal(options[0]?.text, '全局', 'first option is not labelled 全局')
+    assert.equal(options.filter(option => option.value === globalId).length, 1, 'global project option is duplicated')
+    assert.ok(options.every(option => option.value !== ''), 'empty placeholder option is still present')
+    assert.ok(options.every(option => !option.text.includes('请选择项目')), 'placeholder option text is still present')
+
+    const globalConfig = () => evaluate(`fetch('/api/config').then(response => response.json())`)
+
+    await setBySelector('#project-select', globalId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.body.innerText.includes('全局基线') && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'false'`)
+    await screenshot('desktop-global-home-switch')
+
+    await click('#home-mode-switch')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'true' && document.querySelector('#home-mode-title')?.textContent.includes('正在管理') && document.body.innerText.includes('已切换为正在管理')`)
+    let config = await globalConfig()
+    assert.equal(config.enabled, true)
+    assert.equal(config.mode, 'managed')
+    assert.equal(config.advisoryInjection, false)
+
+    await click('#home-mode-switch')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'false' && document.querySelector('#home-mode-title')?.textContent.includes('仅记录') && document.body.innerText.includes('已切换为仅记录')`)
+    config = await globalConfig()
+    assert.equal(config.mode, 'log-only')
+    assert.equal(config.advisoryInjection, false)
+
+    await setBySelector('#project-select', projectId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === ${q(projectState.checked)} && document.querySelector('#home-mode-title')?.textContent.includes(${q(projectState.title)}) && Array.from(document.querySelectorAll('.home-mode .panel-title')).some(element => element.textContent.includes(${q(projectOne)}))`)
+  })
+
+  await check('global harness switches are visible, clickable and persistent', async () => {
+    await nav('设置')
+    await waitFor(visible('#pref-harness'))
+    const initial = await evaluate(`['global-harness-enabled', 'global-advisory-injection'].map(id => {
+      const track = document.getElementById(id)
+      const thumb = track.querySelector('[data-slot="switch-thumb"]')
+      const trackRect = track.getBoundingClientRect()
+      const thumbRect = thumb.getBoundingClientRect()
+      return { state: track.getAttribute('data-state'), background: getComputedStyle(track).backgroundColor, thumbOffset: thumbRect.left - trackRect.left }
+    })`)
+    assert.deepEqual(initial.map(item => item.state), ['checked', 'unchecked'])
+    for (const item of initial) assert.notEqual(item.background, 'rgba(0, 0, 0, 0)', 'switch track is transparent')
+    assert.ok(initial[0].thumbOffset > initial[1].thumbOffset, 'checked thumb did not move to the on position')
+
+    await click('#global-harness-enabled')
+    await click('#global-advisory-injection')
+    await waitFor(`document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'false' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'true'`)
+    await click('#pref-harness button[type="submit"]')
+    await waitFor(`document.body.innerText.includes('默认设置已保存；助手要重新加载才生效。') && document.querySelector('#pref-harness button[type="submit"]')?.disabled`)
+
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('#pref-harness')} && document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'false' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'true'`)
+
+    await click('#global-harness-enabled')
+    await click('#global-advisory-injection')
+    await click('#pref-harness button[type="submit"]')
+    await waitFor(`document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'true' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'false' && document.querySelector('#pref-harness button[type="submit"]')?.disabled`)
   })
 
   await check('Jev settings are global: save, reload and test through the browser', async () => {
@@ -1039,6 +1110,7 @@ try {
     await waitFor(`document.documentElement.classList.contains('light') && document.querySelector('.app-shell')?.dataset.density === 'comfortable'`)
     await click('[aria-label="打开导航"]')
     await waitFor(visible('[role="dialog"]'))
+    assert.equal(await evaluate(`(() => { const options = Array.from(document.querySelectorAll('#mobile-project option')); return options.length > 0 && options[0].textContent.trim() === '全局' && options[0].value.length > 0 && options.every(option => option.value.length > 0) && options.filter(option => option.textContent.trim() === '全局').length === 1 })()`), true, 'mobile global option is missing, duplicated or preceded by a placeholder')
     const widths = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
     assert.ok(widths.scroll <= widths.client, `horizontal overflow: ${JSON.stringify(widths)}`)
     await key('Escape')

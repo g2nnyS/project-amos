@@ -192,7 +192,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
                   <td>{{ locallySelected(rule.id) ? t('rules.selected') : t('rules.notSelected') }}</td>
                   <td>{{ rule.on_hit }}<span v-if="rule.expressivity === 'advisory_only'" class="mt-1 block text-[10px] text-muted-foreground">{{ t('rules.advisoryOnly') }}</span></td>
                   <td>{{ rule.enforcement }}</td>
-                  <td class="max-w-[160px] break-all">{{ rule.source.path || '—' }}</td>
+                  <td class="max-w-[160px] break-all">{{ rule.source?.path || '—' }}</td>
                 </tr>
               </tbody>
             </table>

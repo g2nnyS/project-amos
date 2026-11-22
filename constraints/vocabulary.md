@@ -1,6 +1,6 @@
 # 封闭命中条件词表（G0 冻结）
 
-冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除 Termcp 产品专属条目后剩余 9 条。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除产品专属条目后剩余 9 条。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
 
 规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 9 条规则的 `policy_class` 均为 `security`。
 

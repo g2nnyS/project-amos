@@ -17,7 +17,7 @@ import {
 } from './global.ts';
 import { DEFAULT_GLOBAL_CONFIG, DEFAULT_PROJECT_CONFIG } from './project-config.ts';
 
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 4;
 const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
 const KNOWN_TABLES = [
@@ -40,7 +40,7 @@ export interface OpenedGovernanceDatabase {
    * Highest legacy schema version migrated by this open. `null` means the
    * database already matched the current schema and no migration ran.
    */
-  readonly migratedFrom: 1 | 2 | null;
+  readonly migratedFrom: 1 | 2 | 3 | null;
 }
 
 /**
@@ -204,9 +204,9 @@ function migrateOrVerify(
   schemaDigest: string,
   nowMs: number,
   allowBootstrap: boolean,
-): 1 | 2 | null {
+): 1 | 2 | 3 | null {
   db.exec('BEGIN IMMEDIATE');
-  let migratedFrom: 1 | 2 | null = null;
+  let migratedFrom: 1 | 2 | 3 | null = null;
   try {
     const versionRow = db.prepare('PRAGMA user_version').get() as
       | { user_version?: unknown }
@@ -232,12 +232,18 @@ function migrateOrVerify(
     } else if (version === 1) {
       migrateV1ToV2(db, schemaDigest);
       migrateV2ToV3(db, schemaDigest, nowMs);
+      migrateV3ToV4(db, schemaDigest);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       migratedFrom = 1;
     } else if (version === 2) {
       migrateV2ToV3(db, schemaDigest, nowMs);
+      migrateV3ToV4(db, schemaDigest);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       migratedFrom = 2;
+    } else if (version === 3) {
+      migrateV3ToV4(db, schemaDigest);
+      db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+      migratedFrom = 3;
     } else if (version === DATABASE_SCHEMA_VERSION) {
       verifySchema(db, schemaDigest);
     } else {
@@ -607,6 +613,26 @@ function migrateV2ToV3(db: DatabaseSync, schemaDigest: string, nowMs: number): v
     update.run(JSON.stringify(record), row.project_id);
   }
   db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run('3', 'schema_version');
+}
+
+/**
+ * Strict version-3 -> version-4 migration. The rule schema relaxation only
+ * changes the validation digest; stored governance data stays valid and no
+ * governance event is written. Both metadata rows must already exist.
+ */
+function migrateV3ToV4(db: DatabaseSync, schemaDigest: string): void {
+  const versionUpdate = db
+    .prepare('UPDATE governance_meta SET value = ? WHERE key = ?')
+    .run('4', 'schema_version');
+  if (Number(versionUpdate.changes) === 0) {
+    throw new DomainError('database_incompatible');
+  }
+  const digestUpdate = db
+    .prepare('UPDATE governance_meta SET value = ? WHERE key = ?')
+    .run(schemaDigest, 'rule_schema_digest');
+  if (Number(digestUpdate.changes) === 0) {
+    throw new DomainError('database_incompatible');
+  }
 }
 
 function insertMetadata(
