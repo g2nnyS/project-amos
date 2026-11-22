@@ -93,7 +93,7 @@ export interface RuleRecord {
   readonly scope: RuleScope;
   readonly ttl: string | null;
   readonly owner: RuleOwner;
-  readonly source: RuleSource;
+  readonly source: RuleSource | null;
   readonly probe: string;
   readonly policy_class: RulePolicyClass;
   readonly enforcement: RuleEnforcement;

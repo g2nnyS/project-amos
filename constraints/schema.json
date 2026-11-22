@@ -174,7 +174,12 @@
         "scope": { "enum": ["project", "session"] },
         "ttl": { "type": ["string", "null"], "minLength": 1 },
         "owner": { "enum": ["human", "agent"] },
-        "source": { "$ref": "#/definitions/source" },
+        "source": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/definitions/source" }
+          ]
+        },
         "probe": { "type": "string", "minLength": 1 },
         "policy_class": { "enum": ["security", "engineering"] },
         "enforcement": { "enum": ["runtime", "ci", "server", "advisory"] }

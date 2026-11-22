@@ -130,10 +130,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
           <div class="sidebar-project">
             <label class="sidebar-label" for="project-select">{{ t('app.currentProject') }}</label>
             <select id="project-select" class="project-select" :aria-label="t('app.selectProject')" :value="governance.activeProjectId ?? ''" @change="selectProject">
-              <option value="">{{ t('app.selectProject') }}</option>
-              <optgroup v-if="globalProjects.length" :label="t('app.globalProject')">
-                <option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalProject') }}</option>
-              </optgroup>
+              <option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalOption') }}</option>
               <optgroup v-if="workspaceProjects.length" :label="t('nav.sections.workspace')">
                 <option v-for="project in workspaceProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ project.name }}</option>
               </optgroup>
@@ -232,7 +229,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowD
         <SheetHeader class="sr-only"><SheetTitle>{{ t('app.mainNav') }}</SheetTitle><SheetDescription>{{ t('app.mobileNavDescription') }}</SheetDescription></SheetHeader>
         <div class="p-4">
           <label class="field-label mb-1.5 block" for="mobile-project">{{ t('app.currentProject') }}</label>
-          <select id="mobile-project" class="h-9 w-full rounded-md border border-input bg-background px-2 text-xs" :value="governance.activeProjectId ?? ''" @change="selectProject"><option value="">{{ t('app.selectProject') }}</option><optgroup v-if="globalProjects.length" :label="t('app.globalProject')"><option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalProject') }}</option></optgroup><optgroup v-if="workspaceProjects.length" :label="t('nav.sections.workspace')"><option v-for="project in workspaceProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ project.name }}</option></optgroup></select>
+          <select id="mobile-project" class="h-9 w-full rounded-md border border-input bg-background px-2 text-xs" :value="governance.activeProjectId ?? ''" @change="selectProject"><option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalOption') }}</option><optgroup v-if="workspaceProjects.length" :label="t('nav.sections.workspace')"><option v-for="project in workspaceProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ project.name }}</option></optgroup></select>
           <Button class="mt-3 w-full" variant="outline" size="sm" @click="mobileOpen = false; createOpen = true">{{ t('app.newProject') }}</Button>
         </div>
         <nav class="px-2" :aria-label="t('app.mobileNav')">

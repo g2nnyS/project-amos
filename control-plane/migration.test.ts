@@ -8,7 +8,7 @@ import { tighteningRuleDigest } from '../activation/tighten.ts';
 import { writeProjectArtifacts } from './cli.ts';
 import { createRuleValidator } from './compiler.ts';
 import type { ControlPlane } from './contracts.ts';
-import { DATABASE_SCHEMA_VERSION } from './database.ts';
+import { DATABASE_SCHEMA_VERSION, openGovernanceDatabase } from './database.ts';
 import { createControlPlane } from './store.ts';
 import {
   agent,
@@ -137,6 +137,51 @@ test('version 1 databases migrate to full project configuration without losing r
   assert.ok(tables.some((table) => table.name === 'probe_runs'));
   assert.ok(tables.some((table) => table.name === 'rule_rollouts'));
   verify.close();
+});
+
+test('a version 3 database re-binds the rule schema digest without changing governance data', (t) => {
+  const dir = makeTempDir(t);
+  const databasePath = join(dir, 'governance.sqlite');
+  const clock = createTestClock('2026-11-01T00:00:00.000Z');
+  const rawSchema = readSchema();
+  const digest = createRuleValidator(rawSchema).schemaDigest;
+
+  const setup = createControlPlane({ databasePath, rawSchema, now: clock.now });
+  setup.close();
+
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec('BEGIN IMMEDIATE');
+  legacy.prepare("UPDATE governance_meta SET value = '3' WHERE key = 'schema_version'").run();
+  legacy.prepare("UPDATE governance_meta SET value = ? WHERE key = 'rule_schema_digest'").run('sha256:legacy-digest');
+  legacy.exec('PRAGMA user_version = 3');
+  legacy.exec('COMMIT');
+  const eventCountBefore = (legacy
+    .prepare('SELECT COUNT(*) AS count FROM governance_events')
+    .get() as { count: number }).count;
+  legacy.close();
+
+  const opened = openGovernanceDatabase(databasePath, digest, clock.now());
+  assert.equal(opened.migratedFrom, 3);
+  opened.db.close();
+
+  const verify = new DatabaseSync(databasePath, { readOnly: true });
+  const version = verify.prepare('PRAGMA user_version').get() as { user_version?: unknown };
+  assert.equal(Number(version.user_version), DATABASE_SCHEMA_VERSION);
+  const meta = new Map(
+    (verify.prepare('SELECT key, value FROM governance_meta').all() as unknown as Array<{ key: string; value: string }>)
+      .map((row) => [row.key, row.value]),
+  );
+  assert.equal(meta.get('schema_version'), '4');
+  assert.equal(meta.get('rule_schema_digest'), digest);
+  const eventCountAfter = (verify
+    .prepare('SELECT COUNT(*) AS count FROM governance_events')
+    .get() as { count: number }).count;
+  assert.equal(eventCountAfter, eventCountBefore);
+  verify.close();
+
+  const reopened = openGovernanceDatabase(databasePath, digest, clock.now());
+  assert.equal(reopened.migratedFrom, null);
+  reopened.db.close();
 });
 
 /**

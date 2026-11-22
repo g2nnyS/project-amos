@@ -212,7 +212,6 @@ test('invalid tables fail closed as a whole', () => {
     'missing source field': [
       baseRule({ source: { repo: 'r', rev: 'v', path: 'p', section: 's', lines: '1' } }),
     ],
-    'null source': [baseRule({ source: null })],
     'empty deterministic predicate': [baseRule({ predicate: [] })],
     'non-array deterministic predicate': [baseRule({ predicate: null })],
     'advisory with predicate': [
@@ -332,6 +331,18 @@ test('empty or whitespace action fields always fail closed with empty matches', 
       NOW,
     ),
     ENGINE_ERROR,
+  );
+});
+
+test('source may be null and mixes with fully-cited rules in one table', () => {
+  const uncited = baseRule({ id: 'uncited', source: null });
+  const cited = baseRule({ id: 'cited', predicate: [call('op_in', { operations: ['file_write'] })] });
+
+  assertValidTable([uncited]);
+  assertValidTable([uncited, cited]);
+  assert.deepEqual(
+    evaluateWithMatches(action(), [uncited, cited], NOW).matched_rule_ids,
+    ['uncited'],
   );
 });
 
@@ -707,11 +718,12 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
       assert.ok(field in rule, `${String(rule.id)} is missing ${field}`);
     }
 
-    const source = rule.source as Record<string, unknown>;
-    assert.equal(typeof source, 'object');
-    assert.ok(source !== null);
-    for (const field of ['repo', 'rev', 'path', 'section', 'lines', 'quote']) {
-      assert.equal(typeof source[field], 'string', `${String(rule.id)} source.${field}`);
+    const source = rule.source as Record<string, unknown> | null;
+    if (source !== null) {
+      assert.equal(typeof source, 'object');
+      for (const field of ['repo', 'rev', 'path', 'section', 'lines', 'quote']) {
+        assert.equal(typeof source[field], 'string', `${String(rule.id)} source.${field}`);
+      }
     }
     assert.equal(typeof rule.probe, 'string');
     assert.ok((rule.probe as string).trim().length > 0);
