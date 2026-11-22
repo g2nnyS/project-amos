@@ -35,7 +35,7 @@ const zhCN = {
     rationale: '理由',
   },
   roles: {
-    human: '人',
+    human: '人类',
     agent: 'Agent',
     authenticated: '已认证',
   },
