@@ -176,7 +176,6 @@ test('findAmosPluginEntry distinguishes identical, different and absent entries'
   const planned = {
     package: adapterDir,
     options: {
-      mode: 'log-only',
       rulesPath: '/repo/constraints/rules.yaml',
       schemaPath: '/repo/constraints/schema.json',
       logPath: '/repo/spike/logs/opencode.jsonl',
@@ -184,7 +183,14 @@ test('findAmosPluginEntry distinguishes identical, different and absent entries'
   };
   const identical = JSON.stringify({ plugins: [planned] }, null, 2);
   const different = JSON.stringify(
-    { plugins: [{ ...planned, options: { ...planned.options, mode: 'enforcing' } }] },
+    {
+      plugins: [
+        {
+          ...planned,
+          options: { ...planned.options, rulesPath: '/elsewhere/rules.yaml' },
+        },
+      ],
+    },
     null,
     2,
   );
@@ -282,7 +288,6 @@ test('opencode install creates a global config with the absolute adapter entry',
   assert.deepEqual(
     asRecord(entries[0]!.options),
     {
-      mode: 'log-only',
       rulesPath: join(repoRoot, 'constraints/rules.yaml'),
       schemaPath: join(repoRoot, 'constraints/schema.json'),
       logPath: join(repoRoot, 'spike/logs/opencode.jsonl'),
@@ -355,27 +360,21 @@ test('opencode install is idempotent and refuses a different amos entry without 
   assert.equal(readFileSync(target, 'utf8'), installedText);
 
   const adapterDir = join(repoRoot, 'dist/adapters/opencode-v2');
-  const different = JSON.stringify(
-    {
-      plugins: [
-        { package: adapterDir, options: { mode: 'enforcing' } },
-      ],
+  const legacyEntry = {
+    package: adapterDir,
+    options: {
+      mode: 'log-only',
+      rulesPath: join(repoRoot, 'constraints/rules.yaml'),
+      schemaPath: join(repoRoot, 'constraints/schema.json'),
+      logPath: join(repoRoot, 'spike/logs/opencode.jsonl'),
     },
-    null,
-    2,
-  );
+  };
+  const different = JSON.stringify({ plugins: [legacyEntry] }, null, 2);
   writeFileSync(target, `${different}\n`);
 
   const preview = await installer.preview('opencode', environment(home));
   assert.equal(preview.state, 'conflict');
-  assert.equal(
-    preview.existing,
-    JSON.stringify(
-      { package: adapterDir, options: { mode: 'enforcing' } },
-      null,
-      2,
-    ),
-  );
+  assert.equal(preview.existing, JSON.stringify(legacyEntry, null, 2));
 
   await assert.rejects(
     installer.install('opencode', environment(home)),

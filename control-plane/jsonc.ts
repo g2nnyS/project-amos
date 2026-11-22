@@ -387,7 +387,6 @@ function plannedOpencodeEntry(adapterDir: string): Record<string, unknown> {
   return {
     package: adapterDir,
     options: {
-      mode: 'log-only',
       rulesPath: deriveRepoPath(adapterDir, 'constraints/rules.yaml'),
       schemaPath: deriveRepoPath(adapterDir, 'constraints/schema.json'),
       logPath: deriveRepoPath(adapterDir, 'spike/logs/opencode.jsonl'),

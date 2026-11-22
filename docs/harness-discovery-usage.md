@@ -46,9 +46,9 @@ Amos 插件按文件系统标记检测（Pi 的 `~/.pi` 与 OpenCode 配置根�
 对已探测到的 Pi 或 OpenCode，行内提供“接入 Amos 插件”按钮，把编译后的 Amos 适配器接入本机：
 
 1. **Pi**：写入 `~/.pi/agent/extensions/amos.js`，内容一行转发到本仓编译产物 `dist/adapters/pi/index.js`。这是 Pi 的用户级扩展目录，随 Pi 自动加载；项目级 `.pi/extensions` 仍需 `--approve`。
-2. **OpenCode**：在全局配置 `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc` 中追加 Amos 插件项（`package` 指向本仓 `dist/adapters/opencode-v2`，`rulesPath`/`schemaPath`/`logPath` 均为绝对路径）。已存在的配置、其他插件项与注释保持原样；现有配置无法安全解析时拒绝写入并提示人工处理。
+2. **OpenCode**：在全局配置 `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc` 中追加 Amos 插件项（`package` 指向本仓 `dist/adapters/opencode-v2`，`rulesPath`/`schemaPath`/`logPath` 均为绝对路径）。插件选项不设置 `mode`；Console 的项目配置通过 `.pi/amos.managed.json` 控制观察或受管状态。已存在的配置、其他插件项与注释保持原样；现有配置无法安全解析时拒绝写入并提示人工处理。
 
-确认前界面展示写入位置与完整内容；已安装时幂等跳过；已有内容与计划不同时报冲突，不会自动覆盖。安装是用户级一次性动作，所有项目生效；助手重新加载后加载插件，插件本身仍是 Stage A 观察者，managed 模式需按项目显式开启。
+确认前界面展示写入位置与完整内容；已安装时幂等跳过；已有内容与计划不同时报冲突，不会自动覆盖。安装是用户级一次性动作，所有项目生效；助手重新加载后加载插件。缺少项目投影时插件保持观察器回退。
 
 API：`GET /api/harnesses/plugin?harness=pi|opencode` 返回预览；`POST /api/harnesses/plugin`（human + 浏览器变更）执行安装。
 

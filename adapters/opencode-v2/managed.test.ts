@@ -75,7 +75,6 @@ function createFixture(rules: readonly VersionedRule[]): Fixture {
 
 function managedOptions(fixture: Fixture): Record<string, unknown> {
   return {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),
@@ -263,7 +262,6 @@ test('a generated managed projection overrides hand-written options', async (t) 
     JSON.stringify(projection(fixture)),
   );
   const plugin = await setup(t, {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),
@@ -292,7 +290,6 @@ test('projection v2 reports disabled without observer or managed side effects', 
     JSON.stringify(projected),
   );
   const plugin = await setup(t, {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),
@@ -325,7 +322,6 @@ test('projection v2 log-only loads the observer without enforcing', async (t) =>
     JSON.stringify(projected),
   );
   const plugin = await setup(t, {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),
@@ -358,7 +354,6 @@ test('log-only receipts require successful observer hook registration', async (t
     JSON.stringify(projected),
   );
   await setup(t, {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),
@@ -430,7 +425,6 @@ test('an invalid managed projection fails closed', async (t) => {
     JSON.stringify({ format: 'amos-managed-host-projection', version: 1 }),
   );
   const plugin = await setup(t, {
-    mode: 'log-only',
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath: join(fixture.auditDir, 'shadow.jsonl'),

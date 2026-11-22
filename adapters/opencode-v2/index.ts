@@ -196,12 +196,11 @@ const WORKFLOW_GATE_TOOL_BLOCKED = "amos_workflow_gate_tool_blocked";
 const WORKFLOW_GATE_CONFIG_ERROR = "amos_workflow_gate_config_error";
 
 /**
- * Fixed code for an explicit `mode: "strict"` option. Strict mode requires the
- * separate controlled host entrypoint; setup rejects before registering any
- * hook so the ordinary observer plugin never runs unguarded.
+ * Fixed code for the retired `mode` plugin option. Log-only/managed selection
+ * is owned by the Console-generated host projection; setup rejects before
+ * registering any hook instead of silently ignoring a stale option.
  */
-const AMOS_STRICT_REQUIRES_CONTROLLED_HOST =
-  "amos_strict_requires_controlled_host";
+const AMOS_MODE_OPTION_REMOVED = "amos_mode_option_removed";
 
 const GUIDANCE_INSTRUCTION_KEY = "amos.workflow.guidance";
 const MAX_GUIDANCE_SESSIONS = 64;
@@ -287,20 +286,24 @@ function requiredPath(
 }
 
 /**
- * The security adapter remains Stage A `log-only`. The engineering workflow
- * gate is a separate, explicitly opt-in option and never changes this mode.
+ * The security adapter is a log-only observer unless a Console-generated host
+ * projection enables Managed enforcement. The engineering workflow gate is a
+ * separate, explicitly opt-in option and never changes this mode.
  */
 function readConfig(
   options: Record<string, unknown>,
   directory: string,
 ): AuditConfig {
-  // An explicit strict request is never handled here: setup must reject before
-  // any hook is registered rather than silently continuing in log-only mode.
-  if (options.mode === "strict") {
-    throw new Error(AMOS_STRICT_REQUIRES_CONTROLLED_HOST);
+  // The retired option is rejected for every value, including `strict`, so a
+  // stale configuration stops before any hook is registered.
+  if ("mode" in options) {
+    throw new Error(
+      `${AMOS_MODE_OPTION_REMOVED}: the "mode" plugin option was removed; ` +
+        "log-only/managed is controlled by the Console host projection " +
+        "(.pi/amos.managed.json). Remove options.mode.",
+    );
   }
   if (!isAbsolute(directory)) throw new Error("OpenCode location must be absolute");
-  if (options.mode !== "log-only") throw new Error("Only log-only mode is enabled in stage A");
   return {
     directory,
     rulesPath: requiredPath(options, "rulesPath", directory),
@@ -738,7 +741,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
   const loadJev = deps.loadJevConfig ?? loadJevConfig;
 
   return {
-    id: "amos-opencode-v2-log-only",
+    id: "amos-opencode-v2",
     async setup(ctx: PluginContext) {
       const options = ctx.options ?? {};
       const config = readConfig(options, ctx.location.directory);
