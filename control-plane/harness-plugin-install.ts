@@ -40,7 +40,6 @@ export interface HarnessPluginEnvironment {
 interface OpencodePluginEntry {
   readonly package: string;
   readonly options: {
-    readonly mode: 'log-only';
     readonly rulesPath: string;
     readonly schemaPath: string;
     readonly logPath: string;
@@ -186,7 +185,6 @@ export class HarnessPluginInstaller {
     return {
       package: this.opencodeAdapterDir,
       options: {
-        mode: 'log-only',
         rulesPath: this.rulesPath,
         schemaPath: this.schemaPath,
         logPath: this.logPath,

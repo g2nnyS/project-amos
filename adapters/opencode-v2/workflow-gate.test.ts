@@ -110,7 +110,6 @@ function createMock(
 
 function baseOptions(logPath: string): Record<string, unknown> {
   return {
-    mode: "log-only",
     rulesPath: RULES,
     schemaPath: SCHEMA,
     logPath,

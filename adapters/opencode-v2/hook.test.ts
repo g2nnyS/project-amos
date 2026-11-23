@@ -32,7 +32,6 @@ async function setupHook(t: any, optionOverrides: Record<string, unknown> = {}) 
   const cleanup = await plugin.setup({
     location: { directory: WORKSPACE },
     options: {
-      mode: "log-only",
       rulesPath: RULES,
       schemaPath: SCHEMA,
       logPath,
@@ -224,22 +223,57 @@ test("audit write failure is visible once without leaking path or payload", asyn
   assert.equal(errors[0]?.includes(root), false);
 });
 
-test("missing explicit configuration and non-log-only modes fail setup", async () => {
+test("plugin id is neutral and setup accepts options without a mode", async (t) => {
+  assert.equal(plugin.id, "amos-opencode-v2");
+  const hook = await setupHook(t);
+  hook.call({ tool: "read", input: { path: join(WORKSPACE, "constraints", "rules.yaml") } });
+  const entries = hook.entries();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].verdict, "log");
+});
+
+test("without a host projection the adapter remains the default observer", async (t) => {
+  const hook = await setupHook(t);
+  const writeTarget = join(WORKSPACE, "docs", "projection-absent.md");
+  hook.call({ tool: "write", input: { path: writeTarget, content: "projection absent" } });
+
+  const [entry] = hook.entries();
+  assert.equal(entry.verdict, "confirm");
+  assert.equal(existsSync(writeTarget), false);
+  assert.equal(existsSync(join(WORKSPACE, ".pi", "runtime.opencode.json")), false);
+});
+
+test("missing explicit configuration fails setup", async () => {
   const base = {
     location: { directory: ROOT },
     tool: { hook: async () => ({ dispose: async () => {} }) },
   };
   await assert.rejects(plugin.setup({
     ...base,
-    options: { mode: "log-only" },
+    options: {},
   } as Context), /rulesPath/);
-  await assert.rejects(plugin.setup({
-    ...base,
-    options: { mode: "enforce", rulesPath: RULES, schemaPath: SCHEMA, logPath: "x" },
-  } as Context), /Only log-only/);
 });
 
-test("an explicit strict mode rejects setup with the fixed code and registers nothing", async () => {
+test("the removed log-only and strict mode options reject setup with the migration code", async () => {
+  const base = {
+    location: { directory: ROOT },
+    tool: { hook: async () => ({ dispose: async () => {} }) },
+  };
+  for (const mode of ["log-only", "strict", "enforce"]) {
+    await assert.rejects(
+      plugin.setup({
+        ...base,
+        options: { mode, rulesPath: RULES, schemaPath: SCHEMA, logPath: "x" },
+      } as Context),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.startsWith("amos_mode_option_removed") &&
+        error.message.includes("Console host projection"),
+    );
+  }
+});
+
+test("a retired strict mode rejects setup before registering any hook", async () => {
   const registrations: string[] = [];
   const context = {
     location: { directory: ROOT },
@@ -267,7 +301,7 @@ test("an explicit strict mode rejects setup with the fixed code and registers no
     plugin.setup(context),
     (error: unknown) =>
       error instanceof Error &&
-      error.message === "amos_strict_requires_controlled_host",
+      error.message.startsWith("amos_mode_option_removed"),
   );
   assert.deepEqual(registrations, []);
 });

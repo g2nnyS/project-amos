@@ -84,7 +84,7 @@ Create a project with a normalized absolute workspace path, import the repositor
 ### 3. Wire up Pi or OpenCode V2
 
 - **Pi managed gate (explicit opt-in)**: configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). The session loads the snapshot, writes a runtime receipt (`.pi/runtime.pi.json` for the v2 projection), injects `<amos-guidance>`, and gates normalized tool calls before execution.
-- **Default log-only adapters**: the root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. Default Pi setup: [Pi Adapter Guide](docs/pi-adapter.md); engineering gating and Jev configuration: [Workflow Gate](docs/workflow-gate.md).
+- **Default log-only adapters**: the root `opencode.jsonc` is pre-configured without a plugin `mode` option. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. Console project configuration controls OpenCode through `.pi/amos.managed.json`; without that projection, the observer fallback remains active. Default Pi setup: [Pi Adapter Guide](docs/pi-adapter.md); engineering gating and Jev configuration: [Workflow Gate](docs/workflow-gate.md).
 
 ### 4. Desktop application (Tauri)
 

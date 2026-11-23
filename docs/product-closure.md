@@ -122,8 +122,9 @@ Pi 与 OpenCode 都优先读取 `.pi/amos.managed.json`；缺少投影时保留�
 - 首次加载写 `.pi/runtime.opencode.json`，harness 标记为 `opencode`；
 - 未显式启用 managed 时仍保持原 Stage A log-only + 可选 workflow gate。
 
-OpenCode 没有 Pi 的同名配置层，因此支持 `options.managed`；生成投影优先
-于手写选项。managed 模式仍只覆盖已接管的工具入口，不是 OS 沙箱。
+OpenCode 插件选项不设置 `mode`。Console 项目配置生成的 `.pi/amos.managed.json`
+决定观察或受管状态，并优先于手写 `options.managed`；缺少投影且未手写 managed
+选项时保留观察器回退。managed 模式仍只覆盖已接管的工具入口，不是 OS 沙箱。
 
 ## 6. 明确限制
 
