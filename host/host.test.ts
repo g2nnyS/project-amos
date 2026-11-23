@@ -2,11 +2,12 @@
  * End-to-end tests for the managed restricted file host.
  *
  * Every test uses real temporary files and the real policy engine. No network
- * or child processes are involved.
+ * is involved; the FIFO fixture shells out to the local `mkfifo` utility.
  */
 
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -88,6 +89,15 @@ function makeWorkspace(label: string): WorkspaceFixture {
     auditDir,
     auditPath: path.join(auditDir, 'journal.jsonl'),
   };
+}
+
+function makeFifo(target: string): boolean {
+  try {
+    execFileSync('mkfifo', [target], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface HostOverrides {
@@ -855,3 +865,29 @@ test('list and search skip symlinks and search skips .git, node_modules, dist', 
   assertExecuted(searched);
   assert.deepEqual(searched.entries, ['src/match.txt']);
 });
+
+test(
+  'search skips a FIFO without hanging or reading it',
+  { timeout: 5000 },
+  async (t) => {
+    const fixture = makeWorkspace('search-fifo');
+    mkdirSync(path.join(fixture.workspace, 'src'));
+    writeFileSync(
+      path.join(fixture.workspace, 'src', 'match.txt'),
+      'has NEEDLE',
+    );
+    if (!makeFifo(path.join(fixture.workspace, 'src', 'pipe'))) {
+      t.skip('mkfifo is unavailable');
+      return;
+    }
+
+    const searched = await hostFor(fixture).execute({
+      operationId: 'op-search-fifo',
+      tool: 'search',
+      path: '.',
+      query: 'NEEDLE',
+    });
+    assertExecuted(searched);
+    assert.deepEqual(searched.entries, ['src/match.txt']);
+  },
+);

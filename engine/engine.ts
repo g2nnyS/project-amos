@@ -339,7 +339,12 @@ function validateRule(value: unknown): Rule {
   }
 
   const expiresAt = validateTtl(value.ttl);
-  validateSource(value.source);
+  if (!('source' in value)) {
+    throw new Error('source must be present');
+  }
+  if (value.source !== null) {
+    validateSource(value.source);
+  }
 
   const probe = value.probe;
   if (typeof probe !== 'string' || probe.trim().length === 0) {

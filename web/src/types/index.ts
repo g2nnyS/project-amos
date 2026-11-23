@@ -12,8 +12,15 @@ export type LoginCredentials = { method: 'password'; password: string } | { meth
 export type SetupVerification = { token: string } | { method: 'system' } | { proof: string } | { setupGrant: string }
 export interface AmosDesktopBridge {
   readonly isDesktop: true
+  /** True when the platform keeps native window control buttons (macOS). */
+  readonly nativeWindowControls?: boolean
   authenticateSystem(challenge: string): Promise<string>
   getSetupGrant(): Promise<string | null>
+  startWindowDrag?(): Promise<void>
+  minimize?(): Promise<void>
+  toggleMaximize?(): Promise<void>
+  close?(): Promise<void>
+  pickWorkspaceFolder?(): Promise<string | null>
 }
 declare global { interface Window { amosDesktop?: AmosDesktopBridge } }
 export interface BrowserSession {

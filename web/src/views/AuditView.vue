@@ -68,7 +68,6 @@ function previous() {
       <div class="panel-header">
         <div>
           <h2 class="panel-title">{{ t('audit.listTitle') }}</h2>
-          <p class="panel-kicker">{{ t('audit.listKicker') }}</p>
         </div>
       </div>
       <div class="filterbar">

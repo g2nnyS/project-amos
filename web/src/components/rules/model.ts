@@ -6,6 +6,35 @@ export type DraftRule = Mutable<RuleRecord>
 export type DraftCandidate = Mutable<Candidate>
 export const operators = ['op_in', 'target_glob', 'target_outside_glob', 'url_query_key_in', 'target_scheme_in', 'target_host_in', 'target_host_not_in'] as const
 export type Operator = typeof operators[number]
+
+export type Field = 'operations' | 'target' | 'url_query_key' | 'scheme' | 'host'
+
+export function fieldOf(op: Operator): Field {
+  switch (op) {
+    case 'op_in': return 'operations'
+    case 'target_glob':
+    case 'target_outside_glob': return 'target'
+    case 'url_query_key_in': return 'url_query_key'
+    case 'target_scheme_in': return 'scheme'
+    case 'target_host_in':
+    case 'target_host_not_in': return 'host'
+  }
+}
+
+export function operatorsForField(field: Field): Operator[] {
+  switch (field) {
+    case 'operations': return ['op_in']
+    case 'target': return ['target_glob', 'target_outside_glob']
+    case 'url_query_key': return ['url_query_key_in']
+    case 'scheme': return ['target_scheme_in']
+    case 'host': return ['target_host_in', 'target_host_not_in']
+  }
+}
+
+export function defaultOperatorForField(field: Field): Operator {
+  return operatorsForField(field)[0]!
+}
+
 export function predicate(op: Operator): RulePredicate {
   switch (op) {
     case 'op_in': return { op, args: { operations: [] } }
@@ -17,8 +46,8 @@ export function predicate(op: Operator): RulePredicate {
 }
 export function values(p: RulePredicate): string[] { return Object.values(p.args)[0] ?? [] }
 export function newRule(id: string): DraftRule {
-  // Start from a schema-valid project rule so "add" never produces a draft
-  // that can only be fixed by filling every provenance field by hand.
+  // Start from a schema-valid project rule; provenance citations are
+  // optional and left null until a human fills them in.
   return {
     id,
     dimension: 'project',
@@ -30,14 +59,7 @@ export function newRule(id: string): DraftRule {
     scope: 'project',
     ttl: null,
     owner: 'human',
-    source: {
-      repo: 'local-project',
-      rev: 'v1',
-      path: '.pi/amos.json',
-      section: 'project rule',
-      lines: '1',
-      quote: 'Project-authored rule.',
-    },
+    source: null,
     probe: 'Project-authored rule.',
     policy_class: 'security',
     enforcement: 'runtime',

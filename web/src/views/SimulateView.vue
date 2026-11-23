@@ -63,10 +63,6 @@ async function simulate() {
   <div class="page space-y-4">
     <PageHeader :title="t('simulate.title')" :description="t('simulate.description')" />
 
-    <div class="rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      {{ t('simulate.notice') }}
-    </div>
-
     <div v-if="governance.loading" class="panel p-5 text-sm" role="status">{{ t('simulate.loading') }}</div>
     <div v-else-if="governance.error" class="panel p-5 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.activeProjectId ? governance.refreshProject() : governance.initialize()">{{ t('common.retry') }}</button></div>
     <EmptyState v-else-if="!governance.activeProject" :title="t('common.selectProject')" :description="t('simulate.emptyProject')" />
@@ -74,7 +70,7 @@ async function simulate() {
 
     <div v-else class="grid gap-4 lg:grid-cols-2">
       <section class="panel">
-        <div class="panel-header"><div><h2 class="panel-title">{{ t('simulate.inputTitle') }}</h2><p class="panel-kicker">{{ t('simulate.inputKicker') }}</p></div></div>
+        <div class="panel-header"><div><h2 class="panel-title">{{ t('simulate.inputTitle') }}</h2></div></div>
         <form class="space-y-4 p-4" @submit.prevent="simulate">
           <label class="field">
             <span class="field-label">{{ t('simulate.tool') }}</span>
@@ -101,7 +97,7 @@ async function simulate() {
       </section>
 
       <section class="panel">
-        <div class="panel-header"><div><h2 class="panel-title">{{ t('simulate.resultTitle') }}</h2><p class="panel-kicker">{{ t('simulate.resultKicker') }}</p></div></div>
+        <div class="panel-header"><div><h2 class="panel-title">{{ t('simulate.resultTitle') }}</h2></div></div>
         <div v-if="result" class="space-y-3 p-4 text-sm">
           <div v-if="provenance" class="rounded-md border border-border bg-surface p-3 text-xs leading-relaxed">
             <p class="font-medium">{{ t('simulate.provenance', { version: provenance.version }) }}</p>

@@ -1,4 +1,4 @@
-import { boundedCopy, canonicalJson, deepFreeze, digest, list, record, text, uniqueStrings, workspace } from '../activation/json.ts';
+import { boundedCopy, deepFreeze, digest, list, record, text, uniqueStrings, workspace } from '../activation/json.ts';
 import { verifyProjectActivationSnapshot } from '../activation/injector.ts';
 import { assertValidTable, evaluatePolicy } from '../engine/engine.ts';
 import { AutonomyError, ENVELOPE_DIGEST_DOMAIN, MAX_AUTHORIZATION_AGE_MS, MAX_FILE_CONTENT_BYTES } from './contracts.ts';
@@ -23,36 +23,6 @@ function safePath(value: unknown): string {
 }
 const nullable = (x: unknown) => x === null ? null : text(x);
 const subset = (a: readonly string[], b: readonly string[]) => a.every(x => b.includes(x));
-function validateActiveRules(input: unknown): Record<string, unknown>[] {
-  const seen = new Set<string>();
-  return list(input).map(value => {
-    const item = record(value, ['id', 'version', 'mandatory', 'rule', 'injection']);
-    const id = text(item.id);
-    if (seen.has(id)
-    || !integer(item.version)
-    || item.version < 1
-    || typeof item.mandatory !== 'boolean') {
-      throw new Error('invalid_active_rule');
-    }
-    seen.add(id);
-    if (item.rule === null
-    || typeof item.rule !== 'object'
-    || Array.isArray(item.rule)) {
-      throw new Error('invalid_active_rule');
-    }
-    const rule = item.rule as Record<string, unknown>;
-    if (rule.id !== id) throw new Error('invalid_active_rule');
-    if (!['deterministic', 'advisory_only'].includes(rule.expressivity as string)
-      || !['runtime', 'ci', 'server', 'advisory'].includes(rule.enforcement as string)) {
-      throw new Error('invalid_active_rule');
-    }
-    if (item.injection !== null && (typeof item.injection !== 'object'
-    || Array.isArray(item.injection))) {
-      throw new Error('invalid_active_rule');
-    }
-    return item;
-  });
-}
 function context(x: unknown): TrustedSessionContext {
   const r = record(x, ctxKeys);
   for (const k of ctxKeys) text(r[k]);
@@ -131,7 +101,6 @@ export function createAuthorizationCore(options: unknown): AuthorizationCore {
     const snapshotDigest = snapshot.digest;
     const projectId = snapshot.project.projectId;
     const root = safePath(snapshot.project.workspace);
-    const activationDigest = snapshot.activationDigest;
     const rules = snapshot.enforcement.runtime.rules;
     if (rules.length) assertValidTable(rules);
     const leases = list(o.capabilities).map(x => lease(x, root, projectId, snapshotDigest));

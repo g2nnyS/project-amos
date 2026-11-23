@@ -9,7 +9,7 @@ import {
   rename,
   rm,
 } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 
 import {
   loadJevConfig,
@@ -34,51 +34,35 @@ export class JevSettingsError extends Error {
 }
 
 export interface SaveJevSettingsOptions {
-  readonly projectId: string;
-  readonly workspace: string;
-  readonly currentPath: string | null;
   readonly input: unknown;
 }
 
-export interface SavedJevSettings {
-  readonly path: string;
-  readonly view: JevSettingsView;
-}
-
-/** Stores literal keys below the private control-plane state directory. */
+/** Stores the deployment-global literal key below the private state directory. */
 export class JevSettingsStore {
+  readonly path: string;
+
   constructor(
     private readonly dataDir: string,
     private readonly fetchImpl?: typeof fetch,
-  ) {}
-
-  pathFor(projectId: string): string {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(projectId)) {
-      throw new JevSettingsError('jev_config_invalid');
-    }
-    return join(this.dataDir, 'jev', projectId, 'jev.local.json');
+  ) {
+    this.path = join(dataDir, 'jev', 'jev.local.json');
   }
 
-  async read(path: string | null): Promise<JevSettingsView> {
-    if (path === null || await lstat(path).catch(() => null) === null) {
+  async read(): Promise<JevSettingsView> {
+    if (await lstat(this.path).catch(() => null) === null) {
       return { config: null, hasApiKey: false };
     }
     try {
-      const loaded = loadJevConfig(path, { fetchImpl: this.fetchImpl });
+      const loaded = loadJevConfig(this.path, { fetchImpl: this.fetchImpl });
       return { config: loaded.config, hasApiKey: true };
     } catch {
       throw new JevSettingsError('jev_config_unavailable');
     }
   }
 
-  async save(options: SaveJevSettingsOptions): Promise<SavedJevSettings> {
-    if (contains(resolve(options.workspace), resolve(this.dataDir))) {
-      throw new JevSettingsError('jev_config_invalid');
-    }
+  async save(options: SaveJevSettingsOptions): Promise<JevSettingsView> {
     const input = asRecord(options.input);
     if (input === null) throw new JevSettingsError('jev_config_invalid');
-    const path = this.pathFor(options.projectId);
-    const currentPath = options.currentPath ?? path;
 
     const suppliedKey = input.apiKey;
     if (suppliedKey !== undefined && typeof suppliedKey !== 'string') {
@@ -88,9 +72,9 @@ export class JevSettingsStore {
     let apiKey: unknown = suppliedKey;
     if (keepExisting) {
       try {
-        loadJevConfig(currentPath, { fetchImpl: this.fetchImpl });
+        loadJevConfig(this.path, { fetchImpl: this.fetchImpl });
         const existing: unknown = JSON.parse(
-          await readFile(currentPath, 'utf8'),
+          await readFile(this.path, 'utf8'),
         );
         const record = asRecord(existing);
         if (record === null) throw new Error('invalid');
@@ -123,17 +107,19 @@ export class JevSettingsStore {
     }
 
     try {
-      await writeProtectedJson(join(this.dataDir, 'jev', options.projectId), path, raw);
+      await writeProtectedJson(join(this.dataDir, 'jev'), this.path, raw);
     } catch {
       throw new JevSettingsError('jev_config_unavailable');
     }
-    return { path, view: { config: parsed.config, hasApiKey: true } };
+    return { config: parsed.config, hasApiKey: true };
   }
 
-  async test(path: string | null): Promise<JevSettingsTestResult> {
-    if (path === null) throw new JevSettingsError('jev_not_configured');
+  async test(): Promise<JevSettingsTestResult> {
+    if (await lstat(this.path).catch(() => null) === null) {
+      throw new JevSettingsError('jev_not_configured');
+    }
     try {
-      const loaded = loadJevConfig(path, { fetchImpl: this.fetchImpl });
+      const loaded = loadJevConfig(this.path, { fetchImpl: this.fetchImpl });
       const result = await loaded.systemOneClient.request({
         state: { purpose: 'amos_connection_test' },
         questions: {
@@ -201,11 +187,6 @@ function assertSecretFile(stat: Stats): void {
     }
     if ((stat.mode & 0o777) !== 0o600) throw new Error('invalid');
   }
-}
-
-function contains(workspace: string, candidate: string): boolean {
-  const path = relative(workspace, candidate);
-  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

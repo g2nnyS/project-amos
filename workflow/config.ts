@@ -46,7 +46,6 @@ export function parseWorkflowGateConfig(
   }
   if (
     typeof value !== 'object' ||
-    value === null ||
     Array.isArray(value)
   ) {
     throw new WorkflowConfigError();

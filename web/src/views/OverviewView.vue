@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ShieldAlert, FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle, Timer, Activity } from 'lucide-vue-next'
+import { FileCheck, GitPullRequest, History, Eye, FlaskConical, Lock, AlertTriangle, Timer, Activity } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import HarnessLoadReportCards from '@/components/governance/HarnessLoadReportCards.vue'
@@ -11,12 +11,13 @@ import { api } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { t } from '@/i18n'
 import { auditEventLabel, roleLabel } from '@/i18n/labels'
-import { useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
 import type { GovernanceEvent } from '@/types'
 
 const governance = useGovernanceStore()
 const auth = useAuthStore()
+const isGlobal = computed(() => isGlobalProject(governance.activeProject))
 const audit = ref<GovernanceEvent[]>([])
 const auditError = ref('')
 const auditLoading = ref(false)
@@ -45,8 +46,8 @@ async function loadAudit() {
   }
 }
 
-watch(() => governance.activeProjectId, () => { void loadAudit(); void governance.refreshRuntime() }, { immediate: true })
-onMounted(() => { void loadAudit(); void governance.refreshRuntime() })
+watch(() => governance.activeProjectId, () => { void loadAudit(); if (!isGlobal.value) void governance.refreshRuntime() }, { immediate: true })
+onMounted(() => { void loadAudit(); if (!isGlobal.value) void governance.refreshRuntime() })
 
 const stats = computed(() => [
   { label: t('overview.stats.currentVersion'), value: governance.currentVersion == null ? t('common.notYetPublished') : `v${governance.currentVersion}`, note: governance.currentVersion == null ? t('overview.stats.noPublishedVersion') : t('overview.stats.publishedVersion') },
@@ -171,10 +172,6 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
       </template>
     </PageHeader>
 
-    <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      <strong class="text-foreground">{{ t('overview.boundaryLead') }}</strong>{{ t('overview.boundaryText') }}
-    </div>
-
     <div v-if="governance.error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.initialize()">{{ t('common.retry') }}</button></div>
     <div v-if="governance.loading" class="py-8 text-sm text-muted-foreground" role="status">{{ t('overview.loading') }}</div>
     <div v-else-if="governance.error" class="text-xs text-muted-foreground">{{ t('overview.dataUnavailable') }}</div>
@@ -182,10 +179,11 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
 
     <template v-else>
       <section class="panel mb-4">
-        <div class="panel-header"><div><h2 class="panel-title">{{ t('overview.snapshot.title') }}</h2><p class="panel-kicker">{{ t('overview.snapshot.kicker') }}</p></div><RouterLink to="/versions" class="text-xs text-primary hover:underline">{{ t('overview.snapshot.history') }}</RouterLink></div>
-        <dl class="grid gap-4 p-4 text-xs sm:grid-cols-2 xl:grid-cols-4">
-          <div><dt class="field-label">{{ t('overview.snapshot.project') }}</dt><dd class="mt-1 break-all font-medium">{{ governance.activeProject.name }}</dd><dd class="mt-1 break-all font-mono text-muted-foreground">{{ governance.activeProject.id }}</dd></div>
-          <div><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.activeProject.workspace }}</dd></div>
+        <div class="panel-header"><div><h2 class="panel-title">{{ t('overview.snapshot.title') }}</h2></div><RouterLink to="/versions" class="text-xs text-primary hover:underline">{{ t('overview.snapshot.history') }}</RouterLink></div>
+        <dl class="grid gap-4 p-4 text-xs" :class="isGlobal ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 xl:grid-cols-4'">
+          <div><dt class="field-label">{{ t('overview.snapshot.project') }}</dt><dd class="mt-1 break-all font-medium">{{ isGlobal ? t('app.globalProject') : governance.activeProject.name }}</dd><dd class="mt-1 break-all font-mono text-muted-foreground">{{ governance.activeProject.id }}</dd></div>
+          <div v-if="!isGlobal"><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.activeProject.workspace }}</dd></div>
+          <div v-else><dt class="field-label">{{ t('overview.snapshot.workspace') }}</dt><dd class="mt-1 text-muted-foreground">{{ t('overview.snapshot.globalNote') }}</dd></div>
           <div><dt class="field-label">{{ t('overview.snapshot.publishedAt') }}</dt><dd class="mt-1">{{ governance.policy ? formatDateTime(governance.policy.createdAt) : t('common.notYetPublished') }}</dd></div>
           <div><dt class="field-label">{{ t('overview.snapshot.digest') }}</dt><dd class="mt-1 break-all font-mono">{{ governance.policy?.snapshot.digest ?? t('overview.snapshot.noSnapshot') }}</dd></div>
         </dl>
@@ -203,7 +201,6 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('overview.audit.title') }}</h2>
-              <p class="panel-kicker">{{ t('overview.audit.kicker') }}</p>
             </div>
             <RouterLink to="/audit" class="text-xs text-muted-foreground hover:text-foreground">{{ t('overview.audit.viewAll') }}</RouterLink>
           </div>
@@ -231,7 +228,6 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
             <div class="panel-header">
               <div>
                 <h2 class="panel-title">{{ t('overview.attention.title') }}</h2>
-                <p class="panel-kicker">{{ t('overview.attention.kicker') }}</p>
               </div>
               <RouterLink to="/proposals" class="text-xs text-muted-foreground hover:text-foreground">{{ t('overview.attention.proposals') }}</RouterLink>
             </div>
@@ -244,10 +240,6 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
                   <p v-if="staleProposals.length" class="mt-1 text-warning"><AlertTriangle class="inline size-3" /> {{ t('overview.attention.stale', { count: staleProposals.length }) }}</p>
                 </div>
               </div>
-              <div class="flex items-start gap-2 text-xs text-muted-foreground">
-                <ShieldAlert class="mt-0.5 size-4" />
-                <span>{{ t('overview.attention.runtimeNote') }}</span>
-              </div>
             </div>
           </section>
 
@@ -255,16 +247,13 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
             <div class="panel-header">
               <div>
                 <h2 class="panel-title">{{ t('overview.permissions.title') }}</h2>
-                <p class="panel-kicker">{{ t('overview.permissions.kicker') }}</p>
               </div>
               <Lock class="size-4 text-muted-foreground" />
             </div>
             <div class="space-y-3 p-3 text-xs leading-relaxed text-muted-foreground">
-              <p>{{ t('overview.permissions.lead') }}</p>
               <ul class="list-disc space-y-1 pl-4">
                 <li>{{ t('overview.permissions.human') }}</li>
                 <li>{{ t('overview.permissions.agent') }}</li>
-                <li>{{ t('overview.permissions.server') }}</li>
               </ul>
             </div>
           </section>
@@ -297,11 +286,10 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
         </div>
       </div>
 
-      <section class="panel mt-4">
+      <section v-if="!isGlobal" class="panel mt-4">
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('overview.projection.title') }}</h2>
-            <p class="panel-kicker">{{ t('overview.projection.kicker') }}</p>
           </div>
         </div>
         <div class="grid gap-4 p-4 text-xs lg:grid-cols-2">
@@ -319,14 +307,13 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
               <p class="font-semibold">{{ t('overview.projection.host') }}</p>
               <span class="rounded border px-2 py-0.5 text-[10px] font-medium" :class="toneClasses[projectionView.tone]">{{ projectionView.label }}</span>
             </div>
-            <p class="mt-2 leading-relaxed text-muted-foreground">{{ t('overview.projection.hostNote') }}{{ projectionView.description }}</p>
+            <p class="mt-2 leading-relaxed text-muted-foreground">{{ projectionView.description }}</p>
             <p v-if="governance.runtime?.projection?.configDigest" class="mt-2 break-all font-mono text-[10px] text-muted-foreground">{{ t('overview.projection.configDigest', { digest: governance.runtime.projection.configDigest }) }}</p>
           </div>
         </div>
         <div class="border-t border-border p-4">
           <div class="mb-3">
             <h3 class="text-xs font-semibold">{{ t('overview.projection.reportsTitle') }}</h3>
-            <p class="mt-1 text-[11px] leading-relaxed text-muted-foreground">{{ t('overview.projection.reportsNote') }}</p>
           </div>
           <HarnessLoadReportCards :runtime="governance.runtime" />
         </div>
@@ -336,19 +323,18 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('overview.config.title') }}</h2>
-            <p class="panel-kicker">{{ t('overview.config.kicker') }}</p>
           </div>
           <Lock class="size-4 text-muted-foreground" />
         </div>
         <div v-if="configError" class="mx-4 mt-3 rounded-md border border-destructive/30 p-2 text-xs text-destructive" role="alert">{{ configError }}</div>
-        <div v-if="!governance.config" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.unavailable') }}</div>
+        <div v-if="isGlobal" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.globalNote') }}</div>
+        <div v-else-if="!governance.config" class="p-4 text-xs text-muted-foreground">{{ t('overview.config.unavailable') }}</div>
         <div v-else class="grid gap-4 p-4 text-xs lg:grid-cols-2">
           <div class="rounded-md border border-border p-3">
             <div class="flex items-center justify-between gap-3">
               <p class="font-semibold">{{ t('overview.config.overrides') }}</p>
               <span v-if="!canEditConfig" class="text-[10px] text-muted-foreground">{{ t('common.readOnly') }}</span>
             </div>
-            <p class="mt-1 leading-relaxed text-muted-foreground">{{ t('overview.config.overridesNote') }}</p>
             <div class="mt-4 space-y-3">
               <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <div><span id="project-harness-enabled-label" class="font-medium">{{ t('overview.config.enabled') }}</span><p class="mt-0.5 text-[10px] text-muted-foreground">harness.enabled</p></div>
@@ -384,10 +370,8 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
                 </Select>
               </div>
             </div>
-            <p class="mt-3 text-[10px] leading-relaxed text-muted-foreground">{{ t('overview.config.advisoryNote') }}</p>
             <div class="mt-4 rounded-md border border-info/25 bg-info/5 p-3">
               <p class="font-semibold text-info">{{ t('overview.config.effective') }}</p>
-              <p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">{{ t('overview.config.effectiveNote') }}</p>
               <dl class="mt-3 grid grid-cols-3 gap-2">
                 <div><dt class="text-[10px] text-muted-foreground">Amos</dt><dd class="mt-1 font-medium">{{ governance.config.effectiveHarness.enabled ? t('overview.config.on') : t('overview.config.off') }}</dd></div>
                 <div><dt class="text-[10px] text-muted-foreground">{{ t('overview.config.effectiveMode') }}</dt><dd class="mt-1 font-medium">{{ governance.config.effectiveHarness.mode === 'managed' ? 'Managed' : 'Log-only' }}</dd></div>
@@ -397,7 +381,7 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
             <div class="mt-3 border-t border-border pt-3 text-muted-foreground">
               <p class="leading-relaxed">{{ t('overview.config.managedNote') }}</p>
               <p class="mt-2 break-all font-mono text-[10px]">requirementEgress: {{ governance.config.managed.requirementEgress }} · grantTtlMs: {{ governance.config.managed.grantTtlMs }}</p>
-              <p class="mt-1 break-all font-mono text-[10px]">reviewer: {{ governance.config.managed.reviewer ?? t('common.notConfigured') }} · jevConfigPath: {{ governance.config.managed.jevConfigPath ?? t('common.notConfigured') }}</p>
+              <p class="mt-1 break-all font-mono text-[10px]">reviewer: {{ governance.config.managed.reviewer ?? t('common.notConfigured') }} · jev: {{ governance.jev?.config ? t('settings.jev.stateConfigured') : t('common.notConfigured') }}</p>
             </div>
           </div>
           <div class="rounded-md border border-border p-3">
@@ -418,7 +402,7 @@ const staleProposals = computed(() => pendingProposals.value.filter(p => p.baseV
         </div>
       </section>
 
-      <div class="mt-4 grid gap-4 lg:grid-cols-2">
+      <div v-if="!isGlobal" class="mt-4 grid gap-4 lg:grid-cols-2">
         <section class="panel">
           <div class="panel-header">
             <div>

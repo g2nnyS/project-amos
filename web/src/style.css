@@ -454,6 +454,35 @@
   border-color: hsl(var(--input));
 }
 
+.project-select optgroup {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.crumb-project-global {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.global-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--surface) / 0.8);
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .sidebar-add {
   display: flex;
   align-items: center;
@@ -564,14 +593,6 @@
   border-top: 1px solid hsl(var(--sidebar-border));
 }
 
-.sidebar-note {
-  margin: 0;
-  padding: 2px 6px;
-  color: hsl(var(--muted-foreground));
-  font-size: 10.5px;
-  line-height: 1.45;
-}
-
 .sidebar-toggle {
   display: flex;
   align-items: center;
@@ -600,8 +621,7 @@
 .app-shell[data-collapsed="true"] .sidebar-label,
 .app-shell[data-collapsed="true"] .project-select,
 .app-shell[data-collapsed="true"] .sidebar-add-text,
-.app-shell[data-collapsed="true"] .sidebar-toggle-text,
-.app-shell[data-collapsed="true"] .sidebar-note {
+.app-shell[data-collapsed="true"] .sidebar-toggle-text {
   display: none;
 }
 
@@ -660,6 +680,17 @@
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--background) / 0.9);
   backdrop-filter: blur(8px);
+}
+
+/* Leave room for the overlay window controls drawn by WindowControls.vue. */
+.app-topbar-window {
+  padding-right: 136px;
+}
+
+/* Room for the overlaid native traffic lights on macOS. */
+.sidebar-titlebar-spacer {
+  flex: none;
+  height: 36px;
 }
 
 .topbar-icon {
@@ -756,12 +787,6 @@
 
 @media (min-width: 768px) {
   .topbar-pill-version {
-    display: inline-flex;
-  }
-}
-
-@media (min-width: 1120px) {
-  .topbar-pill-managed {
     display: inline-flex;
   }
 }

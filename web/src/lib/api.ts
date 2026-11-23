@@ -1,4 +1,4 @@
-import type { AmosDesktopBridge, AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, LoginCredentials, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SetupVerification, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
+import type { AmosDesktopBridge, AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessPluginInstallPreview, HarnessPluginInstallResult, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, LoginCredentials, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SetupVerification, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
 import { t } from '../i18n/index.js'
 
 export class ApiError extends Error {
@@ -141,9 +141,9 @@ export class ApiClient {
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
   config(id: string): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`) }
   updateConfig(id: string, input: UpdateProjectConfigInput): Promise<ProjectConfigView> { return this.json(`/api/projects/${pathId(id)}/config`, 'POST', input) }
-  jevSettings(id: string): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`) }
-  saveJevSettings(id: string, input: JevSettingsInput): Promise<JevSettingsView> { return this.json(`/api/projects/${pathId(id)}/jev`, 'POST', input) }
-  testJevSettings(id: string): Promise<{ ok: true; model: string }> { return this.json(`/api/projects/${pathId(id)}/jev/test`, 'POST', {}) }
+  jevSettings(): Promise<JevSettingsView> { return this.json('/api/jev') }
+  saveJevSettings(input: JevSettingsInput): Promise<JevSettingsView> { return this.json('/api/jev', 'POST', input) }
+  testJevSettings(): Promise<{ ok: true; model: string }> { return this.json('/api/jev/test', 'POST', {}) }
   tightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`) }
   applyTightening(id: string, input: { templateId: string; ttlMs: number }): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`, 'POST', input) }
   expireTightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten/expire`, 'POST', {}) }
@@ -161,6 +161,8 @@ export class ApiClient {
   audit(query: AuditQuery = {}): Promise<AuditPage> { const params = new URLSearchParams(); if (query.projectId !== undefined) params.set('projectId', query.projectId); if (query.limit !== undefined) params.set('limit', String(query.limit)); if (query.before !== undefined) params.set('before', String(query.before)); return this.json(`/api/audit${params.size ? `?${params}` : ''}`) }
   observations(): Promise<ObservationReport> { return this.json('/api/audit/observations') }
   discoverHarnesses(): Promise<import('../types/index.js').HarnessDiscoveryResult> { return this.json('/api/harnesses') }
+  harnessPluginPreview(harness: 'pi' | 'opencode'): Promise<HarnessPluginInstallPreview> { return this.json(`/api/harnesses/plugin?harness=${harness}`) }
+  installHarnessPlugin(harness: 'pi' | 'opencode'): Promise<HarnessPluginInstallResult> { return this.json('/api/harnesses/plugin', 'POST', { harness }) }
   simulate(id: string, input: SimulateInput): Promise<PolicyDecision> { return this.json(`/api/projects/${pathId(id)}/simulate`, 'POST', input) }
   async exportVersion(id: string, version: number, format: 'yaml' | 'json'): Promise<void> {
     if (format !== 'yaml' && format !== 'json') throw new ApiError('invalid_format', t('api.invalidFormat'))

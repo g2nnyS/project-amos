@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_dialog::DialogExt;
 
 const URL_TIMEOUT: Duration = Duration::from_secs(15);
 const URL_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -22,20 +23,31 @@ const MAIN_WINDOW: &str = "main";
 const SETUP_GRANT_BYTES: usize = 32;
 
 /// Minimal desktop bridge, installed before any page script. It exposes the
-/// one-use first-password grant only; no other desktop capability is reachable
-/// from the console document. The origin and top-frame checks keep the bridge
-/// out of iframes and any other document.
+/// one-use first-password grant, the window controls the frameless window
+/// needs and the system folder picker for the new-project dialog; no other
+/// desktop capability is reachable from the console document. The origin and
+/// top-frame checks keep the bridge out of iframes and any other document.
 fn desktop_bridge(service_url: &Url) -> String {
     let origin = service_url.origin().ascii_serialization();
     let origin = serde_json::to_string(&origin).unwrap_or_else(|_| "\"\"".to_string());
+    let native_controls = cfg!(target_os = "macos");
     format!(
         r#"(() => {{
   if (window.top !== window.self) return;
   if (window.location.origin !== {origin}) return;
   if ('amosDesktop' in window) return;
-  const invokeGrant = () => window.__TAURI__.core.invoke('get_setup_grant');
+  const invoke = command => window.__TAURI__.core.invoke(command);
   Object.defineProperty(window, 'amosDesktop', {{
-    value: Object.freeze({{ isDesktop: true, getSetupGrant: () => invokeGrant() }}),
+    value: Object.freeze({{
+      isDesktop: true,
+      nativeWindowControls: {native_controls},
+      getSetupGrant: () => invoke('get_setup_grant'),
+      startWindowDrag: () => invoke('start_window_drag'),
+      minimize: () => invoke('minimize_main_window'),
+      toggleMaximize: () => invoke('toggle_main_window_maximize'),
+      close: () => invoke('close_main_window'),
+      pickWorkspaceFolder: () => invoke('pick_workspace_directory')
+    }}),
     writable: false,
     enumerable: true,
     configurable: false
@@ -353,6 +365,95 @@ fn get_setup_grant(
     Ok(grant.take())
 }
 
+/// Shared trust boundary for console document window controls: the main
+/// window while it shows the live service document, exactly like the grant.
+fn window_control_guard(window: &WebviewWindow, state: &ServiceState) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW {
+        return Err("window_control_denied".to_string());
+    }
+    let current = window.url().map_err(|_| "window_control_denied".to_string())?;
+    if !is_service_document(&current, &state.service_url) {
+        return Err("window_control_denied".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn minimize_main_window(window: WebviewWindow, state: State<ServiceState>) -> Result<(), String> {
+    window_control_guard(&window, &state)?;
+    window
+        .minimize()
+        .map_err(|_| "window_control_failed".to_string())
+}
+
+#[tauri::command]
+fn toggle_main_window_maximize(
+    window: WebviewWindow,
+    state: State<ServiceState>,
+) -> Result<(), String> {
+    window_control_guard(&window, &state)?;
+    let maximized = window
+        .is_maximized()
+        .map_err(|_| "window_control_failed".to_string())?;
+    let result = if maximized {
+        window.unmaximize()
+    } else {
+        window.maximize()
+    };
+    result.map_err(|_| "window_control_failed".to_string())
+}
+
+#[tauri::command]
+fn close_main_window(window: WebviewWindow, state: State<ServiceState>) -> Result<(), String> {
+    window_control_guard(&window, &state)?;
+    window
+        .close()
+        .map_err(|_| "window_control_failed".to_string())
+}
+
+#[tauri::command]
+fn start_window_drag(window: WebviewWindow, state: State<ServiceState>) -> Result<(), String> {
+    window_control_guard(&window, &state)?;
+    window
+        .start_dragging()
+        .map_err(|_| "window_control_failed".to_string())
+}
+
+/// Open the system folder picker for the new-project dialog and return the
+/// selected absolute directory, or `None` when the picker is dismissed.
+#[tauri::command]
+async fn pick_workspace_directory(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, ServiceState>,
+) -> Result<Option<String>, String> {
+    window_control_guard(&window, &state)?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |picked| {
+        let _ = sender.send(picked);
+    });
+    let picked = receiver
+        .await
+        .map_err(|_| "pick_dialog_failed".to_string())?;
+    match picked {
+        None => Ok(None),
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => path
+            .into_os_string()
+            .into_string()
+            .map(Some)
+            .map_err(|_| "pick_dialog_failed".to_string()),
+        Some(tauri_plugin_dialog::FilePath::Url(url)) => {
+            let path = url
+                .to_file_path()
+                .map_err(|_| "pick_dialog_failed".to_string())?;
+            path.into_os_string()
+                .into_string()
+                .map(Some)
+                .map_err(|_| "pick_dialog_failed".to_string())
+        }
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
@@ -372,20 +473,43 @@ fn main() {
                 Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
             let bridge = desktop_bridge(&window_url);
 
-            WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(window_url))
-                .title("Amos 控制台")
+            let mut builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(window_url))
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(960.0, 640.0)
                 .resizable(true)
                 .initialization_script(bridge)
                 .on_navigation(move |url| is_service_document(url, &service_url))
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build()?;
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+
+            // Frameless window. macOS overlays the native close/minimize/zoom
+            // buttons on the content; every other platform drops the native
+            // buttons too and the console document draws its own controls.
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                builder = builder.decorations(false);
+            }
+
+            builder.build()?;
 
             Ok(())
         })
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_setup_grant])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            get_setup_grant,
+            minimize_main_window,
+            toggle_main_window_maximize,
+            close_main_window,
+            start_window_drag,
+            pick_workspace_directory
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

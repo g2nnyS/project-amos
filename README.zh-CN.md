@@ -17,12 +17,12 @@ Amos 是一个本地运行的 AI Agent 治理与监管系统。
 
 把硬性边界写进单一的 `AGENTS.md` 或系统提示词，等于把安全托付给模型的自觉，还让全部规范一次性挤占上下文；逐条动作都等人审批，人又成了吞吐瓶颈。Amos 把这两类约束都变成版本化、可审计的数据，把治理与执行分开：
 
-- **人负责治理**：在本地控制台维护安全规则、工程规范与设计偏好，提交提案，批准后原子发布。
-- **系统在执行前裁决**：受管 harness 门按已发布的项目激活快照评估归一化工具调用——`deny` 执行前阻断，`confirm` 先停给有界 Jev 语义审查加一次性授权，`allow` 直接执行。
+- **人类负责治理**：在本地控制台维护安全规则、工程规范与设计偏好，提交提案，批准后原子发布。
+- **系统在执行前裁决**：受到管理的 harness 门禁按已发布的项目激活快照评估归一化工具调用——`deny` 执行前阻断，`confirm` 先停给有界 Jev 语义审查加一次性授权，`allow` 直接执行。
 - **Agent 同时收到指导**：同一快照编译出 advisory 投影，按区域、路径、任务标签与词元注入 `<amos-guidance>` 工程规范。
 - **每一步都有迹可查**：脱敏 JSONL 裁决、运行期回执与治理事件；不支持的工具与黑盒 Shell 显式留下覆盖记录，绝不静默丢弃。
 
-当前阶段：**Harness 层 MVP** —— Vue 治理控制台 · Tauri 桌面应用 · Pi 受管门（显式 opt-in）· 默认适配器 log-only。
+当前阶段：**Harness 层 MVP** —— Vue 治理控制台 · Tauri 桌面应用 · Pi 管理门禁（显式 opt-in）· 默认适配器 log-only。
 
 > **安全边界**：默认适配器为 log-only。`managed.enabled` 是显式 opt-in 的 Harness 层门；它**不是 OS 沙箱**，不覆盖所有入口与副作用，审计也不防篡改；OS 隔离不在本轮范围。详见[安全模型](docs/security-model.md)、[Harness gate ADR](docs/adr-harness-gate.md)与[运行期状态](docs/go-no-go.md)。
 
@@ -36,7 +36,7 @@ Amos 是一个本地运行的 AI Agent 治理与监管系统。
 - 覆盖项目、规则矩阵编辑、YAML 导入导出、校验、不可变提案、人工批准与原子发布、版本历史、回滚提案、治理审计、策略模拟与可选观察日志（启动时 `--audit-log`）。
 - 设置页分标签管理并附关于面板；Harness 探测页一键探测本机 Pi、OpenCode、Oh My Pi、Codex、Claude Code、DSH 的安装情况与 Amos 管理状态。
 
-### 受管 Harness 门（Pi / OpenCode V2，显式 opt-in）
+### 受到管理的 harness 门禁（Pi / OpenCode V2，显式 opt-in）
 
 - 真实 `tool_call` 钩子在工具执行前用激活执行投影裁决：`deny` 连同审计记录直接阻断；`confirm` 先停给 Jev 语义 reviewer（`review/jev-reviewer.ts`）与一次性 HMAC grant；`allow` 执行后由 `tool_result` 记录结果。
 - 会话加载已发布快照、写出供控制台读取的运行期回执（`loaded` / `stale` / `never` / …），并把 advisory 投影注入真实 system prompt。
@@ -83,7 +83,7 @@ npm run service        # 只编译后端，API-only 模式（不加载控制台�
 
 ### 3. 接入 Pi / OpenCode V2
 
-- **Pi 受管门（显式 opt-in）**：按[配置迁移与受管启动](docs/configuration-one-shot.md)配置 `.pi/amos.json`（`managed.enabled: true` 并指向 `.pi/activation.json`）。会话启动即加载快照、写出运行期回执（v2 投影为 `.pi/runtime.pi.json`）、注入 `<amos-guidance>` 并在工具执行前完成 `deny`/`confirm`/`allow` 裁决。
+- **Pi 管理门禁（显式 opt-in）**：按[配置迁移与受管启动](docs/configuration-one-shot.md)配置 `.pi/amos.json`（`managed.enabled: true` 并指向 `.pi/activation.json`）。会话启动即加载快照、写出运行期回执（v2 投影为 `.pi/runtime.pi.json`）、注入 `<amos-guidance>` 并在工具执行前完成 `deny`/`confirm`/`allow` 裁决。
 - **默认 log-only 观察路径**：根目录 `opencode.jsonc` 已预配置，执行 `npm run build` 后在仓库根启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程门与 Jev 配置见[工作流硬门](docs/workflow-gate.md)。
 
 ### 4. 桌面应用（Tauri）
@@ -155,7 +155,7 @@ Amos 把同一个项目激活目录拆分为同源双投影：确定性策略引
 | `adapters/` | OpenCode V2 与 Pi 事件归一化；log-only 观察器显式记录覆盖缺口；受管路径消费激活投影 |
 | `injector/` | 两阶段确定性选择、会话固定、字符预算、`<amos-guidance>` 渲染 |
 | `control-plane/` | SQLite 治理服务（单主存储）与项目/提案/版本/审计的类型化 HTTP API |
-| `managed/` + `host/` + `review/` | 受管门接线；闭集文件宿主做真实路径/符号链接/硬链接检查、审计前置；Jev 语义 reviewer 与一次性 HMAC grant |
+| `managed/` + `host/` + `review/` | 管理门禁接线；闭集文件宿主做真实路径/符号链接/硬链接检查、审计前置；Jev 语义 reviewer 与一次性 HMAC grant |
 | `decision/` | harness 捕获的 `RequirementFrame`、版本化 requirement 注册表、provider 无关的 Jev 接入 |
 | `supervisor/` | 进程内会话上下文、假设裁决与停止栅栏（Stop Fencing）核心 |
 | `workflow/` | 可选工程 Shell 门：封闭子集命令判定、固定本地检查、advisory 完成审查 |
@@ -215,7 +215,7 @@ npm run service
 
 ### 2. 接入 Pi / OpenCode V2
 
-- **Pi 受管硬门路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照并写入回执：v2 投影使用 `.pi/runtime.pi.json`，旧投影使用 `.pi/runtime.json`；工具执行前进行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
+- **Pi 管理门禁路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照并写入回执：v2 投影使用 `.pi/runtime.pi.json`，旧投影使用 `.pi/runtime.json`；工具执行前进行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
 - **默认 `log-only` 观察路径**：根目录 `opencode.jsonc` 已配置好插件，执行 `npm run build` 后在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程工作流门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
 
 ### 3. 生成人工审核工作表

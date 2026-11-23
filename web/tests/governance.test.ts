@@ -9,7 +9,8 @@ import { removeStored, writeStoredJson } from '../src/lib/storage.js'
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 const anon = { authenticated: false, csrfToken: 'anonymous' }
 const human = { authenticated: true, role: 'human', csrfToken: 'rotated' }
-const project = (id: string) => ({ id, name: id, workspace: '/tmp/project', currentVersion: null, createdAt: '2026-01-01' })
+const project = (id: string) => ({ id, name: id, workspace: '/tmp/project', currentVersion: null, createdAt: '2026-01-01', kind: 'project' as const })
+const globalProject = (id: string = 'global') => ({ id, name: 'Global rules', workspace: null, currentVersion: null, createdAt: '2026-01-01', kind: 'global' as const })
 
 test('login bootstraps CSRF then uses rotated token on same-origin mutations', async () => {
   const calls: Array<{ path: string; init?: RequestInit }> = []
@@ -22,29 +23,52 @@ test('login bootstraps CSRF then uses rotated token on same-origin mutations', a
   assert.equal((calls[2].init?.headers as Record<string, string>)['Content-Type'], 'application/json')
 })
 
-test('Jev settings use project routes, CSRF mutations and public response contracts', async () => {
+test('Jev settings use global routes, CSRF mutations and public response contracts', async () => {
   const calls: Array<{ path: string; init?: RequestInit }> = []
   const config = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api', defaultModel: 'model-a', models: ['model-a'], timeoutMs: 8000, assessmentRequired: true, policy: { reviewRisk: 0.6, denyRisk: 0.9, minConfidence: 0.6 }, allowCredentialEgress: false }
   const view = { config, hasApiKey: true }, tested = { ok: true as const, model: 'model-a' }
   const client = new ApiClient(async (path, init) => {
     calls.push({ path: String(path), init })
     if (String(path) === '/api/session') return json(human)
-    if (String(path) === '/api/projects/p%2Fj/jev/test') return json(tested)
-    if (String(path) === '/api/projects/p%2Fj/jev') return json(view)
+    if (String(path) === '/api/jev/test') return json(tested)
+    if (String(path) === '/api/jev') return json(view)
     throw new Error('unexpected')
   })
   await client.session()
-  assert.deepEqual(await client.jevSettings('p/j'), view)
+  assert.deepEqual(await client.jevSettings(), view)
   const input = { ...config, defaultModel: 'model-b', models: ['model-a', 'model-b'], apiKey: 'new-secret' }
-  assert.deepEqual(await client.saveJevSettings('p/j', input), view)
-  assert.deepEqual(await client.testJevSettings('p/j'), tested)
+  assert.deepEqual(await client.saveJevSettings(input), view)
+  assert.deepEqual(await client.testJevSettings(), tested)
   assert.deepEqual(calls.map(c => [c.path, c.init?.method]), [
-    ['/api/session', 'GET'], ['/api/projects/p%2Fj/jev', 'GET'],
-    ['/api/projects/p%2Fj/jev', 'POST'], ['/api/projects/p%2Fj/jev/test', 'POST']
+    ['/api/session', 'GET'], ['/api/jev', 'GET'],
+    ['/api/jev', 'POST'], ['/api/jev/test', 'POST']
   ])
   assert.equal(calls[2].init?.body, JSON.stringify(input))
   assert.equal(calls[3].init?.body, '{}')
   for (const call of calls.slice(2)) assert.equal((call.init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
+})
+
+test('harness plugin install uses the preview and install routes with a CSRF mutation', async () => {
+  const calls: Array<{ path: string; init?: RequestInit }> = []
+  const preview = { harness: 'pi' as const, state: 'fresh' as const, targetPath: '/home/u/.pi/agent/extensions/amos.js', planned: 'export { default } from "/amos/dist/adapters/pi/index.js";\n', existing: null, mergeIntoExisting: false }
+  const installed = { harness: 'pi' as const, state: 'installed' as const, targetPath: preview.targetPath, planned: preview.planned }
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path: String(path), init })
+    if (String(path) === '/api/session') return json(human)
+    if (String(path) === '/api/harnesses/plugin?harness=pi') return json(preview)
+    if (String(path) === '/api/harnesses/plugin') return json(installed)
+    throw new Error('unexpected')
+  })
+  await client.session()
+  assert.deepEqual(await client.harnessPluginPreview('pi'), preview)
+  assert.deepEqual(await client.installHarnessPlugin('pi'), installed)
+  assert.deepEqual(calls.map(c => [c.path, c.init?.method]), [
+    ['/api/session', 'GET'],
+    ['/api/harnesses/plugin?harness=pi', 'GET'],
+    ['/api/harnesses/plugin', 'POST']
+  ])
+  assert.equal(calls[2].init?.body, JSON.stringify({ harness: 'pi' }))
+  assert.equal((calls[2].init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
 })
 
 test('HTTP, protocol and network errors reject without disclosing response contents', async () => {
@@ -65,6 +89,7 @@ test('401 clears authentication, project data and pending responses', async () =
     if (path === '/api/projects') return json([project('p')])
     if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
     if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    if (path === '/api/jev') return json({ config: null, hasApiKey: false })
     if (path.endsWith('/policy')) return new Promise<Response>(resolve => { release = resolve })
     if (path.endsWith('/proposals') || path.endsWith('/versions')) return json([])
     return json({}, 401)
@@ -79,9 +104,10 @@ test('401 clears authentication, project data and pending responses', async () =
   assert.equal(auth.authenticated, false); assert.deepEqual(governance.projects, []); assert.equal(governance.policy, null); assert.equal(governance.globalConfig, null)
 })
 
-test('global configuration API and store persist defaults and report projection failures', async () => {
+test('global configuration API and store persist defaults, load the global Jev view and report projection failures', async () => {
   const calls: Array<{ path: string; init?: RequestInit }> = []
   const updated = { enabled: true, mode: 'managed' as const, advisoryInjection: true }
+  const jevView = { config: null, hasApiKey: false }
   globalThis.fetch = async (input, init) => {
     const path = String(input)
     calls.push({ path, init })
@@ -90,18 +116,20 @@ test('global configuration API and store persist defaults and report projection 
     if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
     if (path === '/api/config' && init?.method === 'POST') return json({ config: updated, projectionFailures: ['project-a'] })
     if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    if (path === '/api/jev') return json(jevView)
     throw new Error('unexpected')
   }
   api.invalidate(); setActivePinia(createPinia())
   const governance = useGovernanceStore()
   await api.session(); await governance.initialize()
+  assert.deepEqual(governance.jev, jevView)
   const result = await governance.updateGlobalConfig(updated)
   assert.deepEqual(result?.projectionFailures, ['project-a'])
   assert.deepEqual(governance.globalConfig, updated)
   const write = calls.find(call => call.path === '/api/config' && call.init?.method === 'POST')
   assert.equal(write?.init?.body, JSON.stringify(updated))
   assert.equal((write?.init?.headers as Record<string, string>)['X-CSRF-Token'], 'rotated')
-  governance.clear(); assert.equal(governance.globalConfig, null)
+  governance.clear(); assert.equal(governance.globalConfig, null); assert.equal(governance.jev, null)
 })
 
 test('project switch fences delayed previous project responses and supports empty list', async () => {
@@ -180,8 +208,9 @@ test('createProject keeps the created project when the follow-up refresh fails',
     const path = String(input)
     if (path === '/api/session') return json(human)
     if (path === '/api/projects' && init?.method === 'POST') return json({ ...project('new'), name: 'new', workspace: '/tmp/new' })
-    if (path === '/api/projects') return failRefresh ? json({}, 500) : json([])
+    if (path === '/api/projects') return failRefresh ? json({}, 500) : json([globalProject()])
     if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path.endsWith('/policy') || path.endsWith('/proposals') || path.endsWith('/versions')) return json(path.endsWith('/policy') ? null : [])
     return json({}, 404)
   }
   api.invalidate(); setActivePinia(createPinia()); const governance = useGovernanceStore()
@@ -192,4 +221,92 @@ test('createProject keeps the created project when the follow-up refresh fails',
   assert.equal(created.id, 'new')
   assert.equal(governance.activeProjectId, 'new')
   assert.ok(governance.projects.some(item => item.id === 'new'))
+})
+
+test('initialize selects the built-in global project by default', async () => {
+  const calls: string[] = []
+  globalThis.fetch = async (input) => {
+    const path = String(input)
+    calls.push(path)
+    if (path === '/api/projects') return json([globalProject(), project('a')])
+    if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    if (path.endsWith('/policy') || path.endsWith('/proposals') || path.endsWith('/versions')) return json(path.endsWith('/policy') ? null : [])
+    return json({}, 404)
+  }
+  api.invalidate(); setActivePinia(createPinia()); const governance = useGovernanceStore()
+  await governance.initialize()
+  assert.equal(governance.activeProjectId, 'global')
+  assert.equal(governance.activeProject?.kind, 'global')
+  assert.equal(governance.activeProject?.workspace, null)
+  // Global project loads policy/proposals/versions only; no runtime/config/tightenings/probes/rollouts calls.
+  assert.ok(!calls.some(p => p.includes('/global/runtime') || p.includes('/global/config') || p.includes('/global/tighten') || p.includes('/global/probes') || p.includes('/global/rollout')))
+})
+
+test('initialize prefers stored workspace project over global but falls back to global', async () => {
+  writeStoredJson('amos:console:activeProjectId', 'a')
+  try {
+    globalThis.fetch = async (input) => {
+      const path = String(input)
+      if (path === '/api/projects') return json([globalProject(), project('a')])
+      if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+      if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+      if (path.endsWith('/a/policy') || path.endsWith('/a/proposals') || path.endsWith('/a/versions')) return json(path.endsWith('/policy') ? null : [])
+      if (path.endsWith('/a/runtime') || path.endsWith('/a/config')) return json({})
+      if (path.endsWith('/a/tighten') || path.endsWith('/a/probes') || path.endsWith('/a/rollout')) return json([])
+      return json({}, 404)
+    }
+    api.invalidate(); setActivePinia(createPinia()); const governance = useGovernanceStore()
+    await governance.initialize()
+    assert.equal(governance.activeProjectId, 'a')
+    assert.equal(governance.activeProject?.kind, 'project')
+  } finally {
+    removeStored('amos:console:activeProjectId')
+  }
+})
+
+test('project config and runtime calls are skipped for the global project', async () => {
+  const calls: string[] = []
+  globalThis.fetch = async (input) => {
+    const path = String(input)
+    calls.push(path)
+    if (path === '/api/projects') return json([globalProject()])
+    if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    if (path.endsWith('/global/policy') || path.endsWith('/global/proposals') || path.endsWith('/global/versions')) return json(path.endsWith('/policy') ? null : [])
+    return json({}, 404)
+  }
+  api.invalidate(); setActivePinia(createPinia()); const governance = useGovernanceStore()
+  await governance.initialize()
+  assert.equal(governance.activeProjectId, 'global')
+  assert.equal(governance.config, null)
+  assert.equal(governance.runtime, null)
+  assert.deepEqual(governance.tightenings, null)
+  assert.deepEqual(governance.probes, [])
+  assert.deepEqual(governance.rollouts, [])
+  assert.ok(!calls.some(p => p.includes('/global/runtime') || p.includes('/global/config') || p.includes('/global/tighten') || p.includes('/global/probes') || p.includes('/global/rollout')))
+})
+
+test('switching between global and workspace projects fences data correctly', async () => {
+  globalThis.fetch = async (input) => {
+    const path = String(input)
+    if (path === '/api/projects') return json([globalProject(), project('a')])
+    if (path === '/api/status') return json({ mode: 'managed-opt-in', enforcement: true, defaultEnabled: false, trustBoundary: false })
+    if (path === '/api/config') return json({ enabled: true, mode: 'log-only', advisoryInjection: false })
+    if (path.endsWith('/global/policy') || path.endsWith('/global/proposals') || path.endsWith('/global/versions')) return json(path.endsWith('/policy') ? null : [])
+    if (path.endsWith('/a/policy') || path.endsWith('/a/proposals') || path.endsWith('/a/versions')) return json(path.endsWith('/policy') ? null : [])
+    if (path.endsWith('/a/runtime') || path.endsWith('/a/config')) return json({})
+    if (path.endsWith('/a/tighten') || path.endsWith('/a/probes') || path.endsWith('/a/rollout')) return json([])
+    return json({}, 404)
+  }
+  api.invalidate(); setActivePinia(createPinia()); const governance = useGovernanceStore()
+  await governance.initialize()
+  assert.equal(governance.activeProjectId, 'global')
+  await governance.selectProject('a')
+  assert.equal(governance.activeProjectId, 'a')
+  assert.ok(governance.config !== null || governance.runtime !== null || governance.tightenings !== null)
+  await governance.selectProject('global')
+  assert.equal(governance.activeProjectId, 'global')
+  assert.equal(governance.config, null)
+  assert.equal(governance.runtime, null)
 })

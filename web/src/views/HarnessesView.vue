@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ServerCog, Info } from 'lucide-vue-next'
+import { ServerCog } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { harnessBrandIcon, harnessFallbackIcon } from '@/components/governance/harness-icons'
+import { useToast } from '@/composables/useToast'
 import { api } from '@/lib/api'
+import { usePreferencesStore } from '@/stores/preferences'
 import { t, type MessageKey } from '@/i18n'
-import type { HarnessDiscoveryItem, HarnessDiscoveryResult } from '@/types'
+import type { HarnessDiscoveryItem, HarnessDiscoveryResult, HarnessPluginInstallPreview } from '@/types'
 
+const preferences = usePreferencesStore()
 const discovery = ref<HarnessDiscoveryResult | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -72,6 +77,49 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
     ? { label: t('harnesses.managed'), classes: toneClasses.positive }
     : { label: t('harnesses.unmanaged'), classes: h.detected ? toneClasses.warning : toneClasses.neutral }
 }
+
+const { toast } = useToast()
+const installOpen = ref(false)
+const installTarget = ref<'pi' | 'opencode' | null>(null)
+const installPreview = ref<HarnessPluginInstallPreview | null>(null)
+const installLoading = ref(false)
+const installSaving = ref(false)
+const installError = ref('')
+
+function canInstall(h: HarnessDiscoveryItem): boolean {
+  return (h.id === 'pi' || h.id === 'opencode') && h.detected && !h.managed
+}
+async function openInstall(id: string) {
+  if (id !== 'pi' && id !== 'opencode') return
+  installTarget.value = id
+  installOpen.value = true
+  installPreview.value = null
+  installError.value = ''
+  installLoading.value = true
+  try {
+    installPreview.value = await api.harnessPluginPreview(id)
+  } catch (err) {
+    installError.value = err instanceof Error ? err.message : t('harnesses.install.loadFailed')
+  } finally {
+    installLoading.value = false
+  }
+}
+async function confirmInstall() {
+  const harness = installTarget.value
+  if (!harness || installSaving.value || installPreview.value?.state !== 'fresh') return
+  installSaving.value = true
+  installError.value = ''
+  try {
+    await api.installHarnessPlugin(harness)
+    installOpen.value = false
+    await loadDiscovery()
+    toast(t('harnesses.install.installed'), t('harnesses.install.installedNote'), 'success')
+  } catch (err) {
+    installError.value = err instanceof Error ? err.message : t('harnesses.install.failed')
+  } finally {
+    installSaving.value = false
+  }
+}
 </script>
 
 <template>
@@ -89,11 +137,6 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
         </Button>
       </template>
     </PageHeader>
-
-    <div class="mb-4 rounded-md border border-info/30 bg-info/5 p-3 text-xs leading-relaxed text-info">
-      <Info class="mb-1 mr-1 inline size-3" />
-      <strong class="text-foreground">{{ t('harnesses.scopeLead') }}</strong>{{ t('harnesses.scopeText') }}<strong class="text-foreground">{{ t('harnesses.managedLead') }}</strong>{{ t('harnesses.managedText') }}
-    </div>
 
     <div v-if="error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">
       {{ error }}
@@ -123,7 +166,6 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
         <div class="panel-header">
           <div>
             <h2 class="panel-title">{{ t('harnesses.listTitle') }}</h2>
-            <p class="panel-kicker">{{ t('harnesses.listKicker') }}</p>
           </div>
         </div>
         <div class="divide-y">
@@ -135,6 +177,10 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
+                  <span class="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 p-1.5">
+                    <img v-if="harnessBrandIcon(h.id, preferences.resolvedTheme)" :src="harnessBrandIcon(h.id, preferences.resolvedTheme)!" alt="" class="size-full object-contain" />
+                    <component :is="harnessFallbackIcon()" v-else class="size-4" aria-hidden="true" />
+                  </span>
                   <h3 class="font-medium" :class="{ 'text-foreground': h.detected }">{{ h.name }}</h3>
                   <span
                     class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
@@ -180,6 +226,9 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
                   {{ t('harnesses.futureNote') }}
                 </p>
               </div>
+              <div v-if="canInstall(h)" class="shrink-0">
+                <Button size="sm" variant="outline" @click="openInstall(h.id)">{{ t('harnesses.install.action') }}</Button>
+              </div>
             </div>
           </article>
         </div>
@@ -192,5 +241,38 @@ function managedBadge(h: HarnessDiscoveryItem): { label: string; classes: string
         </div>
       </section>
     </template>
+
+    <Dialog v-model:open="installOpen">
+      <DialogContent class="max-h-[calc(100vh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_1fr_auto] rounded-md border border-border sm:max-w-2xl">
+        <DialogHeader class="shrink-0">
+          <DialogTitle>{{ t('harnesses.install.title') }}</DialogTitle>
+          <DialogDescription>{{ t('harnesses.install.description') }}</DialogDescription>
+        </DialogHeader>
+        <div class="min-w-0 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
+          <p v-if="installLoading" class="text-sm text-muted-foreground" role="status">{{ t('harnesses.install.loading') }}</p>
+          <template v-else-if="installPreview">
+            <dl class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-xs">
+              <dt class="text-muted-foreground">{{ t('harnesses.install.target') }}</dt>
+              <dd class="break-all font-mono">{{ installPreview.targetPath }}</dd>
+            </dl>
+            <p v-if="installPreview.mergeIntoExisting" class="text-[11.5px] leading-relaxed text-info">{{ t('harnesses.install.mergeNote') }}</p>
+            <div v-if="installPreview.state === 'conflict'" class="rounded-md border border-warning/30 bg-warning/5 p-3 text-[11.5px] leading-relaxed text-warning" role="alert">
+              <p>{{ t('harnesses.install.conflictNote') }}</p>
+              <p class="mt-2 font-semibold">{{ t('harnesses.install.existing') }}</p>
+              <pre class="mt-1 max-h-40 max-w-full overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.existing }}</pre>
+            </div>
+            <div>
+              <p class="text-[11.5px] font-semibold text-foreground">{{ t('harnesses.install.planned') }}</p>
+              <pre class="mt-1 max-h-56 max-w-full overflow-auto rounded border border-border bg-background p-2 font-mono text-[10.5px] text-foreground">{{ installPreview.planned }}</pre>
+            </div>
+          </template>
+          <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
+        </div>
+        <DialogFooter class="shrink-0">
+          <Button variant="outline" size="sm" @click="installOpen = false">{{ t('common.cancel') }}</Button>
+          <Button size="sm" :disabled="installPreview?.state !== 'fresh' || installSaving" @click="confirmInstall">{{ installSaving ? t('common.saving') : t('harnesses.install.confirm') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

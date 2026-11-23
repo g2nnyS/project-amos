@@ -2,9 +2,9 @@
 
 ## 访问与刷新
 
-在治理台侧边栏的“系统”分组中点击“Harness 探测”，或直接访问 `#/harnesses`。
+在治理台侧边栏的“系统”分组中点击“Harness 检测”，或直接访问 `#/harnesses`。
 
-页面加载时自动探测；点击右上角“刷新”可生成新的文件系统快照。
+页面加载时自动探测；点击右上角“刷新”会重新执行终端探测。
 
 ## 统一 Harness 目录
 
@@ -21,29 +21,36 @@
 
 每行提供两个独立状态：
 
-- **已探测到**：在 `PATH`、mise 补充路径或常见候选目录中找到了安装标记；
-- **已受到管理**：在 Pi 或 OpenCode 的配置根中找到了 Amos 插件标记。
+- **已探测到**：终端命令 `command -v <命令>` 解析到了该 Harness 的可执行文件；
+- **已受到管理**：检测到 Amos 插件——Pi 在 `~/.pi/agent/extensions/amos(.js)`（含兼容标记），OpenCode 在全局 `opencode.jsonc` 的 Amos 插件项或配置根 `plugins/amos` 标记。
 
 未探测到的行显示为灰色。已探测到但未找到 Amos 插件的 Harness 显示“未受管理”。未来支持项即使已安装，也不会因此变为当前支持或已受到管理。
 
-Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项目级 `.pi/amos.json` 和显式扩展加载不属于当前全局探测 API 的扫描上下文，因此目录中的 Oh My Pi `managed` 保持 `false`；实际项目加载状态查看对应 Harness 加载报告。
+Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项目级 `.pi/amos.json` 和显式扩展加载不属于当前全局探测 API 的探测上下文，因此目录中的 Oh My Pi `managed` 保持 `false`；实际项目加载状态查看对应 Harness 加载报告。
 
 “已受到管理”只描述插件文件探测结果，不表示插件已加载、治理规则已生效或 Harness 正在 enforcing 模式运行。
 
-## 探测范围
+## 探测方式
 
-探测会检查：
+探测对全部 Harness 使用同一套终端命令，命令名为模块内固定常量：`pi`、`opencode`、`codex`、`claude`、`dsh` 和 `omp`。
 
-- 当前服务进程 `PATH` 中的 `pi`、`opencode`、`codex`、`claude`、`dsh` 和 `omp`；
-- `~/.local/bin`；
-- `~/.local/share/mise/shims`；
-- `~/.local/share/mise/command-wrappers/bin`；
-- 各 Harness 的常见安装、配置及数据候选目录；
-- DSH 的 `$DSH_HOME`，未设置时使用 `~/.dsh`。
+1. 存在性与路径：执行 `sh -c 'command -v <命令>'`。退出码为 0 且输出非空即视为已探测到，输出的路径行就是安装位置。
+2. 版本（尽力而为）：执行 `sh -c '<命令> --version'`，5 秒超时，读取标准输出与标准错误，取第一个版本形状的 token。失败、超时或不匹配时为 `null`，不影响已探测到的结论。
 
-普通符号链接会被解析。mise 安装可通过 shim、命令包装脚本、嵌套 npm 包元数据及原生单文件安装路径识别。只有残留 mise shim 而没有对应安装标记时，不计为已探测到。
+探测需要 POSIX shell（`sh`）。服务进程无法启动 shell 时，所有 Harness 均报告未探测到。
 
-只有配置或数据目录本身而没有安装标记时，同样不计为已探测到。
+Amos 插件按文件系统标记检测（Pi 的 `~/.pi` 与 OpenCode 配置根），与 Harness 二进制探测相互独立；安装判定与路径只来自终端命令执行结果，不读取包元数据。
+
+## 一键接入 Amos 插件
+
+对已探测到的 Pi 或 OpenCode，行内提供“接入 Amos 插件”按钮，把编译后的 Amos 适配器接入本机：
+
+1. **Pi**：写入 `~/.pi/agent/extensions/amos.js`，内容一行转发到本仓编译产物 `dist/adapters/pi/index.js`。这是 Pi 的用户级扩展目录，随 Pi 自动加载；项目级 `.pi/extensions` 仍需 `--approve`。
+2. **OpenCode**：在全局配置 `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc` 中追加 Amos 插件项（`package` 指向本仓 `dist/adapters/opencode-v2`，`rulesPath`/`schemaPath`/`logPath` 均为绝对路径）。插件选项不设置 `mode`；Console 的项目配置通过 `.pi/amos.managed.json` 控制观察或受管状态。已存在的配置、其他插件项与注释保持原样；现有配置无法安全解析时拒绝写入并提示人工处理。
+
+确认前界面展示写入位置与完整内容；已安装时幂等跳过；已有内容与计划不同时报冲突，不会自动覆盖。安装是用户级一次性动作，所有项目生效；助手重新加载后加载插件。缺少项目投影时插件保持观察器回退。
+
+API：`GET /api/harnesses/plugin?harness=pi|opencode` 返回预览；`POST /api/harnesses/plugin`（human + 浏览器变更）执行安装。
 
 ## 统计与详情
 
@@ -136,8 +143,8 @@ Oh My Pi 通过 Pi 适配器接入，仓库已有项目级兼容验证。其项�
 
 ## 注意事项
 
-1. 探测仅读取文件系统元数据及包版本信息，不执行 Harness，也不修改安装或配置。
+1. 探测会执行 `command -v` 和 `<命令> --version`（5 秒超时），不会启动交互式会话，也不修改安装或配置；插件修改只由“一键接入”显式触发。
 2. 结果是请求时刻的快照；安装或插件变更后需手动刷新。
-3. 服务进程的 `PATH` 可能与交互式终端不同。页面中每行显示的安装位置可用于确认实际探测环境。
-4. 非标准位置可能未被覆盖；版本元数据缺失时版本显示为未知。
-5. 文件系统错误按未命中处理，不会中断其他 Harness 的探测。
+3. 探测使用服务进程的环境（包括 `PATH`），可能与交互式终端不同，因此结果可能与手动执行 `command -v` 不一致。每行显示的安装位置可用于确认实际探测环境。
+4. 版本为尽力而为：命令未输出可识别版本、退出失败或超时均显示为未知。
+5. shell 不可用、命令缺失或探测错误一律按未探测到处理，不会中断其他 Harness 的探测。

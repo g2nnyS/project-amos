@@ -20,8 +20,8 @@ import {
   closeSync,
   constants,
   fchmodSync,
+  fstatSync,
   fsyncSync,
-  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -634,30 +634,58 @@ function readCapture(input: RequirementCaptureInput): ParsedCapture | null {
 }
 
 function loadState(config: RegistryConfig): LoadResult {
-  let stat: ReturnType<typeof lstatSync>;
+  // Open once and inspect the descriptor: path checks followed by a path read
+  // can be raced, so ownership, mode, and type are validated on the same inode
+  // the contents come from. O_NOFOLLOW rejects a symlinked state file
+  // atomically; O_NONBLOCK keeps a planted FIFO from stalling the open.
+  let fd: number;
   try {
-    stat = lstatSync(config.path);
+    fd = openSync(
+      config.path,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
   } catch (error) {
-    return fileSystemErrorCode(error) === 'ENOENT'
-      ? { status: 'missing', state: null }
-      : { status: 'unavailable', state: null };
-  }
-  if (
-    stat.isSymbolicLink() ||
-    !stat.isFile() ||
-    (stat.mode & 0o7777) !== FILE_MODE ||
-    (typeof process.getuid === 'function' && stat.uid !== config.ownerUid)
-  ) {
-    return { status: 'owner_mismatch', state: null };
-  }
-
-  let text: string;
-  try {
-    text = readFileSync(config.path, 'utf8');
-  } catch {
+    const code = fileSystemErrorCode(error);
+    if (code === 'ENOENT') {
+      return { status: 'missing', state: null };
+    }
+    if (code === 'ELOOP') {
+      return { status: 'owner_mismatch', state: null };
+    }
     return { status: 'unavailable', state: null };
   }
-  return parseState(text, config);
+
+  try {
+    let stat: ReturnType<typeof fstatSync>;
+    try {
+      stat = fstatSync(fd);
+    } catch {
+      return { status: 'unavailable', state: null };
+    }
+    if (
+      !stat.isFile() ||
+      (stat.mode & 0o7777) !== FILE_MODE ||
+      (typeof process.getuid === 'function' && stat.uid !== config.ownerUid)
+    ) {
+      return { status: 'owner_mismatch', state: null };
+    }
+
+    let text: string;
+    try {
+      text = readFileSync(fd, 'utf8');
+    } catch {
+      return { status: 'unavailable', state: null };
+    }
+    return parseState(text, config);
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // The descriptor is already unusable; the load result stands.
+    }
+  }
 }
 
 function parseState(text: string, config: RegistryConfig): LoadResult {

@@ -195,11 +195,44 @@ try {
     throw new Error(`Timed out: ${expression}`)
   }
 
+  /**
+   * Run a fixed page function with structured arguments. Values travel as CDP
+   * call arguments, so page data never becomes part of an evaluated code string.
+   */
+  async function callInPage(fn, args = []) {
+    const handle = await send('Runtime.evaluate', { expression: 'globalThis' })
+    if (handle.exceptionDetails) throw new Error(handle.exceptionDetails.exception?.description || handle.exceptionDetails.text)
+    const result = await send('Runtime.callFunctionOn', {
+      objectId: handle.result.objectId,
+      functionDeclaration: fn,
+      arguments: args.map((value) => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+    })
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+    return result.result.value
+  }
+
+  async function waitForCall(fn, args = [], timeout = 8000) {
+    const until = Date.now() + timeout
+    while (Date.now() < until) {
+      if (await callInPage(fn, args)) return
+      await sleep(100)
+    }
+    throw new Error(`Timed out: ${fn.replace(/\s+/g, ' ').slice(0, 160)}`)
+  }
+
   async function click(selector, text) {
-    const find = `Array.from(document.querySelectorAll(${q(selector)})).find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && (${text === undefined ? 'true' : `e.textContent.trim().includes(${q(text)})`}))`
-    await evaluate(`(${find})?.scrollIntoView({block:'center',inline:'center',behavior:'instant'})`)
+    const locate = `function (selector, text, mode) {
+      const e = Array.from(document.querySelectorAll(selector)).find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && (text === null || el.textContent.trim().includes(text)))
+      if (mode === 'scroll') { e?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); return null }
+      if (!e) return null
+      const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2, top = document.elementFromPoint(x, y)
+      return { x, y, hit: !!top && (e === top || e.contains(top)), blocker: top?.outerHTML?.slice(0, 160) }
+    }`
+    await callInPage(locate, [selector, text ?? null, 'scroll'])
     await sleep(150)
-    const point = await evaluate(`(() => { const e = ${find}; if (!e) return null; const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, top=document.elementFromPoint(x,y); return {x,y,hit:!!top && (e===top || e.contains(top)), blocker:top?.outerHTML?.slice(0,160)}; })()`)
+    const point = await callInPage(locate, [selector, text ?? null, 'point'])
     if (!point) throw new Error(`Element missing: ${selector} ${text || ''}`)
     if (!point.hit) throw new Error(`Element obscured: ${selector}; hit ${point.blocker}`)
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, x: point.x, y: point.y })
@@ -407,7 +440,9 @@ try {
     await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
     await setByLabel('确认密码', password)
     await click('button', '设置密码')
-    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('全局规则')`)
+    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.trim() === '全局'`)
+    assert.equal(selectedGlobal, true, 'global project is not selected by default')
     const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)
     assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
@@ -415,12 +450,121 @@ try {
   })
 
   await mkdir(workspace, { recursive: true })
+
+  await check('global baseline is selected by default and supports rule editing', async () => {
+    await nav('编辑草稿')
+    await click('button', '内置示例')
+    await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
+    await click('button', '添加')
+    await waitFor(`document.body.innerText.includes('new-rule-1')`)
+    await setByLabel('规则 ID', 'global-smoke-rule')
+    await setByLabel('说明', 'E2E global baseline smoke rule; never an execution authorization.')
+    await click('button', '检查草稿')
+    await waitFor(`document.body.innerText.includes('检查通过')`)
+  })
+
+  await check('submit and approve a global baseline proposal', async () => {
+    await setByLabel('标题', 'E2E global baseline proposal')
+    await setByLabel('理由', 'Synthetic global baseline rationale; never an execution authorization.')
+    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
+    await setByLabel('申请过期时间（本地时间）', expiry)
+    await click('button', '提交审批')
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
+    await waitFor(`document.body.innerText.includes('待审批')`)
+    await click('button', '批准并发布')
+    await waitFor(visible('[role="alertdialog"]'))
+    await click('[role="alertdialog"] button', '确认')
+    await waitFor(`document.body.innerText.includes('已批准')`)
+  })
+
+  await check('global baseline version is visible in version history', async () => {
+    await nav('版本')
+    await waitFor(`document.body.innerText.includes('版本 1')`)
+    await nav('规则库')
+    await waitFor(`document.querySelector('h1')?.textContent.includes('全局规则')`)
+    await screenshot('desktop-global-rules')
+    await nav('首页')
+    await waitFor(`document.body.innerText.includes('全局基线')`)
+    await screenshot('desktop-global-home')
+  })
+
   await check('create project through the shell dialog', async () => {
     await createProject(projectOne, workspace)
     await waitFor(`document.body.innerText.includes(${q(projectOne)})`)
   })
 
-  await check('Jev settings save, reload and test through the browser', async () => {
+  await check('global project is selectable once and its home mode switch round-trips', async () => {
+    const projects = await evaluate(`fetch('/api/projects').then(response => response.json())`)
+    const globals = projects.filter((project) => project.kind === 'global')
+    assert.equal(globals.length, 1, 'expected exactly one global project')
+    const globalId = globals[0].id
+    assert.ok(globalId, 'global project id missing')
+
+    const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+    assert.ok(projectId && projectId !== globalId, 'active project missing')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && ${visible('#home-mode-switch')} && document.querySelector('#home-mode-switch')?.hasAttribute('aria-checked') && document.querySelector('#home-mode-title')?.textContent.trim().length > 0 && !document.querySelector('#home-mode-title')?.textContent.includes('未知')`)
+    const projectState = await evaluate(`({ checked: document.querySelector('#home-mode-switch')?.getAttribute('aria-checked'), title: document.querySelector('#home-mode-title')?.textContent.trim() })`)
+
+    const options = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).map(option => ({ value: option.value, text: option.textContent.trim() }))`)
+    assert.equal(options[0]?.value, globalId, 'first option is not the global project')
+    assert.equal(options[0]?.text, '全局', 'first option is not labelled 全局')
+    assert.equal(options.filter(option => option.value === globalId).length, 1, 'global project option is duplicated')
+    assert.ok(options.every(option => option.value !== ''), 'empty placeholder option is still present')
+    assert.ok(options.every(option => !option.text.includes('请选择项目')), 'placeholder option text is still present')
+
+    const globalConfig = () => evaluate(`fetch('/api/config').then(response => response.json())`)
+
+    await setBySelector('#project-select', globalId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.body.innerText.includes('全局基线') && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'false'`)
+    await screenshot('desktop-global-home-switch')
+
+    await click('#home-mode-switch')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'true' && document.querySelector('#home-mode-title')?.textContent.includes('正在管理') && document.body.innerText.includes('已切换为正在管理')`)
+    let config = await globalConfig()
+    assert.equal(config.enabled, true)
+    assert.equal(config.mode, 'managed')
+    assert.equal(config.advisoryInjection, false)
+
+    await click('#home-mode-switch')
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(globalId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === 'false' && document.querySelector('#home-mode-title')?.textContent.includes('仅记录') && document.body.innerText.includes('已切换为仅记录')`)
+    config = await globalConfig()
+    assert.equal(config.mode, 'log-only')
+    assert.equal(config.advisoryInjection, false)
+
+    await setBySelector('#project-select', projectId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && document.querySelector('#home-mode-switch')?.getAttribute('aria-checked') === ${q(projectState.checked)} && document.querySelector('#home-mode-title')?.textContent.includes(${q(projectState.title)}) && Array.from(document.querySelectorAll('.home-mode .panel-title')).some(element => element.textContent.includes(${q(projectOne)}))`)
+  })
+
+  await check('global harness switches are visible, clickable and persistent', async () => {
+    await nav('设置')
+    await waitFor(visible('#pref-harness'))
+    const initial = await evaluate(`['global-harness-enabled', 'global-advisory-injection'].map(id => {
+      const track = document.getElementById(id)
+      const thumb = track.querySelector('[data-slot="switch-thumb"]')
+      const trackRect = track.getBoundingClientRect()
+      const thumbRect = thumb.getBoundingClientRect()
+      return { state: track.getAttribute('data-state'), background: getComputedStyle(track).backgroundColor, thumbOffset: thumbRect.left - trackRect.left }
+    })`)
+    assert.deepEqual(initial.map(item => item.state), ['checked', 'unchecked'])
+    for (const item of initial) assert.notEqual(item.background, 'rgba(0, 0, 0, 0)', 'switch track is transparent')
+    assert.ok(initial[0].thumbOffset > initial[1].thumbOffset, 'checked thumb did not move to the on position')
+
+    await click('#global-harness-enabled')
+    await click('#global-advisory-injection')
+    await waitFor(`document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'false' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'true'`)
+    await click('#pref-harness button[type="submit"]')
+    await waitFor(`document.body.innerText.includes('默认设置已保存；助手要重新加载才生效。') && document.querySelector('#pref-harness button[type="submit"]')?.disabled`)
+
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`${visible('#pref-harness')} && document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'false' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'true'`)
+
+    await click('#global-harness-enabled')
+    await click('#global-advisory-injection')
+    await click('#pref-harness button[type="submit"]')
+    await waitFor(`document.querySelector('#global-harness-enabled')?.getAttribute('aria-checked') === 'true' && document.querySelector('#global-advisory-injection')?.getAttribute('aria-checked') === 'false' && document.querySelector('#pref-harness button[type="submit"]')?.disabled`)
+  })
+
+  await check('Jev settings are global: save, reload and test through the browser', async () => {
     await nav('设置')
     await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
     await waitFor(`${visible('#pref-jev')}`)
@@ -433,7 +577,7 @@ try {
 
     const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
     assert.ok(projectId, 'active project missing')
-    const configPath = path.join(dataDir, 'jev', projectId, 'jev.local.json')
+    const configPath = path.join(dataDir, 'jev', 'jev.local.json')
     const saved = JSON.parse(await readFile(configPath, 'utf8'))
     assert.equal(saved.apiKey, 'e2e-synthetic-jev-key')
     if (process.platform !== 'win32') assert.equal((await stat(configPath)).mode & 0o777, 0o600)
@@ -447,6 +591,15 @@ try {
     assert.deepEqual(providerRequests, [{ authorized: true, connectionTest: true }])
     assert.equal(await evaluate(`document.body.innerText.includes('e2e-synthetic-jev-key')`), false)
     await screenshot('desktop-jev-settings')
+
+    // The Jev configuration is one global service: it stays identical while
+    // the built-in Global Project is the active project.
+    await setBySelector('#project-select', 'global')
+    await waitFor(`document.querySelector('#project-select')?.value === 'global'`)
+    await click('nav[aria-label="设置分区"] button', '审查服务（Jev）')
+    await waitFor(`${visible('#pref-jev')} && document.body.innerText.includes('typesafe/jev-1.14') && document.body.innerText.includes('已保存')`)
+    await setBySelector('#project-select', projectId)
+    await waitFor(`document.querySelector('#project-select')?.value === ${q(projectId)} && document.body.innerText.includes(${q(projectOne)})`)
     await evaluate(`document.querySelector('main.workspace').scrollTop = 0`)
     await click('nav[aria-label="设置分区"] button', '助手默认设置')
     await waitFor(`${visible('#pref-harness')}`)
@@ -470,6 +623,7 @@ try {
     // instead of silently redefining the global deny table.
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
+    await setByLabel('规则 ID', 'project-smoke-rule')
     await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
@@ -517,7 +671,10 @@ try {
     })()`)
     assert.ok(cell, 'no non-empty matrix cell')
     await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
-    await waitFor(`(() => { const p = new URLSearchParams(location.hash.split('?')[1] || ''); return p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}; })()`)
+    await waitForCall(`function (dimension, hit) {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('dimension') === dimension && p.get('onHit') === hit
+    }`, [cell.dimension, cell.hit])
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
     const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
@@ -544,7 +701,11 @@ try {
       await waitFor(`Array.from(document.querySelectorAll(${q(inspector + ' [role="tab"]')})).some(e => e.textContent.includes(${q(label)}) && e.getAttribute('aria-selected') === 'true')`)
       if (expected) await waitFor(`document.querySelector(${q(inspector)})?.textContent.includes(${q(expected)})`)
     }
-    const raw = await evaluate(`(() => { const panel = document.querySelector(${q(inspector)}); const pre = panel.querySelector('pre'); return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }; })()`)
+    const raw = await callInPage(`function (selector) {
+      const panel = document.querySelector(selector)
+      const pre = panel.querySelector('pre')
+      return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }
+    }`, [inspector])
     assert.ok(raw.text && JSON.parse(raw.text).id, 'raw rule JSON missing or invalid')
     assert.equal(raw.editable, false, 'raw inspector contains editable fields')
     await screenshot('desktop-rules-inspector')
@@ -567,7 +728,10 @@ try {
       })()`)) await sleep(50)
       await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
       await waitFor(visible(inspector))
-      const layout = await evaluate(`(() => { const e = document.querySelector(${q(inspector)}), r = e.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, client:document.documentElement.clientWidth, focused:document.activeElement?.getAttribute('aria-label') }; })()`)
+      const layout = await callInPage(`function (selector) {
+        const e = document.querySelector(selector), r = e.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, focused: document.activeElement?.getAttribute('aria-label') }
+      }`, [inspector])
       assert.ok(layout.left >= 0 && layout.right <= layout.width && layout.top < layout.height && layout.bottom > 0, `mobile inspector outside viewport: ${JSON.stringify(layout)}`)
       assert.equal(layout.focused, '关闭检查器')
       assert.ok(layout.scroll <= layout.client, `mobile inspector causes global horizontal overflow: ${JSON.stringify(layout)}`)
@@ -612,6 +776,9 @@ try {
     const artifact = JSON.parse(await readFile(activationPath, 'utf8'))
     assert.equal(artifact.format, 'amos-unified-rule-catalog')
     assert.equal(artifact.project.workspace, workspace)
+    assert.ok(artifact.activeRules.some((rule) => rule.id === 'global-smoke-rule'), 'global rule missing from project artifact')
+    assert.ok(artifact.activeRules.some((rule) => rule.id === 'project-smoke-rule'), 'project supplement missing from project artifact')
+    assert.match(artifact.project.projectConfigVersion, /\+global-v1$/)
     const projection = await readProjection()
     assert.equal(typeof projection.harness?.enabled, 'boolean')
     assert.ok(projection.harness?.mode === 'log-only' || projection.harness?.mode === 'managed')
@@ -725,7 +892,7 @@ try {
     await nav('版本')
     await click('a', '版本 1')
     await waitFor(`document.body.innerText.includes('版本 1')`)
-    await click('button', '回滚到这个版本')
+    await click('button', '申请回滚到此版本')
     await waitFor(visible('[role="dialog"]'))
     await setByLabel('理由', 'Synthetic rollback rationale.')
     await click('[role="dialog"] button', '提交申请')
@@ -865,10 +1032,15 @@ try {
     assert.equal(sessionAfterLogout, false, 'server session remained authenticated after logout')
     await setBySelector('input[autocomplete="current-password"]', password)
     await click('button', '登录')
-    await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 2`)
+    await waitFor(`Array.from(document.querySelectorAll('#project-select option')).filter(o=>o.value).length === 3`)
+    const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.value === 'global'`)
+    assert.equal(selectedGlobal, true, 'logout preference reset did not fall back to the global project')
   })
 
   await check('language switch translates the console, persists across reload and switches back', async () => {
+    const firstId = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o=>o.textContent.includes(${q(projectOne)}))?.value`)
+    assert.ok(firstId, 'first project option missing after relogin')
+    await setBySelector('#project-select', firstId)
     await nav('设置')
     await click('nav[aria-label="设置分区"] button', '外观与语言')
     await waitFor(visible('#pref-appearance'))
@@ -938,6 +1110,7 @@ try {
     await waitFor(`document.documentElement.classList.contains('light') && document.querySelector('.app-shell')?.dataset.density === 'comfortable'`)
     await click('[aria-label="打开导航"]')
     await waitFor(visible('[role="dialog"]'))
+    assert.equal(await evaluate(`(() => { const options = Array.from(document.querySelectorAll('#mobile-project option')); return options.length > 0 && options[0].textContent.trim() === '全局' && options[0].value.length > 0 && options.every(option => option.value.length > 0) && options.filter(option => option.textContent.trim() === '全局').length === 1 })()`), true, 'mobile global option is missing, duplicated or preceded by a placeholder')
     const widths = await evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`)
     assert.ok(widths.scroll <= widths.client, `horizontal overflow: ${JSON.stringify(widths)}`)
     await key('Escape')

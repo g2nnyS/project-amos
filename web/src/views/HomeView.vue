@@ -10,7 +10,8 @@ import { useToast } from '@/composables/useToast'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { t } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
-import { useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
+import type { GlobalHarnessConfig } from '@/types'
 
 type ModeState = 'managed' | 'logOnly' | 'disabled'
 interface Note { key: string; tone: StatusTone; text: string; alert?: boolean }
@@ -19,6 +20,7 @@ interface AttentionItem { key: string; tone: StatusTone; text: string; to: strin
 const governance = useGovernanceStore()
 const auth = useAuthStore()
 const { toast } = useToast()
+const isGlobal = computed(() => isGlobalProject(governance.activeProject))
 const pendingTarget = ref<boolean | null>(null)
 const switchError = ref('')
 const refreshing = ref(false)
@@ -28,6 +30,12 @@ const policy = computed(() => governance.policy)
 const canEdit = computed(() => auth.session?.role === 'human')
 const saving = computed(() => pendingTarget.value !== null)
 const savedState = computed<ModeState | null>(() => {
+  if (isGlobal.value) {
+    const global = governance.globalConfig
+    if (!global) return null
+    if (!global.enabled) return 'disabled'
+    return global.mode === 'managed' ? 'managed' : 'logOnly'
+  }
   const effective = config.value?.effectiveHarness
   if (!effective) return null
   if (!effective.enabled) return 'disabled'
@@ -37,8 +45,13 @@ const savedState = computed<ModeState | null>(() => {
 const modeState = computed<ModeState | null>(() => pendingTarget.value === null ? savedState.value : pendingTarget.value ? 'managed' : 'logOnly')
 const managing = computed(() => modeState.value === 'managed')
 const modeTitle = computed(() => modeState.value === null ? t('common.unknown') : t(`home.mode.${modeState.value}`))
-const modeDescription = computed(() => modeState.value === null ? '' : t(`home.mode.${modeState.value}Note`))
+const modeDescription = computed(() => {
+  if (modeState.value === null) return ''
+  if (isGlobal.value && modeState.value === 'disabled') return t('home.mode.globalDisabledNote')
+  return t(`home.mode.${modeState.value}Note`)
+})
 const modeSource = computed(() => {
+  if (isGlobal.value) return ''
   if (!config.value) return ''
   if (config.value.harness.mode === null) return t('home.mode.sourceInherit')
   const globalMode = governance.globalConfig?.mode
@@ -48,8 +61,9 @@ const modeSource = computed(() => {
 
 const reviewReady = computed(() => {
   const managed = config.value?.managed
-  return !!managed && managed.reviewer === 'jev' && managed.jevConfigPath !== null && managed.ceilingDigest !== null && managed.reviewPolicy !== null && managed.reviewCalibration !== null
+  return !!managed && managed.reviewer === 'jev' && governance.jev?.config != null && managed.ceilingDigest !== null && managed.reviewPolicy !== null && managed.reviewCalibration !== null
 })
+const globalReviewReady = computed(() => governance.jev?.config != null)
 const projection = computed(() => projectionView(governance.runtime?.projection?.status))
 const harnessRows = computed(() => harnessDefinitions.map(definition => {
   const observation = governance.runtime?.harnesses?.[definition.id] ?? null
@@ -74,6 +88,18 @@ const staleProposals = computed(() => pendingProposals.value.filter(proposal => 
 const activeTightenings = computed(() => governance.tightenings?.active.length ?? 0)
 
 const modeNotes = computed<Note[]>(() => {
+  if (isGlobal.value) {
+    if (!governance.globalConfig) return [{ key: 'config', tone: 'warning', text: t('home.mode.globalConfigUnavailable') }]
+    const notes: Note[] = []
+    if (switchError.value) notes.push({ key: 'error', tone: 'danger', text: switchError.value, alert: true })
+    if (saving.value) notes.push({ key: 'saving', tone: 'neutral', text: t('home.mode.saving') })
+    if (!canEdit.value) notes.push({ key: 'readonly', tone: 'neutral', text: t('home.mode.readOnly') })
+    if (modeState.value === 'disabled') notes.push({ key: 'disabled', tone: 'neutral', text: t('home.mode.disabledHint') })
+    if (managing.value && !globalReviewReady.value) notes.push({ key: 'reviewer', tone: 'warning', text: t('home.mode.reviewerMissing') })
+    if (saving.value) return notes
+    if (!policy.value) notes.push({ key: 'unpublished', tone: 'warning', text: t('home.mode.unpublished') })
+    return notes
+  }
   if (!config.value) return [{ key: 'config', tone: 'warning', text: t('home.mode.configUnavailable') }]
   const notes: Note[] = []
   if (switchError.value) notes.push({ key: 'error', tone: 'danger', text: switchError.value, alert: true })
@@ -90,26 +116,32 @@ const modeNotes = computed<Note[]>(() => {
   return notes
 })
 
-const stats = computed(() => [
-  {
-    key: 'version', to: '/versions', label: t('home.stats.version'),
-    value: policy.value ? `v${policy.value.version}` : t('common.notYetPublished'),
-    note: policy.value ? t('home.stats.versionNote', { date: formatDate(policy.value.createdAt) }) : t('home.stats.versionEmpty'),
-  },
-  { key: 'rules', to: '/rules', label: t('home.stats.rules'), value: `${activeRules.value} / ${totalRules.value}`, note: t('home.stats.rulesNote') },
-  {
-    key: 'proposals', to: '/proposals', label: t('home.stats.proposals'), value: String(pendingProposals.value.length),
-    note: staleProposals.value.length ? t('home.stats.proposalsStale', { count: staleProposals.value.length }) : pendingProposals.value.length ? t('home.stats.proposalsNote') : t('home.stats.proposalsNone'),
-  },
-  { key: 'review', to: '/boundary', label: t('home.stats.review'), value: reviewReady.value ? t('home.stats.reviewReady') : t('home.stats.reviewMissing'), note: t('home.stats.reviewNote') },
-])
+const stats = computed(() => {
+  const items = [
+    {
+      key: 'version', to: '/versions', label: t('home.stats.version'),
+      value: policy.value ? `v${policy.value.version}` : t('common.notYetPublished'),
+      note: policy.value ? t('home.stats.versionNote', { date: formatDate(policy.value.createdAt) }) : t('home.stats.versionEmpty'),
+    },
+    { key: 'rules', to: '/rules', label: isGlobal.value ? t('home.stats.rules') : t('home.stats.rulesSupplementary'), value: `${activeRules.value} / ${totalRules.value}`, note: isGlobal.value ? t('home.stats.rulesNote') : t('home.stats.rulesNoteSupplementary') },
+    {
+      key: 'proposals', to: '/proposals', label: t('home.stats.proposals'), value: String(pendingProposals.value.length),
+      note: staleProposals.value.length ? t('home.stats.proposalsStale', { count: staleProposals.value.length }) : pendingProposals.value.length ? t('home.stats.proposalsNote') : t('home.stats.proposalsNone'),
+    },
+  ]
+  if (!isGlobal.value) {
+    items.push({ key: 'review', to: '/boundary', label: t('home.stats.review'), value: reviewReady.value ? t('home.stats.reviewReady') : t('home.stats.reviewMissing'), note: t('home.stats.reviewNote') })
+  }
+  return items
+})
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
   if (pendingProposals.value.length) items.push({ key: 'pending', tone: 'info', text: t('home.attention.pending', { count: pendingProposals.value.length }), to: '/proposals' })
   if (staleProposals.value.length) items.push({ key: 'stale', tone: 'warning', text: t('home.attention.stale', { count: staleProposals.value.length }), to: '/proposals' })
   if (!policy.value) items.push({ key: 'unpublished', tone: 'warning', text: t('home.attention.unpublished'), to: '/editor' })
-  else if (governance.runtime && governance.runtime.projection.status !== 'written') items.push({ key: 'projection', tone: projection.value.tone, text: t('home.attention.projection', { status: projection.value.label }), to: '/boundary' })
+  if (isGlobal.value) return items
+  if (policy.value && governance.runtime && governance.runtime.projection.status !== 'written') items.push({ key: 'projection', tone: projection.value.tone, text: t('home.attention.projection', { status: projection.value.label }), to: '/boundary' })
   if (savedState.value === 'managed' && !reviewReady.value) items.push({ key: 'reviewer', tone: 'warning', text: t('home.attention.reviewer'), to: '/boundary' })
   for (const row of harnessRows.value) {
     if (row.observation?.status === 'stale') items.push({ key: `report-${row.id}`, tone: 'warning', text: t('home.attention.staleReport', { harness: row.name }), to: '/boundary' })
@@ -127,10 +159,30 @@ const toneText: Readonly<Record<StatusTone, string>> = {
 }
 
 async function setManaging(next: boolean) {
+  switchError.value = ''
+  if (isGlobal.value) {
+    const current = governance.globalConfig
+    if (!current || !canEdit.value || saving.value) return
+    pendingTarget.value = next
+    const update: GlobalHarnessConfig = {
+      enabled: next && !current.enabled ? true : current.enabled,
+      mode: next ? 'managed' : 'log-only',
+      advisoryInjection: current.advisoryInjection,
+    }
+    try {
+      const saved = await governance.updateGlobalConfig(update)
+      if (saved) toast(next ? t('home.mode.switchedOn') : t('home.mode.switchedOff'), t('home.mode.switchedNote'), 'success')
+    } catch (error) {
+      switchError.value = error instanceof Error ? error.message : t('home.mode.switchFailed')
+      toast(t('home.mode.switchFailed'), switchError.value, 'error')
+    } finally {
+      pendingTarget.value = null
+    }
+    return
+  }
   const current = config.value
   if (!current || !canEdit.value || saving.value) return
   pendingTarget.value = next
-  switchError.value = ''
   const harness = {
     ...current.harness,
     mode: next ? 'managed' as const : 'log-only' as const,
@@ -153,23 +205,62 @@ async function refreshStatus() {
   try { await governance.refreshRuntime() } finally { refreshing.value = false }
 }
 
-onMounted(() => { void governance.refreshRuntime() })
+onMounted(() => { if (!isGlobal.value) void governance.refreshRuntime() })
 </script>
 
 <template>
   <div class="page">
-    <PageHeader :title="t('home.title')" :description="t('home.description')" />
+    <PageHeader :title="t('home.title')" :description="t(isGlobal ? 'home.global.pageDescription' : 'home.description')" />
 
     <div v-if="governance.error" class="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{{ governance.error }} <button class="ml-2 underline" @click="governance.activeProjectId ? governance.refreshProject() : governance.initialize()">{{ t('common.retry') }}</button></div>
     <div v-if="governance.loading && !config" class="py-8 text-sm text-muted-foreground" role="status">{{ t('home.loading') }}</div>
     <EmptyState v-else-if="!governance.activeProject" :title="t('home.emptyTitle')" :description="t('home.emptyDescription')" />
 
     <template v-else>
-      <section class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
+      <section v-if="isGlobal" class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
+        <div class="panel-header">
+          <div class="min-w-0">
+            <p class="panel-title truncate">{{ t('app.globalProject') }}</p>
+          </div>
+          <span class="global-badge">{{ t('app.globalBadge') }}</span>
+        </div>
+        <div class="home-mode-body">
+          <div class="min-w-0">
+            <p class="eyebrow">{{ t('home.global.scopeEyebrow') }}</p>
+            <h2 id="global-title" class="home-mode-title">{{ t('home.global.title') }}</h2>
+            <p class="home-mode-description">{{ t('home.global.description') }}</p>
+            <p class="eyebrow mt-4">{{ t('home.mode.eyebrow') }}</p>
+            <h3 id="home-mode-title" class="home-mode-title"><span class="home-mode-dot" aria-hidden="true" />{{ modeTitle }}</h3>
+            <p id="home-mode-description" class="home-mode-description">{{ modeDescription }}</p>
+          </div>
+          <ModeSwitch
+            id="home-mode-switch"
+            :model-value="managing"
+            :label="t('home.mode.switchLabel')"
+            :off-label="t('home.mode.off')"
+            :on-label="t('home.mode.on')"
+            described-by="home-mode-description"
+            :busy="saving"
+            :disabled="!governance.globalConfig || !canEdit"
+            @update:model-value="setManaging"
+          />
+        </div>
+        <ul v-if="modeNotes.length" class="home-mode-notes" role="status">
+          <li v-for="note in modeNotes" :key="note.key" class="flex items-start gap-2" :class="toneText[note.tone]" :role="note.alert ? 'alert' : undefined">
+            <LoaderCircle v-if="note.key === 'saving'" class="mt-0.5 size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+            <CircleCheck v-else-if="note.tone === 'positive'" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <TriangleAlert v-else-if="note.tone === 'warning' || note.tone === 'danger'" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <Info v-else class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ note.text }}</span>
+          </li>
+        </ul>
+      </section>
+
+      <section v-else class="panel home-mode mb-4" :data-state="modeState ?? 'unknown'" aria-labelledby="home-mode-title">
         <div class="panel-header">
           <div class="min-w-0">
             <p class="panel-title truncate">{{ governance.activeProject.name }}</p>
-            <p class="panel-kicker truncate font-mono" :title="governance.activeProject.workspace">{{ governance.activeProject.workspace }}</p>
+            <p class="panel-kicker truncate font-mono" :title="governance.activeProject.workspace ?? undefined">{{ governance.activeProject.workspace }}</p>
           </div>
           <RouterLink to="/boundary" class="shrink-0 text-xs text-muted-foreground hover:text-foreground">{{ t('home.harness.details') }}</RouterLink>
         </div>
@@ -203,7 +294,7 @@ onMounted(() => { void governance.refreshRuntime() })
         </ul>
       </section>
 
-      <section class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section class="mb-4 grid gap-3 sm:grid-cols-2" :class="stats.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'">
         <RouterLink v-for="stat in stats" :key="stat.key" :to="stat.to" class="panel home-stat p-3" :data-stat="stat.key">
           <p class="eyebrow">{{ stat.label }}</p>
           <p class="mt-3 text-xl font-semibold tabular">{{ stat.value }}</p>
@@ -211,8 +302,8 @@ onMounted(() => { void governance.refreshRuntime() })
         </RouterLink>
       </section>
 
-      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <section class="panel">
+      <div class="grid grid-cols-1 gap-4" :class="isGlobal ? '' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'">
+        <section v-if="!isGlobal" class="panel">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('home.harness.title') }}</h2>
@@ -240,11 +331,10 @@ onMounted(() => { void governance.refreshRuntime() })
           </ul>
         </section>
 
-        <section class="panel">
+        <section class="panel" :class="isGlobal ? 'lg:col-span-1' : ''">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">{{ t('home.attention.title') }}</h2>
-              <p class="panel-kicker">{{ t('home.attention.kicker') }}</p>
             </div>
           </div>
           <p v-if="!attention.length" class="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground"><CircleCheck class="size-4 text-positive" aria-hidden="true" />{{ t('home.attention.none') }}</p>

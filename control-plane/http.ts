@@ -17,6 +17,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { PasswordStore, PasswordError } from './password.ts';
 import { verifySystemProof } from './system-auth.ts';
@@ -41,6 +42,7 @@ import type {
   CreateProposalInput,
   CreateRollbackProposalInput,
   DecideProposalInput,
+  InstallableHarnessId,
   RuleRecord,
 } from './contracts.ts';
 import { MAX_CANDIDATE_BYTES } from './compiler.ts';
@@ -49,6 +51,11 @@ import {
   serializePolicyDocument,
 } from './document.ts';
 import { DomainError, isDomainError } from './errors.ts';
+import { GLOBAL_COMPILE_WORKSPACE } from './global.ts';
+import type {
+  HarnessPluginEnvironment,
+  HarnessPluginInstaller,
+} from './harness-plugin-install.ts';
 import {
   JevSettingsError,
   type JevSettingsStore,
@@ -148,6 +155,9 @@ export interface GovernanceServerOptions {
   readonly requestTimeoutMs?: number;
   readonly observations?: ObservationLogs | null;
   readonly jevSettings?: JevSettingsStore | null;
+  readonly harnessPluginInstaller?: HarnessPluginInstaller | null;
+  /** Test injection; defaults to the process home and environment. */
+  readonly harnessPluginEnvironment?: HarnessPluginEnvironment;
 }
 
 export interface GovernanceServer {
@@ -200,6 +210,8 @@ export function createGovernanceServer(
   const seed = normalizeSeed(options.seed);
   const observations = options.observations ?? null;
   const jevSettings = options.jevSettings ?? null;
+  const harnessPluginInstaller = options.harnessPluginInstaller ?? null;
+  const harnessPluginEnvironment = options.harnessPluginEnvironment;
   const instanceId = options.instanceId;
   let staticAssets: ReadonlyMap<string, StaticAsset> = new Map();
 
@@ -362,12 +374,40 @@ export function createGovernanceServer(
       return;
     }
 
+    if (resource === 'jev') {
+      if (id === 'test') {
+        requirePath(segments, 3);
+        requireMethod(method, 'POST');
+        requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+        const store = requireJevSettings();
+        sendJson(res, 200, await runJevOperation(() => store.test()));
+        return;
+      }
+      requirePath(segments, 2);
+      const store = requireJevSettings();
+      if (method === 'GET') {
+        requireAnyActor(req);
+        sendJson(res, 200, await runJevOperation(() => store.read()));
+        return;
+      }
+      requireMethod(method, 'POST');
+      requireHumanActor(req);
+      requireBrowserMutation(req, port);
+      const input = await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
+      sendJson(res, 200, await runJevOperation(() => store.save({ input })));
+      return;
+    }
+
     if (resource === 'status') {
       requirePath(segments, 2);
       requireMethod(method, 'GET');
       let projectCount: number | null = null;
       try {
-        projectCount = service.listProjects().length;
+        projectCount = service
+          .listProjects()
+          .filter((project) => project.kind !== 'global').length;
       } catch {
         projectCount = null;
       }
@@ -421,6 +461,37 @@ export function createGovernanceServer(
     }
 
     if (resource === 'harnesses') {
+      if (id === 'plugin') {
+        requirePath(segments, 3);
+        if (method === 'GET') {
+          requireAnyActor(req);
+          const harness = requireInstallableHarness(
+            url.searchParams.get('harness'),
+          );
+          const installer = requireHarnessPluginInstaller();
+          sendJson(
+            res,
+            200,
+            await installer.preview(harness, resolveHarnessPluginEnvironment()),
+          );
+          return;
+        }
+        requireMethod(method, 'POST');
+        requireHumanActor(req);
+        requireBrowserMutation(req, port);
+        const body = asObject(
+          await readJsonBody(req, maxBodyBytes, requestTimeoutMs),
+        );
+        const harness = requireInstallableHarness(body.harness);
+        const installer = requireHarnessPluginInstaller();
+        sendJson(
+          res,
+          200,
+          await installer.install(harness, resolveHarnessPluginEnvironment()),
+        );
+        return;
+      }
+
       requirePath(segments, 2);
       requireMethod(method, 'GET');
       requireAnyActor(req);
@@ -560,9 +631,14 @@ export function createGovernanceServer(
         if (parsed.projectId !== null && parsed.projectId !== id) {
           throw new HttpError(400, 'project_mismatch');
         }
+        const importProject = service.getProject(id);
+        const importWorkspace =
+          importProject.kind === 'global'
+            ? GLOBAL_COMPILE_WORKSPACE
+            : importProject.workspace;
         if (
           parsed.workspace !== null &&
-          parsed.workspace !== service.getProject(id).workspace
+          parsed.workspace !== importWorkspace
         ) {
           throw new HttpError(400, 'project_mismatch');
         }
@@ -572,65 +648,6 @@ export function createGovernanceServer(
           issues: validation.issues,
           candidate: parsed.candidate,
         });
-        return;
-      }
-
-      if (child === 'jev') {
-        if (numeric === 'test') {
-          requirePath(segments, 5);
-          requireMethod(method, 'POST');
-          requireHumanActor(req);
-          requireBrowserMutation(req, port);
-          await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
-          const store = requireJevSettings();
-          const config = service.getProjectConfig(id);
-          const result = await runJevOperation(() =>
-            store.test(
-              config.managed.jevConfigPath ??
-              config.workflowGate.jevConfigPath ??
-              store.pathFor(id),
-            ),
-          );
-          sendJson(res, 200, result);
-          return;
-        }
-        requirePath(segments, 4);
-        const store = requireJevSettings();
-        const config = service.getProjectConfig(id);
-        const currentPath =
-          config.managed.jevConfigPath ?? config.workflowGate.jevConfigPath;
-        if (method === 'GET') {
-          requireAnyActor(req);
-          sendJson(
-            res,
-            200,
-            await runJevOperation(() => store.read(currentPath ?? store.pathFor(id))),
-          );
-          return;
-        }
-        requireMethod(method, 'POST');
-        const actor = requireHumanActor(req);
-        requireBrowserMutation(req, port);
-        const input = await readJsonBody(req, maxBodyBytes, requestTimeoutMs);
-        const project = service.getProject(id);
-        const saved = await runJevOperation(() =>
-          store.save({ projectId: id, workspace: project.workspace, currentPath, input }),
-        );
-        if (config.workflowGate.enabled || config.managed.reviewer === 'jev') {
-          service.updateProjectConfig(
-            id,
-            {
-              ...(config.workflowGate.enabled
-                ? { workflowGate: { jevConfigPath: saved.path } }
-                : {}),
-              ...(config.managed.reviewer === 'jev'
-                ? { managed: { jevConfigPath: saved.path } }
-                : {}),
-            },
-            actor,
-          );
-        }
-        sendJson(res, 200, saved.view);
         return;
       }
 
@@ -885,6 +902,22 @@ export function createGovernanceServer(
       throw new HttpError(503, 'jev_config_unavailable');
     }
     return jevSettings;
+  }
+
+  function requireHarnessPluginInstaller(): HarnessPluginInstaller {
+    if (harnessPluginInstaller === null) {
+      throw new HttpError(503, 'plugin_install_unavailable');
+    }
+    return harnessPluginInstaller;
+  }
+
+  function resolveHarnessPluginEnvironment(): HarnessPluginEnvironment {
+    return harnessPluginEnvironment ?? { home: homedir(), env: process.env };
+  }
+
+  function requireInstallableHarness(value: unknown): InstallableHarnessId {
+    if (value === 'pi' || value === 'opencode') return value;
+    throw new HttpError(400, 'invalid_body');
   }
 
   async function runJevOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -1431,23 +1464,6 @@ function asObject(value: unknown): Record<string, unknown> {
     throw new HttpError(400, 'invalid_body');
   }
   return value;
-}
-
-function effectiveRules(candidate: Candidate): RuleRecord[] {
-  const rules = candidate.rules;
-  const activation = candidate.activation;
-  const excluded = new Set(activation.excludedRuleIds);
-  const included =
-    activation.includedRuleIds === null
-      ? null
-      : new Set(activation.includedRuleIds);
-
-  return rules.filter((rule) => {
-    if (included !== null) {
-      return included.has(rule.id) && !excluded.has(rule.id);
-    }
-    return !excluded.has(rule.id);
-  });
 }
 
 function safeFilenamePart(value: string): string {

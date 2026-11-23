@@ -1,7 +1,8 @@
 import {
   closeSync,
+  constants,
   fchmodSync,
-  lstatSync,
+  fstatSync,
   openSync,
   rmSync,
 } from 'node:fs';
@@ -9,9 +10,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { COMPILER_VERSION } from './compiler.ts';
 import { DomainError, isDomainError } from './errors.ts';
 import { classifyOpenError } from './sqlite-errors.ts';
+import {
+  GLOBAL_PROJECT_ID,
+  GLOBAL_PROJECT_NAME,
+  GLOBAL_WORKSPACE_SENTINEL,
+} from './global.ts';
 import { DEFAULT_GLOBAL_CONFIG, DEFAULT_PROJECT_CONFIG } from './project-config.ts';
 
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 4;
 const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
 const KNOWN_TABLES = [
@@ -34,7 +40,7 @@ export interface OpenedGovernanceDatabase {
    * Highest legacy schema version migrated by this open. `null` means the
    * database already matched the current schema and no migration ran.
    */
-  readonly migratedFrom: 1 | 2 | null;
+  readonly migratedFrom: 1 | 2 | 3 | null;
 }
 
 /**
@@ -86,6 +92,7 @@ export function openGovernanceDatabase(
       nowMs,
       createdByThisOperation || databasePath === ':memory:',
     );
+    ensureGlobalProject(db, nowMs);
     return { db, migratedFrom };
   } catch (error) {
     try {
@@ -109,59 +116,70 @@ export function openGovernanceDatabase(
  * empty file is never treated as a blank database: it is either a truncated
  * store or another initializer that has not finished, so both fail closed.
  *
- * This is a lexical startup safety check only. It deliberately does not claim
- * TOCTOU protection or a same-UID security boundary.
+ * The exclusive create is attempted first, so an existing path is validated on
+ * a freshly opened descriptor instead of on an earlier path check.
  */
 function prepareDatabaseFile(databasePath: string): boolean {
   if (databasePath === ':memory:') {
     return false;
   }
 
-  let preexisting: ReturnType<typeof lstatSync> | null = null;
+  let handle: number | null = null;
   try {
-    preexisting = lstatSync(databasePath);
+    // Exclusive create makes "newly created by this operation" explicit and
+    // prevents two initializers from both adopting the same blank file.
+    handle = openSync(databasePath, 'wx', 0o600);
   } catch (error) {
-    if (fileSystemErrorCode(error) !== 'ENOENT') {
+    if (fileSystemErrorCode(error) !== 'EEXIST') {
       throw new DomainError('internal_error');
     }
   }
 
-  if (preexisting !== null) {
-    if (
-      preexisting.isSymbolicLink() ||
-      !preexisting.isFile() ||
-      (preexisting.mode & 0o7777) !== 0o600 ||
-      (typeof process.getuid === 'function' &&
-        preexisting.uid !== process.getuid())
-    ) {
-      throw new DomainError('database_incompatible');
-    }
-    if (preexisting.size === 0) {
-      throw new DomainError('database_corrupt');
-    }
+  if (handle === null) {
+    assertExistingDatabaseFile(databasePath);
     return false;
   }
 
-  let created = false;
   try {
-    // Exclusive create makes "newly created by this operation" explicit and
-    // prevents two initializers from both adopting the same blank file.
-    const handle = openSync(databasePath, 'wx', 0o600);
-    created = true;
-    try {
-      fchmodSync(handle, 0o600);
-    } finally {
-      closeSync(handle);
-    }
+    fchmodSync(handle, 0o600);
     return true;
+  } catch {
+    removeFreshDatabaseFiles(databasePath);
+    throw new DomainError('internal_error');
+  } finally {
+    closeSync(handle);
+  }
+}
+
+function assertExistingDatabaseFile(databasePath: string): void {
+  let handle: number;
+  try {
+    handle = openSync(
+      databasePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
-    if (created) {
-      removeFreshDatabaseFiles(databasePath);
-    }
-    if (fileSystemErrorCode(error) === 'EEXIST') {
+    if (fileSystemErrorCode(error) === 'ENOENT') {
       throw new DomainError('database_corrupt');
     }
-    throw new DomainError('internal_error');
+    throw new DomainError('database_incompatible');
+  }
+
+  try {
+    const stat = fstatSync(handle);
+    if (
+      !stat.isFile() ||
+      (stat.mode & 0o7777) !== 0o600 ||
+      (typeof process.getuid === 'function' &&
+        stat.uid !== process.getuid())
+    ) {
+      throw new DomainError('database_incompatible');
+    }
+    if (stat.size === 0) {
+      throw new DomainError('database_corrupt');
+    }
+  } finally {
+    closeSync(handle);
   }
 }
 
@@ -186,9 +204,9 @@ function migrateOrVerify(
   schemaDigest: string,
   nowMs: number,
   allowBootstrap: boolean,
-): 1 | 2 | null {
+): 1 | 2 | 3 | null {
   db.exec('BEGIN IMMEDIATE');
-  let migratedFrom: 1 | 2 | null = null;
+  let migratedFrom: 1 | 2 | 3 | null = null;
   try {
     const versionRow = db.prepare('PRAGMA user_version').get() as
       | { user_version?: unknown }
@@ -214,12 +232,18 @@ function migrateOrVerify(
     } else if (version === 1) {
       migrateV1ToV2(db, schemaDigest);
       migrateV2ToV3(db, schemaDigest, nowMs);
+      migrateV3ToV4(db, schemaDigest);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       migratedFrom = 1;
     } else if (version === 2) {
       migrateV2ToV3(db, schemaDigest, nowMs);
+      migrateV3ToV4(db, schemaDigest);
       db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       migratedFrom = 2;
+    } else if (version === 3) {
+      migrateV3ToV4(db, schemaDigest);
+      db.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+      migratedFrom = 3;
     } else if (version === DATABASE_SCHEMA_VERSION) {
       verifySchema(db, schemaDigest);
     } else {
@@ -591,6 +615,26 @@ function migrateV2ToV3(db: DatabaseSync, schemaDigest: string, nowMs: number): v
   db.prepare('UPDATE governance_meta SET value = ? WHERE key = ?').run('3', 'schema_version');
 }
 
+/**
+ * Strict version-3 -> version-4 migration. The rule schema relaxation only
+ * changes the validation digest; stored governance data stays valid and no
+ * governance event is written. Both metadata rows must already exist.
+ */
+function migrateV3ToV4(db: DatabaseSync, schemaDigest: string): void {
+  const versionUpdate = db
+    .prepare('UPDATE governance_meta SET value = ? WHERE key = ?')
+    .run('4', 'schema_version');
+  if (Number(versionUpdate.changes) === 0) {
+    throw new DomainError('database_incompatible');
+  }
+  const digestUpdate = db
+    .prepare('UPDATE governance_meta SET value = ? WHERE key = ?')
+    .run(schemaDigest, 'rule_schema_digest');
+  if (Number(digestUpdate.changes) === 0) {
+    throw new DomainError('database_incompatible');
+  }
+}
+
 function insertMetadata(
   db: DatabaseSync,
   schemaDigest: string,
@@ -603,6 +647,72 @@ function insertMetadata(
   insert.run('compiler_version', COMPILER_VERSION);
   insert.run('rule_schema_digest', schemaDigest);
   insert.run('created_at', new Date(nowMs).toISOString());
+}
+
+/**
+ * Ensure the built-in Global Project exists with its default configuration.
+ * This runs once per service construction, on new and existing databases.
+ * Startup writes no governance event because this is a built-in row, not a user
+ * project creation.
+ */
+function ensureGlobalProject(db: DatabaseSync, nowMs: number): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const conflictingSentinel = db
+      .prepare('SELECT id FROM projects WHERE workspace = ? AND id <> ?')
+      .get(GLOBAL_WORKSPACE_SENTINEL, GLOBAL_PROJECT_ID) as
+      | { id?: unknown }
+      | undefined;
+    if (conflictingSentinel !== undefined) {
+      throw new DomainError('database_corrupt');
+    }
+
+    const existing = db
+      .prepare(
+        'SELECT id, name, workspace, current_version FROM projects WHERE id = ?',
+      )
+      .get(GLOBAL_PROJECT_ID) as
+      | { id: string; name: string; workspace: string; current_version: number | null }
+      | undefined;
+
+    if (existing === undefined) {
+      db.prepare(
+        'INSERT INTO projects (id, name, workspace, current_version, created_at) VALUES (?, ?, ?, NULL, ?)',
+      ).run(
+        GLOBAL_PROJECT_ID,
+        GLOBAL_PROJECT_NAME,
+        GLOBAL_WORKSPACE_SENTINEL,
+        new Date(nowMs).toISOString(),
+      );
+    } else if (
+      existing.name !== GLOBAL_PROJECT_NAME ||
+      existing.workspace !== GLOBAL_WORKSPACE_SENTINEL
+    ) {
+      // A reserved row with a different identity is never adopted or replaced.
+      throw new DomainError('database_corrupt');
+    }
+
+    const configuredAt = new Date(nowMs).toISOString();
+    db.prepare(
+      `INSERT INTO project_configs (project_id, config_json, updated_at, updated_by_json)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(project_id) DO NOTHING`,
+    ).run(
+      GLOBAL_PROJECT_ID,
+      JSON.stringify(DEFAULT_PROJECT_CONFIG),
+      configuredAt,
+      JSON.stringify({ id: 'system', role: 'human' }),
+    );
+
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // preserve the original failure
+    }
+    throw error;
+  }
 }
 
 function verifySchema(db: DatabaseSync, schemaDigest: string): void {

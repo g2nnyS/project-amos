@@ -26,9 +26,6 @@ const SESSION_WORKSPACE_TOKEN = '${SESSION_WORKSPACE}';
 
 const PROPOSAL_DIGEST_DOMAIN = 'amos-governance-proposal-v1';
 const CANDIDATE_DIGEST_DOMAIN = 'amos-governance-candidate-v1';
-const ENFORCEMENT_DIGEST_DOMAIN = 'amos-governance-enforcement-v1';
-const ADVISORY_DIGEST_DOMAIN = 'amos-governance-advisory-v1';
-const SNAPSHOT_DIGEST_DOMAIN = 'amos-governance-snapshot-v1';
 
 export interface RuleValidator {
   readonly schemaDigest: string;

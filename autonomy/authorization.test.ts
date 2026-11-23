@@ -6,7 +6,7 @@ import { digest } from '../activation/json.ts';
 import type { CapabilityLease } from './contracts.ts';
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
 import { entry } from '../activation/test-support.ts';
-import { RAW_SCHEMA, rule } from '../activation/test-support.ts';
+import { RAW_SCHEMA } from '../activation/test-support.ts';
 
 test('capability precedes policy and confirm remains stopped', () => {
   const snapshot = makeSnapshot(); const cap = makeLease(snapshot);

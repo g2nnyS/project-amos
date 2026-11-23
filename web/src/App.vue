@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { Menu, PanelLeftClose, PanelLeftOpen, Search, Plus, LogOut, ChevronRight, ShieldAlert, Command } from 'lucide-vue-next'
+import { Menu, PanelLeftClose, PanelLeftOpen, Search, Plus, LogOut, ChevronRight, Command } from 'lucide-vue-next'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import ToastViewport from '@/components/layout/ToastViewport.vue'
+import WindowControls from '@/components/layout/WindowControls.vue'
 import LoginView from '@/views/LoginView.vue'
 import { navSections, isActivePath, pageLabelForPath } from '@/components/layout/navigation'
 import { t } from '@/i18n'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAuthStore } from '@/stores/auth'
-import { shouldClearForAuthState, useGovernanceStore } from '@/stores/governance'
+import { isGlobalProject, shouldClearForAuthState, useGovernanceStore } from '@/stores/governance'
 
 const preferences = usePreferencesStore()
 const auth = useAuthStore()
@@ -73,8 +74,49 @@ async function createProject() {
 }
 async function logout() { try { await auth.logout() } catch {} }
 function selectProject(event: Event) { const id = (event.target as HTMLSelectElement).value; void governance.selectProject(id || null).catch(() => {}) }
-onMounted(() => { window.addEventListener('keydown', keys); void auth.bootstrap().catch(() => {}) })
-onBeforeUnmount(() => window.removeEventListener('keydown', keys))
+const globalProjects = computed(() => governance.projects.filter(p => isGlobalProject(p)))
+const workspaceProjects = computed(() => governance.projects.filter(p => !isGlobalProject(p)))
+const activeIsGlobal = computed(() => isGlobalProject(governance.activeProject))
+
+const desktopBridge = typeof window !== 'undefined' && window.amosDesktop?.isDesktop === true ? window.amosDesktop : undefined
+const nativeWindowControls = desktopBridge?.nativeWindowControls === true
+const customWindowControls = desktopBridge !== undefined
+  && !nativeWindowControls
+  && typeof desktopBridge.minimize === 'function'
+  && typeof desktopBridge.toggleMaximize === 'function'
+  && typeof desktopBridge.close === 'function'
+const windowDraggable = typeof desktopBridge?.startWindowDrag === 'function'
+
+/** Native folder picker for the new-project workspace field. */
+const canPickWorkspaceFolder = typeof desktopBridge?.pickWorkspaceFolder === 'function'
+const browsing = ref(false)
+async function browseWorkspace() {
+  if (!canPickWorkspaceFolder || browsing.value) return
+  browsing.value = true
+  try {
+    const picked = await desktopBridge?.pickWorkspaceFolder?.()
+    if (typeof picked === 'string' && picked.length > 0) workspace.value = picked
+  } catch { /* the picker is dismissed or unavailable; keep the typed path */ }
+  finally { browsing.value = false }
+}
+
+/** Frameless window: press on the topbar, the login veil or the macOS
+ * titlebar spacer moves the window; a double press toggles maximize. */
+function windowDragProbe(event: MouseEvent) {
+  if (!windowDraggable || event.button !== 0) return
+  const target = event.target instanceof Element ? event.target : null
+  if (!target?.closest('.app-topbar, .login-shell, .sidebar-titlebar-spacer')) return
+  if (target.closest('button, a, input, select, textarea, label, form, kbd, [contenteditable="true"], [data-no-drag]')) return
+  if (event.detail === 2 && typeof desktopBridge?.toggleMaximize === 'function') void desktopBridge.toggleMaximize().catch(() => {})
+  else void desktopBridge?.startWindowDrag?.().catch(() => {})
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', keys)
+  if (windowDraggable) window.addEventListener('mousedown', windowDragProbe)
+  void auth.bootstrap().catch(() => {})
+})
+onBeforeUnmount(() => { window.removeEventListener('keydown', keys); if (windowDraggable) window.removeEventListener('mousedown', windowDragProbe) })
 </script>
 
 <template>
@@ -84,11 +126,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
     <template v-else>
       <div class="shell-workspace" :inert="!auth.authenticated" :aria-hidden="auth.authenticated ? undefined : 'true'">
         <aside class="app-sidebar" :aria-label="t('app.sidebarLabel')">
+          <div v-if="nativeWindowControls" class="sidebar-titlebar-spacer" aria-hidden="true"></div>
           <div class="sidebar-project">
             <label class="sidebar-label" for="project-select">{{ t('app.currentProject') }}</label>
             <select id="project-select" class="project-select" :aria-label="t('app.selectProject')" :value="governance.activeProjectId ?? ''" @change="selectProject">
-              <option value="">{{ t('app.selectProject') }}</option>
-              <option v-for="project in governance.projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+              <option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalOption') }}</option>
+              <optgroup v-if="workspaceProjects.length" :label="t('nav.sections.workspace')">
+                <option v-for="project in workspaceProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ project.name }}</option>
+              </optgroup>
             </select>
             <button type="button" class="sidebar-add" :aria-label="t('app.newProject')" :title="t('app.newProject')" @click="createOpen = true">
               <Plus class="size-3.5" aria-hidden="true" /><span class="sidebar-add-text">{{ t('app.newProject') }}</span>
@@ -114,7 +159,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
           </nav>
 
           <div class="sidebar-footer">
-            <p class="sidebar-note">{{ t('app.sidebarNote') }}</p>
             <button type="button" class="sidebar-toggle" :aria-label="preferences.sidebarCollapsed ? t('app.expandSidebar') : t('app.collapseSidebar')" :title="preferences.sidebarCollapsed ? t('app.expandSidebar') : t('app.collapseSidebar')" @click="preferences.toggleSidebar()">
               <PanelLeftOpen v-if="preferences.sidebarCollapsed" class="size-4" aria-hidden="true" />
               <PanelLeftClose v-else class="size-4" aria-hidden="true" />
@@ -124,16 +168,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
         </aside>
 
         <div class="app-main">
-          <header class="app-topbar">
+          <header class="app-topbar" :class="{ 'app-topbar-window': customWindowControls }">
             <button type="button" class="topbar-icon topbar-menu" :aria-label="t('app.openNav')" @click="mobileOpen = true"><Menu class="size-4" aria-hidden="true" /></button>
             <div class="topbar-crumbs">
-              <span class="crumb-project">{{ governance.activeProject?.name ?? t('app.noProject') }}</span>
+              <span class="crumb-project" :class="{ 'crumb-project-global': activeIsGlobal }">
+                {{ activeIsGlobal ? t('app.globalProject') : governance.activeProject?.name ?? t('app.noProject') }}
+                <span v-if="activeIsGlobal" class="global-badge">{{ t('app.globalBadge') }}</span>
+              </span>
               <ChevronRight class="crumb-sep" aria-hidden="true" />
               <span class="crumb-page">{{ pageLabelForPath(route.path) }}</span>
             </div>
             <div class="topbar-actions">
               <span class="topbar-pill topbar-pill-version">{{ t('app.localVersion', { version: governance.policy ? `v${governance.policy.version}` : t('common.notPublished') }) }}</span>
-              <span class="topbar-pill topbar-pill-managed"><ShieldAlert class="size-3" aria-hidden="true" />{{ t('app.harnessPill') }}</span>
               <button type="button" class="topbar-search" :aria-label="t('app.searchLabel')" @click="commandOpen = true">
                 <Search class="size-3.5" aria-hidden="true" /><span>{{ t('app.search') }}</span><kbd class="kbd">⌘K</kbd>
               </button>
@@ -183,7 +229,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
         <SheetHeader class="sr-only"><SheetTitle>{{ t('app.mainNav') }}</SheetTitle><SheetDescription>{{ t('app.mobileNavDescription') }}</SheetDescription></SheetHeader>
         <div class="p-4">
           <label class="field-label mb-1.5 block" for="mobile-project">{{ t('app.currentProject') }}</label>
-          <select id="mobile-project" class="h-9 w-full rounded-md border border-input bg-background px-2 text-xs" :value="governance.activeProjectId ?? ''" @change="selectProject"><option value="">{{ t('app.selectProject') }}</option><option v-for="project in governance.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select>
+          <select id="mobile-project" class="h-9 w-full rounded-md border border-input bg-background px-2 text-xs" :value="governance.activeProjectId ?? ''" @change="selectProject"><option v-for="project in globalProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ t('app.globalOption') }}</option><optgroup v-if="workspaceProjects.length" :label="t('nav.sections.workspace')"><option v-for="project in workspaceProjects" :key="project.id" :value="project.id" :data-kind="project.kind">{{ project.name }}</option></optgroup></select>
           <Button class="mt-3 w-full" variant="outline" size="sm" @click="mobileOpen = false; createOpen = true">{{ t('app.newProject') }}</Button>
         </div>
         <nav class="px-2" :aria-label="t('app.mobileNav')">
@@ -192,10 +238,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
             <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="flex h-9 items-center gap-2 rounded-md px-2 text-sm" :class="isActivePath(route.path, item.to) ? 'bg-accent text-foreground' : 'text-muted-foreground'" @click="mobileOpen = false"><component :is="item.icon" class="size-4" />{{ t(item.labelKey) }}</RouterLink>
           </template>
         </nav>
-        <p class="mt-4 border-t border-sidebar-border p-4 text-xs text-muted-foreground">{{ t('app.mobileNote') }}</p>
       </SheetContent></Sheet>
 
-      <Dialog v-if="auth.authenticated" v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>{{ t('app.newProject') }}</DialogTitle><DialogDescription>{{ t('app.createProject.description') }}</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">{{ t('app.createProject.name') }}</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">{{ t('app.createProject.workspace') }}</span><input v-model="workspace" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">{{ t('common.cancel') }}</Button><Button type="submit" :disabled="creating">{{ creating ? t('app.createProject.creating') : t('app.createProject.submit') }}</Button></div></form></DialogContent></Dialog>
+      <Dialog v-if="auth.authenticated" v-model:open="createOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>{{ t('app.newProject') }}</DialogTitle><DialogDescription>{{ t('app.createProject.description') }}</DialogDescription></DialogHeader><form class="space-y-4" @submit.prevent="createProject"><label class="field"><span class="field-label">{{ t('app.createProject.name') }}</span><input v-model="name" required maxlength="160" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label class="field"><span class="field-label">{{ t('app.createProject.workspace') }}</span><div class="flex gap-2"><input v-model="workspace" required class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm" placeholder="/absolute/path" /><Button v-if="canPickWorkspaceFolder" type="button" variant="outline" size="sm" class="h-9 shrink-0" :disabled="browsing" @click="browseWorkspace">{{ t('app.createProject.browse') }}</Button></div></label><p v-if="createError" role="alert" class="text-xs text-destructive">{{ createError }}</p><div class="flex justify-end gap-2"><Button type="button" variant="outline" @click="createOpen = false">{{ t('common.cancel') }}</Button><Button type="submit" :disabled="creating">{{ creating ? t('app.createProject.creating') : t('app.createProject.submit') }}</Button></div></form></DialogContent></Dialog>
 
       <Dialog v-if="auth.authenticated" v-model:open="commandOpen"><DialogContent class="max-h-[calc(100dvh-2rem)] max-w-xl gap-0 overflow-y-auto p-0">
         <DialogHeader class="border-b border-border p-4 pb-3"><DialogTitle class="flex items-center gap-2"><Command class="size-4" />{{ t('app.command.title') }}</DialogTitle><DialogDescription>{{ t('app.command.description') }}</DialogDescription></DialogHeader>
@@ -206,6 +251,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keys))
         <p v-if="!results.length" role="status" class="px-2 pb-4 text-center text-xs text-muted-foreground">{{ t('app.command.empty') }}</p>
       </DialogContent></Dialog>
     </template>
+    <WindowControls />
     <ToastViewport />
   </div>
 </template>

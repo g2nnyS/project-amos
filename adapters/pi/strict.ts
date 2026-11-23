@@ -901,7 +901,6 @@ export async function createStrictPiSession(
     appendSystemPrompt = [];
     let block: InjectionBlock | null = null;
     let timeout: NodeJS.Timeout | undefined;
-    let messageStart = session.messages.length;
     try {
       try {
         strict.captureRequirement(text, egress);
@@ -939,7 +938,7 @@ export async function createStrictPiSession(
 
       // Capture the transcript boundary for this run. Text from earlier runs
       // is never eligible to be returned by this prompt.
-      messageStart = session.messages.length;
+      const messageStart = session.messages.length;
 
       // One bounded run. The timer is cleared in `finally` on every exit.
       timeout = setTimeout(() => {

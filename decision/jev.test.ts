@@ -376,6 +376,45 @@ test('times out with a safe code and clears the abort timer', async () => {
   assert.equal(error.code, 'timeout');
 });
 
+test('rejects an oversized timeout before arming a timer', () => {
+  assert.throws(
+    () =>
+      makeProvider((async () => jsonResponse(validPayload())) as typeof fetch, {
+        timeoutMs: Number.MAX_SAFE_INTEGER,
+      }),
+    (error: unknown) =>
+      error instanceof JevAssessmentError && error.code === 'config',
+  );
+});
+
+test('never derives the request URL from action or context input', async () => {
+  let capturedInput: RequestInfo | URL | undefined;
+  const fetchImpl = (async (
+    input: RequestInfo | URL,
+  ): Promise<Response> => {
+    capturedInput = input;
+    return jsonResponse(validPayload());
+  }) as typeof fetch;
+
+  const provider = createJevAssessmentProvider({
+    apiKey: API_KEY,
+    endpoint: 'https://gateway.example/v1/systemone',
+    fetchImpl,
+  });
+
+  await provider.assess(
+    {
+      tool: 'http_request',
+      operation: 'http_request',
+      target: 'http://169.254.169.254/latest/meta-data/iam',
+    },
+    { request: 'http://127.0.0.1:6379/' },
+    ASSESSMENT_INPUT,
+  );
+
+  assert.equal(capturedInput, 'https://gateway.example/v1/systemone');
+});
+
 test('marks low-confidence answers as requiring review', async () => {
   const provider = makeProvider(
     (async () => jsonResponse(validPayload({ confidence: 0.4 }))) as typeof fetch,

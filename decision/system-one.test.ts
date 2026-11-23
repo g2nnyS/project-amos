@@ -141,3 +141,19 @@ test('times out safely and clears the transport', async () => {
       error instanceof JevAssessmentError && error.code === 'timeout',
   );
 });
+
+test('rejects an oversized timeout before arming a timer', () => {
+  assert.throws(
+    () =>
+      createSystemOneClient({
+        apiKey: API_KEY,
+        baseUrl: 'https://openrouter.ai/api',
+        model: MODEL,
+        models: [MODEL],
+        timeoutMs: Number.MAX_SAFE_INTEGER,
+        fetchImpl: (async () => json({ model: MODEL, answers: {} })) as typeof fetch,
+      }),
+    (error: unknown) =>
+      error instanceof JevAssessmentError && error.code === 'config',
+  );
+});

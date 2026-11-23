@@ -10,6 +10,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
+  constants,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -24,8 +25,9 @@ import {
   chmod,
   lstat,
   mkdir,
+  open,
   readFile,
-  writeFile,
+  type FileHandle,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -35,6 +37,7 @@ import { parse as parseYaml } from 'yaml';
 
 import type { ControlPlane, PublishArtifactWrite, RuleRecord } from './contracts.ts';
 import { createGovernanceServer, type GovernanceServer } from './http.ts';
+import { HarnessPluginInstaller } from './harness-plugin-install.ts';
 import { JevSettingsStore } from './jev-settings.ts';
 import { ObservationLogs } from './observations.ts';
 import { PasswordStore } from './password.ts';
@@ -219,52 +222,66 @@ async function ensureCredentialFile(
   path: string,
   tokenFactory: () => string,
 ): Promise<string> {
-  let existing: Stats | null = null;
+  const token = tokenFactory();
+  if (
+    typeof token !== 'string' ||
+    token.length === 0 ||
+    token.length > 1024 ||
+    token.includes('\n') ||
+    token.includes('\r')
+  ) {
+    throw new CliError('credential_invalid');
+  }
+
+  let handle: FileHandle | null = null;
   try {
-    existing = await lstat(path);
+    handle = await open(path, 'wx', CREDENTIAL_MODE);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw new CliError('credential_write_failed');
+    }
+  }
+
+  if (handle === null) {
+    // A concurrent initialization won the exclusive create; read its file
+    // through the same owner/mode validation as an existing credential.
+    return await readCredentialFile(path);
+  }
+
+  try {
+    await handle.chmod(CREDENTIAL_MODE);
+    await handle.writeFile(`${token}\n`, 'utf8');
+    return token;
   } catch {
-    existing = null;
+    throw new CliError('credential_write_failed');
+  } finally {
+    await handle.close();
   }
-
-  if (existing === null) {
-    const token = tokenFactory();
-    if (
-      typeof token !== 'string' ||
-      token.length === 0 ||
-      token.length > 1024 ||
-      token.includes('\n') ||
-      token.includes('\r')
-    ) {
-      throw new CliError('credential_invalid');
-    }
-    try {
-      await writeFile(path, `${token}\n`, {
-        flag: 'wx',
-        mode: CREDENTIAL_MODE,
-      });
-      await chmod(path, CREDENTIAL_MODE);
-      return token;
-    } catch {
-      // A concurrent initialization may have won the exclusive create.
-      const raced = await lstat(path).catch(() => null);
-      if (raced === null) {
-        throw new CliError('credential_write_failed');
-      }
-    }
-  }
-
-  return await readCredentialFile(path);
 }
 
 export async function readCredentialFile(path: string): Promise<string> {
-  const stat = await lstat(path);
-  assertOwnerAndMode(stat, path, CREDENTIAL_MODE, 'file');
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw new CliError('file_is_symlink');
+    }
+    throw error;
+  }
 
   let raw: string;
   try {
-    raw = await readFile(path, 'utf8');
-  } catch {
+    assertOwnerAndMode(await handle.stat(), path, CREDENTIAL_MODE, 'file');
+    raw = await handle.readFile('utf8');
+  } catch (error) {
+    if (error instanceof CliError) throw error;
     throw new CliError('credential_read_failed');
+  } finally {
+    await handle.close();
   }
   const token = raw.trim();
   if (
@@ -523,6 +540,8 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       : desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;
     const managedAuditDir = join(paths.dataDir, 'managed-audit');
     await ensurePrivateDirectory(managedAuditDir);
+    const jevSettings = new JevSettingsStore(paths.dataDir);
+    const harnessPluginInstaller = new HarnessPluginInstaller(paths.rootDir);
 
     const rawSchemaText = await readFile(paths.schemaPath, 'utf8');
     let rawSchema: Record<string, unknown>;
@@ -558,6 +577,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
       ...(guidanceSource === undefined ? {} : { guidanceSource }),
       writeArtifacts: writeProjectArtifacts,
       managedAuditDir,
+      jevConfigPath: jevSettings.path,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
     const controlPlane = service;
@@ -591,7 +611,8 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
         ...(options.apiOnly === true ? {} : { staticDir: options.staticDir ?? paths.staticDir }),
         ...(options.now === undefined ? {} : { now: options.now }),
         observations,
-        jevSettings: new JevSettingsStore(paths.dataDir),
+        jevSettings,
+        harnessPluginInstaller,
       });
     } catch {
       controlPlane.close();

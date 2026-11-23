@@ -45,6 +45,7 @@ export interface EffectLimits {
 }
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const NOBLOCK = constants.O_NONBLOCK ?? 0;
 const READ_CHUNK = 64 * 1024;
 
 export type PreparedEffect =
@@ -603,27 +604,13 @@ function applySearch(
       if (matches.length >= limit) {
         return;
       }
-      let fileStat: Stats;
-      try {
-        fileStat = lstatSync(absolute);
-      } catch {
-        return;
-      }
-      if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
-        return;
-      }
-      if (fileStat.size > capability.maxReadBytes) {
-        return;
-      }
       let fd: number | undefined;
       try {
-        fd = openSync(absolute, constants.O_RDONLY | NOFOLLOW);
+        fd = openSync(absolute, constants.O_RDONLY | NOFOLLOW | NOBLOCK);
+        // Validate the open descriptor, not a separate path stat, so an
+        // exchanged path cannot mix one file's metadata with another's bytes.
         const opened = fstatSync(fd);
-        if (
-          !opened.isFile() ||
-          opened.dev !== fileStat.dev ||
-          opened.ino !== fileStat.ino
-        ) {
+        if (!opened.isFile() || opened.size > capability.maxReadBytes) {
           return;
         }
         const bytes = readFileDescriptorCapped(fd, capability.maxReadBytes);

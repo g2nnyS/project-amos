@@ -46,8 +46,12 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
 
+import { ACTIVATION_FORMAT, ACTIVATION_FORMAT_VERSION } from '../activation/types.ts';
 import type { PublishedVersion, RuleRecord } from '../control-plane/contracts.ts';
-import { readRuntimeStatus } from '../control-plane/runtime-status.ts';
+import {
+  readRuntimeStatus,
+  type RuntimeExpectation,
+} from '../control-plane/runtime-status.ts';
 import { startServe } from '../control-plane/cli.ts';
 import { loadJevConfig, type LoadedJevConfig } from '../decision/config.ts';
 import { JEV_QUESTION_SET_VERSION } from '../decision/jev.ts';
@@ -79,6 +83,98 @@ const KEY_FILE = resolve(
 );
 const MODEL = process.env.AMOS_LOCAL_LLAMA_MODEL ?? 'gemma-4-e4b';
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const PROJECT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const POLICY_VERSION_PATTERN = /^policy-v[1-9][0-9]{0,8}$/;
+
+const RUNTIME_STATES = [
+  'unpublished',
+  'never',
+  'loaded',
+  'loaded-unverified',
+  'stale',
+  'invalid',
+] as const;
+
+export type KnownRuntimeState = (typeof RUNTIME_STATES)[number];
+
+/**
+ * Normalize a harness runtime state to a fixed member. Anything outside the
+ * closed set is rejected, so callers never persist an arbitrary value.
+ */
+export function knownRuntimeState(value: unknown): KnownRuntimeState | null {
+  switch (value) {
+    case 'unpublished':
+      return 'unpublished';
+    case 'never':
+      return 'never';
+    case 'loaded':
+      return 'loaded';
+    case 'loaded-unverified':
+      return 'loaded-unverified';
+    case 'stale':
+      return 'stale';
+    case 'invalid':
+      return 'invalid';
+    default:
+      return null;
+  }
+}
+
+interface PublishedActivation {
+  readonly projectId: string;
+  readonly version: number;
+  readonly policyVersion: string;
+  readonly activationDigest: string;
+}
+
+/**
+ * Read the activation snapshot the governance process published into the
+ * workspace and bound it to the probe's own workspace. The probe writes this
+ * bounded identity into `.pi/amos.json` and its evidence instead of copying
+ * response bodies, and asserts the HTTP responses against the same snapshot.
+ */
+export function readPublishedActivation(workspace: string): PublishedActivation {
+  const path = join(workspace, '.pi', 'activation.json');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error('activation_artifact_unreadable');
+  }
+  if (
+    !isRecord(raw) ||
+    raw.format !== ACTIVATION_FORMAT ||
+    raw.formatVersion !== ACTIVATION_FORMAT_VERSION ||
+    !isRecord(raw.project)
+  ) {
+    throw new Error('activation_artifact_invalid');
+  }
+
+  const project = raw.project;
+  const projectId = project.projectId;
+  const projectWorkspace = project.workspace;
+  const version = project.epoch;
+  const policyVersion = project.projectConfigVersion;
+  const activationDigest = raw.activationDigest;
+  if (
+    typeof projectId !== 'string' ||
+    !PROJECT_ID_PATTERN.test(projectId) ||
+    typeof projectWorkspace !== 'string' ||
+    projectWorkspace !== resolve(workspace) ||
+    typeof version !== 'number' ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    typeof policyVersion !== 'string' ||
+    !POLICY_VERSION_PATTERN.test(policyVersion) ||
+    policyVersion !== `policy-v${version}` ||
+    typeof activationDigest !== 'string' ||
+    !DIGEST_PATTERN.test(activationDigest)
+  ) {
+    throw new Error('activation_artifact_invalid');
+  }
+
+  return { projectId, version, policyVersion, activationDigest };
+}
 
 interface ReviewFile {
   readonly reviewer: 'jev';
@@ -441,11 +537,15 @@ async function main(): Promise<number> {
     const humanToken = readFileSync(governance.paths.humanTokenPath, 'utf8').trim();
     const login = await call('POST', '/api/login', { token: humanToken });
     csrf = String(login.csrfToken ?? '');
-    const project = (await call('POST', '/api/projects', {
+    const createdProject = await call('POST', '/api/projects', {
       name: 'Live probe',
       workspace,
-    })) as { id: string };
-    await call('POST', `/api/projects/${project.id}/config`, {
+    });
+    const projectId = createdProject.id;
+    if (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId)) {
+      throw new Error('project_response_invalid');
+    }
+    await call('POST', `/api/projects/${projectId}/config`, {
       managed: {
         enabled: true,
         requirementEgress: 'allowed',
@@ -468,7 +568,7 @@ async function main(): Promise<number> {
       activation: { includedRuleIds: null, excludedRuleIds: [] },
       injection: { baselineRuleIds: [], routes: [] },
     };
-    const proposal = (await call('POST', `/api/projects/${project.id}/proposals`, {
+    const proposal = (await call('POST', `/api/projects/${projectId}/proposals`, {
       title: 'Live probe publication',
       rationale: 'Synthetic live probe; no production data.',
       baseVersion: 0,
@@ -480,9 +580,22 @@ async function main(): Promise<number> {
       note: 'live probe',
       expectedDigest: proposal.digest,
     });
-    const published = (await call('GET', `/api/projects/${project.id}/versions/1`)) as unknown as PublishedVersion;
+    const published = (await call('GET', `/api/projects/${projectId}/versions/1`)) as unknown as PublishedVersion;
     if (published.version !== 1) throw new Error('publish_failed');
-    const activation = published.snapshot.activationSnapshot;
+    const local = readPublishedActivation(workspace);
+    if (projectId !== local.projectId || published.projectId !== local.projectId) {
+      throw new Error('activation_project_mismatch');
+    }
+    if (published.version !== local.version) throw new Error('activation_version_mismatch');
+    if (published.snapshot.activationDigest !== local.activationDigest) {
+      throw new Error('activation_digest_mismatch');
+    }
+    if (
+      published.snapshot.activationSnapshot.project.projectConfigVersion !==
+      local.policyVersion
+    ) {
+      throw new Error('activation_policy_version_mismatch');
+    }
 
     writeFileSync(
       join(workspace, '.pi', 'amos.json'),
@@ -491,7 +604,7 @@ async function main(): Promise<number> {
         rulesPath: RULES,
         schemaPath: SCHEMA,
         logPath: join(auditDir, 'shadow.jsonl'),
-        activation: { snapshotPath: '.pi/activation.json', projectId: project.id },
+        activation: { snapshotPath: '.pi/activation.json', projectId: local.projectId },
       })}\n`,
     );
     writeFileSync(
@@ -552,7 +665,7 @@ async function main(): Promise<number> {
       sections?: Record<string, string>;
     };
     const guidance = system.sections?.['amos-workflow-guidance'] ?? '';
-    if (!guidance.includes(activation.activationDigest)) {
+    if (!guidance.includes(local.activationDigest)) {
       throw new Error('injection_snapshot_mismatch');
     }
     if (!guidance.includes('live-ts')) throw new Error('typescript_guidance_missing');
@@ -583,26 +696,34 @@ async function main(): Promise<number> {
     if (!pythonGuidance.includes('live-python')) throw new Error('python_guidance_missing');
     third.session.dispose();
 
-    const status = readRuntimeStatus(workspace, published);
+    const expectation: RuntimeExpectation = {
+      projectId: local.projectId,
+      version: local.version,
+      activationDigest: local.activationDigest,
+      policyVersion: local.policyVersion,
+      epoch: local.version,
+    };
+    const status = readRuntimeStatus(workspace, expectation);
     // The local probe has no expected configuration digest, so a v1 receipt or
     // a receipt without a comparable digest is as verified as this check can
     // be. HTTP status still requires a fully verified `loaded`.
     if (status.status !== 'loaded' && status.status !== 'loaded-unverified') {
       throw new Error(`runtime_status_${status.status}`);
     }
-    const runtimeApi = await call('GET', `/api/projects/${project.id}/runtime`);
-    if (runtimeApi.status !== 'loaded') {
+    const runtimeApi = await call('GET', `/api/projects/${projectId}/runtime`);
+    const runtimeApiState = knownRuntimeState(runtimeApi.status);
+    if (runtimeApiState !== 'loaded') {
       throw new Error(`runtime_http_status_${String(runtimeApi.status)}`);
     }
     const runtimeApiReport = runtimeApi.runtime as { activationDigest?: unknown } | null;
-    if (runtimeApiReport?.activationDigest !== activation.activationDigest) {
+    if (runtimeApiReport?.activationDigest !== local.activationDigest) {
       throw new Error('runtime_http_digest_mismatch');
     }
 
     const journalPath = join(
       governance.paths.dataDir,
       'managed-audit',
-      `${project.id}.jsonl`,
+      `${local.projectId}.jsonl`,
     );
     if (!existsSync(journalPath)) throw new Error('journal_missing');
     const journal = readFileSync(journalPath, 'utf8')
@@ -677,7 +798,7 @@ async function main(): Promise<number> {
       throw new Error('review_result_not_approved');
     }
 
-    const requirementRegistry = assertRequirementRegistry(project.id, [
+    const requirementRegistry = assertRequirementRegistry(local.projectId, [
       firstSessionId,
       secondSessionId,
       thirdSessionId,
@@ -686,12 +807,12 @@ async function main(): Promise<number> {
     const evidence = {
       root,
       workspace,
-      projectId: project.id,
-      version: published.version,
-      activationDigest: activation.activationDigest,
+      projectId: local.projectId,
+      version: local.version,
+      activationDigest: local.activationDigest,
       runtimeStatus: status.status,
-      runtimeHttpStatus: runtimeApi.status,
-      guidanceDigestPresent: guidance.includes(activation.activationDigest),
+      runtimeHttpStatus: runtimeApiState,
+      guidanceDigestPresent: guidance.includes(local.activationDigest),
       confirmedBytes: Buffer.byteLength(confirmed),
       denyBlocked: !existsSync(join(workspace, 'src', 'deny.txt')),
       review: {
