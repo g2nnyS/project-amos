@@ -597,8 +597,8 @@ const zhCN = {
       fields: {
         operations: '工具操作',
         target: '目标路径',
-        url_query_key: '网址参数名',
-        scheme: '网址协议',
+        url_query_key: 'URL 参数名',
+        scheme: 'URL 方案',
         host: '主机名',
       },
       operators: {

@@ -598,7 +598,7 @@ const enUS: Messages = {
         operations: 'Tool operation',
         target: 'Target path',
         url_query_key: 'Query parameter name',
-        scheme: 'URL protocol',
+        scheme: 'URL scheme',
         host: 'Hostname',
       },
       operators: {
