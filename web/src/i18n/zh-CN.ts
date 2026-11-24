@@ -582,6 +582,8 @@ const zhCN = {
       actionsColumn: '操作',
       addCondition: '添加条件',
       removeCondition: '删除条件',
+      addValue: '添加值',
+      removeValue: '删除值',
       joiner: '且',
       previewLabel: '表达式预览',
       emptyPreview: '未设置条件',

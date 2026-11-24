@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, FileText, Zap, Bookmark, Code } from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CandidateActivation, RuleRecord } from '@/types'
+import { fieldOf, type Field, type Operator } from './model'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -27,16 +28,15 @@ const included = computed(() => {
 const excluded = computed(() => props.activation.excludedRuleIds.includes(props.rule.id))
 const active = computed(() => included.value && !excluded.value)
 
-function predicateSummary(p: RuleRecord['predicate']): string {
-  if (!p || p.length === 0) return t('ruleInspector.noPredicate')
-  return p.map(item => `${item.op}(${values(item).join(', ')})`).join(' · ')
-}
 function values(p: NonNullable<RuleRecord['predicate']>[number]): string[] {
   return Object.values(p.args)[0] ?? []
 }
 function json(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
+
+const fieldLabelKey = (field: Field) => `ruleForm.conditionBuilder.fields.${field}` as const
+const operatorLabelKey = (op: Operator) => `ruleForm.conditionBuilder.operators.${op}` as const
 
 onMounted(() => {
   closeButton.value?.focus()
@@ -103,7 +103,22 @@ const activationLabel = computed(() => {
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.policyClass') }}</dt><dd>{{ rule.policy_class }}</dd></div>
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.expressivity') }}</dt><dd>{{ rule.expressivity }}</dd></div>
           </dl>
-          <div><p class="field-label">{{ t('ruleFields.predicateField') }}</p><p v-if="!rule.predicate || rule.predicate.length === 0" class="mt-1.5 text-muted-foreground">{{ t('ruleInspector.advisory') }}</p><ul v-else class="mt-1.5 space-y-2"><li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-2"><code class="text-[11px]">{{ p.op }}</code><p class="mt-1 break-all text-muted-foreground">{{ values(p).join(' · ') }}</p></li></ul></div>
+          <div>
+            <p class="field-label">{{ t('ruleFields.predicateField') }}</p>
+            <p v-if="!rule.predicate || rule.predicate.length === 0" class="mt-1.5 text-muted-foreground">{{ t('ruleInspector.advisory') }}</p>
+            <ul v-else class="mt-1.5 space-y-2">
+              <li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-3">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span class="font-medium">{{ t(fieldLabelKey(fieldOf(p.op))) }}</span>
+                  <span class="text-muted-foreground">{{ t(operatorLabelKey(p.op)) }}</span>
+                </div>
+                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                  <span v-for="v in values(p)" :key="v" class="inline-block rounded border border-border bg-muted/50 px-1.5 py-0.5 break-all text-muted-foreground">{{ v }}</span>
+                  <span v-if="!values(p).length" class="text-muted-foreground">{{ t('ruleForm.conditionBuilder.emptyPreview') }}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
         </TabsContent>
         <TabsContent value="execution" class="mt-0 space-y-4 text-xs">
           <dl class="grid grid-cols-2 gap-3">

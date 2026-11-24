@@ -86,13 +86,13 @@ function fieldName(key: string): string { const label = fieldNames[key]; return 
         <p class="panel-kicker">{{ t('candidate.kicker') }}</p>
       </div>
     </div>
-    <Tabs v-model="activeTab">
-      <TabsList class="m-4 mb-0">
-        <TabsTrigger value="semantic" class="text-[11px]">{{ t('candidate.semanticTab') }}</TabsTrigger>
-        <TabsTrigger value="activation" class="text-[11px]">{{ t('candidate.activationTab') }}</TabsTrigger>
-        <TabsTrigger value="raw" class="text-[11px]">{{ t('candidate.rawTab') }}</TabsTrigger>
+    <Tabs v-model="activeTab" class="w-full">
+      <TabsList class="w-full rounded-none border-b border-border bg-muted/50 p-0.75">
+        <TabsTrigger value="semantic" class="flex-1 text-[11px]">{{ t('candidate.semanticTab') }}</TabsTrigger>
+        <TabsTrigger value="activation" class="flex-1 text-[11px]">{{ t('candidate.activationTab') }}</TabsTrigger>
+        <TabsTrigger value="raw" class="flex-1 text-[11px]">{{ t('candidate.rawTab') }}</TabsTrigger>
       </TabsList>
-      <TabsContent value="semantic" class="mt-0">
+      <TabsContent value="semantic" class="mt-0 w-full">
         <div v-if="before" class="divide-y divide-border">
           <div v-if="!changes.length && !activationChanged" class="p-4 text-xs text-muted-foreground">{{ t('candidate.noChanges') }}</div>
           <div v-if="effectiveDiff.added.length || effectiveDiff.removed.length" class="p-4">
@@ -132,7 +132,7 @@ function fieldName(key: string): string { const label = fieldNames[key]; return 
           </details>
         </div>
       </TabsContent>
-      <TabsContent value="activation" class="mt-0">
+      <TabsContent value="activation" class="mt-0 w-full">
         <div class="grid gap-4 p-4 text-xs sm:grid-cols-2">
           <div class="rounded-md border border-border bg-surface p-3">
             <p class="font-semibold">{{ t('candidate.thisCandidate') }}</p>
@@ -146,15 +146,15 @@ function fieldName(key: string): string { const label = fieldNames[key]; return 
           </div>
         </div>
       </TabsContent>
-      <TabsContent value="raw" class="mt-0 p-4">
+      <TabsContent value="raw" class="mt-0 w-full p-4">
         <div class="grid gap-4 lg:grid-cols-2">
-          <div>
+          <div class="min-w-0">
             <p class="mb-2 text-[11px] font-semibold">{{ t('candidate.candidateJson') }}</p>
-            <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px]">{{ show(candidate) }}</pre>
+            <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed">{{ show(candidate) }}</pre>
           </div>
-          <div v-if="before">
+          <div v-if="before" class="min-w-0">
             <p class="mb-2 text-[11px] font-semibold">{{ t('candidate.publishedJson') }}</p>
-            <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px]">{{ show(before) }}</pre>
+            <pre class="scroll-thin max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed">{{ show(before) }}</pre>
           </div>
         </div>
       </TabsContent>

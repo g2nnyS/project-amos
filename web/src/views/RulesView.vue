@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, onMounted, nextTick } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Search, X, SlidersHorizontal } from 'lucide-vue-next'
+import { Search, X, SlidersHorizontal, Pencil } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RuleInspector from '@/components/rules/RuleInspector.vue'
 import RuleMatrix from '@/components/rules/RuleMatrix.vue'
 import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { t, type MessageKey } from '@/i18n'
+import { Button } from '@/components/ui/button'
 import type { RuleOnHit, RuleExpressivity, RulePolicyClass, RuleEnforcement } from '@/types'
 
 const governance = useGovernanceStore()
@@ -128,7 +129,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
   <div class="page space-y-4">
     <PageHeader :title="t(isGlobal || !governance.activeProject ? 'rules.title' : 'rules.titleSupplementary')" :description="t(isGlobal || !governance.activeProject ? 'rules.description' : 'rules.descriptionSupplementary')">
       <template #actions>
-        <RouterLink to="/editor" class="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">{{ t('rules.edit') }}</RouterLink>
+        <Button as-child variant="outline" size="sm">
+          <RouterLink to="/editor"><Pencil class="size-3.5" />{{ t('rules.edit') }}</RouterLink>
+        </Button>
       </template>
     </PageHeader>
     <div v-if="governance.loading" class="panel p-5 text-sm" role="status">{{ t('rules.loading') }}</div>
@@ -151,27 +154,27 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
               <input v-model="search" :aria-label="t('rules.search')" :placeholder="t('rules.searchPlaceholder')" class="h-8 w-full rounded-md border border-input bg-background pl-8 pr-7 text-xs" />
               <button v-if="search" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" :aria-label="t('rules.clearSearch')" @click="search = ''"><X class="size-3.5" /></button>
             </div>
-            <select v-model="dimension" :aria-label="t('rules.filterDimension')" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <select v-model="dimension" :aria-label="t('rules.filterDimension')" class="h-8 min-w-[120px] rounded-md border border-input bg-background px-2 text-xs">
               <option value="">{{ t('rules.allDimensions') }}</option>
               <option v-for="d in dimensions" :key="d" :value="d">{{ d }}</option>
             </select>
-            <select v-model="policyClass" :aria-label="t('rules.filterPolicyClass')" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <select v-model="policyClass" :aria-label="t('rules.filterPolicyClass')" class="h-8 min-w-[120px] rounded-md border border-input bg-background px-2 text-xs">
               <option value="">{{ t('rules.allPolicyClasses') }}</option>
               <option v-for="c in policyClasses" :key="c.value" :value="c.value">{{ t(c.labelKey) }}</option>
             </select>
-            <select v-model="onHit" :aria-label="t('rules.filterOnHit')" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <select v-model="onHit" :aria-label="t('rules.filterOnHit')" class="h-8 min-w-[120px] rounded-md border border-input bg-background px-2 text-xs">
               <option value="">{{ t('rules.allOnHits') }}</option>
               <option v-for="h in onHits" :key="h.value" :value="h.value">{{ h.label }}</option>
             </select>
-            <select v-model="enforcement" :aria-label="t('rules.filterEnforcement')" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <select v-model="enforcement" :aria-label="t('rules.filterEnforcement')" class="h-8 min-w-[120px] rounded-md border border-input bg-background px-2 text-xs">
               <option value="">{{ t('rules.allEnforcements') }}</option>
               <option v-for="e in enforcements" :key="e.value" :value="e.value">{{ e.label }}</option>
             </select>
-            <select v-model="expressivity" :aria-label="t('rules.filterExpressivity')" class="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <select v-model="expressivity" :aria-label="t('rules.filterExpressivity')" class="h-8 min-w-[120px] rounded-md border border-input bg-background px-2 text-xs">
               <option value="">{{ t('rules.allExpressivities') }}</option>
               <option v-for="e in expressivities" :key="e.value" :value="e.value">{{ t(e.labelKey) }}</option>
             </select>
-            <button v-if="search || dimension || policyClass || onHit || enforcement || expressivity" type="button" class="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent" @click="clearFilters"><SlidersHorizontal class="size-3.5" />{{ t('common.reset') }}</button>
+            <Button v-if="search || dimension || policyClass || onHit || enforcement || expressivity" type="button" variant="outline" size="sm" @click="clearFilters"><SlidersHorizontal class="size-3.5" />{{ t('common.reset') }}</Button>
           </div>
           <div class="overflow-x-auto">
             <table class="data-table min-w-[780px]">

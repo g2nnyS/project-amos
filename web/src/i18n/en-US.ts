@@ -582,6 +582,8 @@ const enUS: Messages = {
       actionsColumn: 'Actions',
       addCondition: 'Add condition',
       removeCondition: 'Remove condition',
+      addValue: 'Add value',
+      removeValue: 'Remove value',
       joiner: 'and',
       previewLabel: 'Expression preview',
       emptyPreview: 'No conditions set',

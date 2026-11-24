@@ -621,6 +621,105 @@ try {
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
     await setByLabel('规则 ID', 'project-smoke-rule')
     await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
+
+    // Condition-builder regression: measured control widths, labelled icon
+    // buttons and a real add/remove value round-trip before server validation.
+    const conditionBuilderGeometry = `function () {
+      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      const rect = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
+      const grid = section?.querySelector('.condition-grid') ?? null
+      const selects = grid ? Array.from(grid.querySelectorAll('select')) : []
+      const input = grid?.querySelector('.value-row input') ?? null
+      const buttons = section ? Array.from(section.querySelectorAll('button')) : []
+      const addValue = buttons.find(b => b.textContent.trim().includes('添加值')) ?? null
+      const iconButtons = grid ? Array.from(grid.querySelectorAll('button[aria-label]')).map(b => ({ label: (b.getAttribute('aria-label') || '').trim(), svg: !!b.querySelector('svg'), rect: rect(b) })) : []
+      const main = document.querySelector('main.workspace')
+      return {
+        visible: !!section && section.getClientRects().length > 0,
+        field: selects[0] ? rect(selects[0]) : null,
+        operator: selects[1] ? rect(selects[1]) : null,
+        value: input ? rect(input) : null,
+        addValue: addValue ? rect(addValue) : null,
+        valueRows: grid ? grid.querySelectorAll('.value-row').length : 0,
+        iconButtons,
+        doc: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth },
+        main: main ? { scroll: main.scrollWidth, client: main.clientWidth } : null,
+      }
+    }`
+    const conditionBuilderScroll = `function () {
+      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      if (!section) return false
+      section.scrollIntoView({ block: 'center', behavior: 'instant' })
+      return true
+    }`
+
+    await waitForCall(`function () {
+      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      return !!section && section.querySelectorAll('.condition-grid .value-row input').length === 1
+    }`)
+    assert.equal(await callInPage(conditionBuilderScroll), true, 'condition builder section missing')
+    await sleep(150)
+    const builder = await callInPage(conditionBuilderGeometry)
+    assert.equal(builder.visible, true, 'condition builder is not visible')
+    assert.ok(builder.field && builder.field.width >= 120 && builder.field.height >= 30, `field control is too small: ${JSON.stringify(builder.field)}`)
+    assert.ok(builder.operator && builder.operator.width >= 110 && builder.operator.height >= 30, `operator control is too small: ${JSON.stringify(builder.operator)}`)
+    assert.ok(builder.value && builder.value.width >= 140 && builder.value.height >= 30, `value control is too small: ${JSON.stringify(builder.value)}`)
+    assert.equal(builder.valueRows, 1, 'seeded rule did not start with exactly one value row')
+    assert.ok(builder.iconButtons.length >= 2, 'condition builder icon buttons are missing')
+    for (const button of builder.iconButtons) {
+      assert.ok(button.label.length > 0, 'condition builder icon button has no aria-label')
+      assert.equal(button.svg, true, `condition builder icon button "${button.label}" has no svg glyph`)
+    }
+    assert.ok(builder.doc.scroll <= builder.doc.client, `rule editor overflows horizontally: ${JSON.stringify(builder.doc)}`)
+    assert.ok(!builder.main || builder.main.scroll <= builder.main.client, `rule editor main area overflows: ${JSON.stringify(builder.main)}`)
+    await screenshot('desktop-rule-editor-condition-builder')
+
+    await click('button', '添加值')
+    await waitForCall(`function () {
+      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      return !!section && section.querySelectorAll('.condition-grid .value-row').length === 2 && !!section.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
+    }`)
+    const markedDelete = await evaluate(`(() => {
+      const input = document.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
+      const button = input?.closest('.value-row')?.querySelector('button[aria-label]')
+      if (!button) return false
+      button.setAttribute('data-e2e-delete-value', '')
+      return true
+    })()`)
+    assert.ok(markedDelete, 'added value row has no delete control')
+    await click('button[data-e2e-delete-value]')
+    await waitForCall(`function () {
+      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      const inputs = section ? Array.from(section.querySelectorAll('.condition-grid .value-row input')) : []
+      return inputs.length === 1 && inputs[0].value === 'file_read'
+    }`)
+
+    // Mobile layout: single-column conditions with every control inside the viewport.
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await waitForCall(`function () {
+        const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+        const selects = section ? Array.from(section.querySelectorAll('.condition-grid select')) : []
+        if (selects.length < 2) return false
+        return selects[1].getBoundingClientRect().top >= selects[0].getBoundingClientRect().bottom - 1
+      }`, [], 5000)
+      assert.equal(await callInPage(conditionBuilderScroll), true, 'condition builder section missing at 390px')
+      await sleep(150)
+      const mobileBuilder = await callInPage(conditionBuilderGeometry)
+      assert.ok(mobileBuilder.doc.scroll <= mobileBuilder.doc.client, `mobile rule editor overflows horizontally: ${JSON.stringify(mobileBuilder.doc)}`)
+      assert.ok(!mobileBuilder.main || mobileBuilder.main.scroll <= mobileBuilder.main.client, `mobile rule editor main area overflows: ${JSON.stringify(mobileBuilder.main)}`)
+      for (const [name, control] of Object.entries({ field: mobileBuilder.field, operator: mobileBuilder.operator, value: mobileBuilder.value, addValue: mobileBuilder.addValue })) {
+        assert.ok(control && control.width > 0 && control.left >= 0 && control.right <= mobileBuilder.doc.client + 1, `mobile ${name} control is outside the viewport: ${JSON.stringify(control)}`)
+      }
+      for (const button of mobileBuilder.iconButtons) {
+        assert.ok(button.rect.left >= 0 && button.rect.right <= mobileBuilder.doc.client + 1, `mobile icon button is outside the viewport: ${JSON.stringify(button)}`)
+      }
+      assert.equal(mobileBuilder.valueRows, 1, 'mobile condition builder lost the seeded value row')
+      await screenshot('mobile-rule-editor-condition-builder')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
   })
@@ -657,6 +756,108 @@ try {
     await click('button', '提交审批')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
+  })
+
+  await check('draft changes topbar spans the panel and raw JSON stays usable on desktop and mobile', async () => {
+    const draftPanelScroll = `function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      if (!panel) return false
+      panel.scrollIntoView({ block: 'start', behavior: 'instant' })
+      return true
+    }`
+    const draftPanelGeometry = `function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      const rect = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
+      const list = panel?.querySelector('[role="tablist"]') ?? null
+      const tabs = list ? Array.from(list.querySelectorAll('[role="tab"]')).map(t => ({ text: t.textContent.trim(), selected: t.getAttribute('aria-selected') === 'true', rect: rect(t) })) : []
+      const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) ?? null : null
+      const grid = tabpanel ? Array.from(tabpanel.children).find(c => c.classList.contains('grid')) ?? null : null
+      const main = document.querySelector('main.workspace')
+      return {
+        panel: panel ? rect(panel) : null,
+        panelScroll: panel ? { scroll: panel.scrollWidth, client: panel.clientWidth } : null,
+        list: list ? rect(list) : null,
+        tabs,
+        tabpanel: tabpanel ? rect(tabpanel) : null,
+        blocks: grid ? Array.from(grid.children).map(rect) : [],
+        doc: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth },
+        main: main ? { scroll: main.scrollWidth, client: main.clientWidth } : null,
+      }
+    }`
+
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      return !!panel && !!panel.querySelector('[role="tablist"]') && panel.querySelectorAll('[role="tab"]').length === 3 && Array.from(panel.querySelectorAll('[role="tabpanel"]')).some(p => p.getClientRects().length)
+    }`)
+    assert.equal(await callInPage(draftPanelScroll), true, 'draft changes panel missing')
+    await sleep(150)
+
+    const assertTopbar = (layout, label) => {
+      assert.ok(layout.panel && layout.list && layout.tabpanel, `${label}: draft changes panel, tablist or tab content missing`)
+      assert.deepEqual(layout.tabs.map(tab => tab.text), ['内容改动', '选用范围', '原始 JSON'], `${label}: tab labels changed`)
+      const top = layout.tabs[0].rect.top
+      for (const tab of layout.tabs) assert.ok(Math.abs(tab.rect.top - top) <= 2, `${label}: tab "${tab.text}" is not on the same row`)
+      for (let i = 1; i < layout.tabs.length; i += 1) assert.ok(layout.tabs[i].rect.left > layout.tabs[i - 1].rect.left, `${label}: tab "${layout.tabs[i].text}" is not to the right of its neighbour`)
+      assert.ok(layout.list.bottom <= layout.tabpanel.top + 1, `${label}: tablist is not above the tab content`)
+      assert.ok(layout.list.width >= layout.panel.width - 8, `${label}: tablist does not span the panel (${layout.list.width} of ${layout.panel.width})`)
+      assert.ok(layout.list.left - layout.panel.left <= 8, `${label}: tablist is inset from the panel`)
+      for (const tab of layout.tabs) assert.ok(tab.rect.right <= layout.panel.right + 1 && tab.rect.left >= layout.panel.left - 1, `${label}: tab "${tab.text}" escapes the panel`)
+    }
+
+    const topbar = await callInPage(draftPanelGeometry)
+    assertTopbar(topbar, 'desktop')
+    assert.ok(topbar.tabs.find(tab => tab.text === '内容改动')?.selected, 'desktop: semantic tab is not selected')
+    assert.ok(topbar.doc.scroll <= topbar.doc.client, `desktop: draft changes page overflows: ${JSON.stringify(topbar.doc)}`)
+    assert.ok(!topbar.main || topbar.main.scroll <= topbar.main.client, `desktop: main area overflows: ${JSON.stringify(topbar.main)}`)
+
+    await click('[role="tab"]', '原始 JSON')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) : null
+      return !!tabpanel && tabpanel.textContent.includes('草稿 JSON') && tabpanel.textContent.includes('当前已发布 JSON')
+    }`)
+    const raw = await callInPage(draftPanelGeometry)
+    assertTopbar(raw, 'desktop raw')
+    assert.equal(raw.blocks.length, 2, 'desktop raw tab does not show both JSON documents')
+    const [leftJson, rightJson] = raw.blocks
+    assert.ok(leftJson.right <= rightJson.left, `desktop JSON blocks overlap: ${JSON.stringify(raw.blocks)}`)
+    assert.ok(Math.abs(leftJson.top - rightJson.top) <= 2, 'desktop JSON blocks are not side by side')
+    assert.ok(leftJson.width >= 200 && rightJson.width >= 200, `desktop JSON blocks are too narrow: ${JSON.stringify(raw.blocks)}`)
+    assert.ok(leftJson.left >= raw.panel.left - 1 && rightJson.right <= raw.panel.right + 1, 'desktop JSON blocks escape the panel')
+    assert.ok(raw.doc.scroll <= raw.doc.client, `desktop raw JSON overflows the page: ${JSON.stringify(raw.doc)}`)
+    assert.ok(!raw.main || raw.main.scroll <= raw.main.client, `desktop raw JSON overflows main: ${JSON.stringify(raw.main)}`)
+    await screenshot('desktop-candidate-raw-topbar')
+
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await waitForCall(`function () {
+        const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+        const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) : null
+        const grid = tabpanel ? Array.from(tabpanel.children).find(c => c.classList.contains('grid')) : null
+        if (!grid || grid.children.length < 2) return false
+        return grid.children[1].getBoundingClientRect().top >= grid.children[0].getBoundingClientRect().bottom
+      }`, [], 5000)
+      assert.equal(await callInPage(draftPanelScroll), true, 'draft changes panel missing at 390px')
+      await sleep(150)
+      const mobileRaw = await callInPage(draftPanelGeometry)
+      assertTopbar(mobileRaw, 'mobile raw')
+      assert.ok(mobileRaw.tabs.find(tab => tab.text === '原始 JSON')?.selected, 'mobile: raw tab is not selected')
+      assert.ok(mobileRaw.doc.scroll <= mobileRaw.doc.client, `mobile raw JSON overflows the page: ${JSON.stringify(mobileRaw.doc)}`)
+      assert.ok(!mobileRaw.main || mobileRaw.main.scroll <= mobileRaw.main.client, `mobile raw JSON overflows main: ${JSON.stringify(mobileRaw.main)}`)
+      assert.ok(mobileRaw.panelScroll.scroll <= mobileRaw.panelScroll.client, `mobile draft changes panel content overflows: ${JSON.stringify(mobileRaw.panelScroll)}`)
+      assert.equal(mobileRaw.blocks.length, 2, 'mobile raw tab does not show both JSON documents')
+      const [mobileTop, mobileBottom] = mobileRaw.blocks
+      assert.ok(mobileBottom.top >= mobileTop.bottom, `mobile JSON blocks are not single-column: ${JSON.stringify(mobileRaw.blocks)}`)
+      await screenshot('mobile-candidate-raw-topbar')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+
+    await click('[role="tab"]', '内容改动')
+    await waitForCall(`function () {
+      const tab = Array.from(document.querySelectorAll('[role="tab"]')).find(t => t.textContent.trim() === '内容改动')
+      return !!tab && tab.getAttribute('aria-selected') === 'true' && Array.from(document.querySelectorAll('[role="tabpanel"]')).some(p => p.getClientRects().length)
+    }`)
   })
 
   await check('new proposal is immediately visible in the shared proposal list', async () => {
