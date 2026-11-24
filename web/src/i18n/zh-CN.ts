@@ -976,6 +976,23 @@ const zhCN = {
     placeholder: '输入操作并模拟后，这里会显示预计的处理结果。',
     invalidVersion: '请选择有效的已发布版本。',
     failed: '模拟失败',
+    presets: {
+      label: '快速预设',
+      hint: '选择后会自动填充下方字段，仍可手动修改。',
+      category: {
+        files: '项目文件',
+        network: 'Shell 与网络',
+        security: '安全拦截示例',
+      },
+      readSource: '读取源码文件',
+      writeReadme: '写入 README',
+      listDirectory: '列出项目目录',
+      shellCommand: '执行 Shell 命令',
+      httpRequest: 'HTTP 请求',
+      forwardTunnel: '打开转发隧道',
+      readSshKey: '读取 SSH 私钥',
+      httpWithToken: 'HTTP URL 带 token',
+    },
   },
   harnesses: {
     title: 'Harness 检测',

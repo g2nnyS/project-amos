@@ -696,7 +696,7 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   const rules = loaded.snapshot.table as unknown as Array<Record<string, unknown>>;
 
   assert.ok(Array.isArray(rules));
-  assert.equal(rules.length, 9);
+  assert.equal(rules.length, 21);
 
   for (const rule of rules) {
     for (const field of [
@@ -732,7 +732,12 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
   const deterministic = rules.filter((rule) => rule.expressivity === 'deterministic');
   const advisory = rules.filter((rule) => rule.expressivity === 'advisory_only');
   assert.equal(deterministic.length, 6);
-  assert.equal(advisory.length, 3);
+  assert.equal(advisory.length, 15);
+
+  const security = rules.filter((rule) => rule.policy_class === 'security');
+  const engineering = rules.filter((rule) => rule.policy_class === 'engineering');
+  assert.equal(security.length, 9);
+  assert.equal(engineering.length, 12);
 
   for (const rule of deterministic) {
     assert.ok(Array.isArray(rule.predicate));
@@ -740,10 +745,38 @@ test('real constraints/rules.yaml matches the frozen G0 vocabulary and smoke res
     assert.equal(rule.policy_class, 'security');
     assert.equal(rule.enforcement, 'runtime');
   }
-  for (const rule of advisory) {
+  for (const rule of security.filter((rule) => rule.expressivity === 'advisory_only')) {
     assert.equal(rule.predicate, null);
-    assert.equal(rule.policy_class, 'security');
     assert.equal(rule.enforcement, 'advisory');
+  }
+
+  assert.deepEqual(
+    engineering.map((rule) => rule.id).sort(),
+    [
+      'engineering-2-1',
+      'engineering-2-10',
+      'engineering-2-11',
+      'engineering-2-12',
+      'engineering-2-2',
+      'engineering-2-3',
+      'engineering-2-4',
+      'engineering-2-5',
+      'engineering-2-6',
+      'engineering-2-7',
+      'engineering-2-8',
+      'engineering-2-9',
+    ],
+  );
+  for (const rule of engineering) {
+    assert.equal(rule.expressivity, 'advisory_only');
+    assert.equal(rule.enforcement, 'advisory');
+    assert.equal(rule.on_hit, 'log');
+    assert.equal(rule.level, 2);
+    assert.equal(rule.predicate, null);
+    assert.equal(rule.scope, 'project');
+    assert.equal(rule.ttl, null);
+    assert.equal(rule.owner, 'human');
+    assert.equal(rule.source, null);
   }
 
   const actualOps = new Set<string>();

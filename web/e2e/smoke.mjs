@@ -730,6 +730,33 @@ try {
     assert.equal(await evaluate(`document.body.innerText.includes('申请信息')`), false, 'editor still shows request information section')
     assert.equal(await evaluate(`document.querySelector('input[type="datetime-local"]')`), null, 'editor still has expiry field')
 
+    await click('button', '读取源码文件')
+    await sleep(200)
+    const presetValues = await evaluate(`(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const value = (text) => labels.find(l => l.textContent.trim().includes(text))?.querySelector('input,select')?.value ?? ''
+      return { tool: value('工具'), operation: value('操作'), target: value('对象') }
+    })()`)
+    assert.equal(presetValues.tool, 'fs', 'preset did not fill tool')
+    assert.equal(presetValues.operation, 'file_read', 'preset did not fill operation')
+    assert.ok(presetValues.target.startsWith(workspace) && presetValues.target.endsWith('/src/main.ts'), `preset target is not workspace-relative: ${presetValues.target}`)
+
+    await click('button', '读取 SSH 私钥')
+    await sleep(200)
+    const denyPresetValues = await evaluate(`(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const value = (text) => labels.find(l => l.textContent.trim().includes(text))?.querySelector('input,select')?.value ?? ''
+      return { tool: value('工具'), operation: value('操作'), target: value('对象') }
+    })()`)
+    assert.equal(denyPresetValues.tool, 'fs', 'deny preset did not fill tool')
+    assert.equal(denyPresetValues.operation, 'file_read', 'deny preset did not fill operation')
+    assert.ok(denyPresetValues.target.startsWith(workspace) && denyPresetValues.target.endsWith('/.ssh/id_ed25519'), `deny preset target is not workspace-relative: ${denyPresetValues.target}`)
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('credential-0-1') && /处理结果\s*deny/i.test(panel.textContent)
+    }`)
+
     await setByLabel('工具', 'shell')
     await setByLabel('操作', 'file_read')
     await setByLabel('对象', workspace)

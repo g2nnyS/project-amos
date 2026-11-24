@@ -258,7 +258,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
         </ul>
       </section>
 
-      <DraftSimulation v-if="draft && showSimulation" :project-id="governance.activeProjectId" :candidate="draft" />
+      <DraftSimulation v-if="draft && showSimulation" :project-id="governance.activeProjectId" :candidate="draft" :workspace="governance.activeProject?.workspace" />
 
       <template v-if="draft">
         <div class="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">

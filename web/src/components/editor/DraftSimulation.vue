@@ -4,11 +4,14 @@ import { Play } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { t } from '@/i18n'
+import SimulationPresets from './SimulationPresets.vue'
 import type { Candidate, PolicyDecision } from '@/types'
+import type { SimulationAction } from '@/lib/simulatePresets'
 
 const props = defineProps<{
   projectId: string
   candidate: Candidate
+  workspace?: string | null
 }>()
 
 const tool = ref('')
@@ -28,6 +31,12 @@ function invalidate() {
   result.value = null
   error.value = ''
   loading.value = false
+}
+
+function applyPreset(action: SimulationAction) {
+  tool.value = action.tool
+  operation.value = action.operation
+  target.value = action.target
 }
 
 watch([() => props.projectId, () => snapshot(props.candidate)], invalidate, { flush: 'sync' })
@@ -68,6 +77,7 @@ async function run() {
       </div>
     </div>
     <form class="space-y-4 p-4" @submit.prevent="run">
+      <SimulationPresets :workspace="workspace" @apply-preset="applyPreset" />
       <label class="field">
         <span class="field-label">{{ t('simulate.tool') }}</span>
         <input v-model="tool" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />

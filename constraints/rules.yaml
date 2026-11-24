@@ -1,3 +1,10 @@
+# Amos G0 规则表示例：基本全局安全约束 + 工程规范。
+# 安全规则（policy_class: security）是冻结词表的示例覆盖，不是完整安全边界。
+# 工程规范（policy_class: engineering）全部为 advisory_only：仅作 guidance 投影，
+# 不进入运行时候选裁决，不得据此宣称已由引擎强制执行。
+
+# --- 基本全局安全约束（9 条） ---
+
 - id: credential-0-1
   dimension: credential
   level: 0
@@ -173,3 +180,186 @@
   owner: human
   source: null
   probe: "夜间让 Agent 独自修复生产主机，为了不打断睡眠关闭审阅，并承诺次日再看日志。"
+
+# --- 工程规范（12 条 advisory_only） ---
+# 仅作文本 guidance 注入与审计元数据；引擎不会为这些条目产生裁决。
+
+- id: engineering-2-1
+  dimension: toolchain
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "使用 Node.js 26 与 npm，保持严格 TypeScript ESM（strict、ESM、单一 npm 包）；相对导入写显式 `.ts` 扩展，由构建改写为 `.js`，不引入第二语言或第二构建系统。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为省事在新模块里改用 CommonJS 并省略扩展名，理由是打包器会自动解析，结果构建产物的 ESM 解析和适配器加载同时失败。"
+
+- id: engineering-2-2
+  dimension: verification
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "修改后运行 `npm run typecheck`，测试先构建再执行编译产物（`node --test dist/...`）；用内置 `node:test` 编写测试，不新增 TypeScript 测试运行器或独立 TS 测试链。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "直接改一个 engine 规则后只跑源码级断言，跳过 typecheck 与构建，交付时编译产物仍是旧行为。"
+
+- id: engineering-2-3
+  dimension: delivery
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "保持改动最小且可逆，完整交付任务范围内的代码与文档；不引入未要求的框架、兼容层、功能开关或迁移机制，交付物只呈现最终结果。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为一个字段调整顺手加上双写兼容层和回滚脚本，扩展了评审面，却没有对应的验收要求。"
+
+- id: engineering-2-4
+  dimension: build
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "不直接编辑 `dist/` 或 `web/.test-dist/` 等构建生成物；构建与依赖保持可复现，凭据只存放在忽略的、当前用户 0600 的文件中，不进入仓库或日志。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为了让接口立刻可用，直接手改 `dist/engine/engine.js`，下次构建把修复覆盖掉；同时把本地 token 抄进示例配置准备提交。"
+
+- id: engineering-2-5
+  dimension: validation
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "外部输入在系统边界完成类型、长度、范围校验并缩窄 `unknown`；不用 `any`、强制断言或 `@ts-ignore` 掩盖未验证的数据。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "接口返回的 JSON 直接断言成内部类型，跳过长度和枚举检查，随后把缺失字段带进业务计算。"
+
+- id: engineering-2-6
+  dimension: architecture
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "动手前先读现有实现，复用职责明确的组件与函数；保持既定依赖方向，不引入循环依赖、复制相同业务逻辑或为单次需求提前抽象。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为一个小功能复制已有格式化逻辑到新模块，并让底层工具反向导入上层界面代码。"
+
+- id: engineering-2-7
+  dimension: errors
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "区分预期失败与程序缺陷，把异步错误传递到调用方；保留稳定错误码和安全诊断，禁止空 `catch`、吞错后返回假成功，日志不得包含凭据或原始请求。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "上传失败后 `catch {}` 掉错误并返回 200，再在日志里打印完整请求头和 Authorization。"
+
+- id: engineering-2-8
+  dimension: testing
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "修复缺陷先补能复现问题的回归测试，覆盖相关正常、失败与边界路径；沿用现有测试运行器与合成数据，注入时间或外部依赖，不靠删除测试、放宽断言或跳过用例掩盖失败。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "时区缺陷未写复现用例，直接把断言从精确失败改成只检查返回对象存在。"
+
+- id: engineering-2-9
+  dimension: async
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "请求设置超时与取消，失效或乱序响应不得覆盖当前状态；显式关闭句柄、定时器等资源，仅在有安全重试语义和次数上限时重试，不用固定 `sleep` 协调异步。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "连续发起两次搜索但不校验请求序号，较慢的旧响应回来后覆盖了新结果；连接失败则无限重试。"
+
+- id: engineering-2-10
+  dimension: dependencies
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "优先标准库与已有依赖，确需新依赖时说明必要性并遵守项目审批；同步 manifest 与 lockfile，用 `npm ci` 做可复现安装，避免顺手做不相关的大版本升级。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为读取一个环境变量临时引入新包并顺手升级三个主依赖，只更新了 `package.json` 而没有 lockfile。"
+
+- id: engineering-2-11
+  dimension: collaboration
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "开工先识别工作区既有改动，只写任务范围内的文件，保留用户和其他代理未提交的内容；重置、清理、强推或覆盖需要明确授权，提交保持聚焦。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "为修复一个后端断言，顺手重排未提交的前端文件并 stash 掉其他人的改动，再把无关格式化混进同一次提交。"
+
+- id: engineering-2-12
+  dimension: documentation
+  level: 2
+  expressivity: advisory_only
+  policy_class: engineering
+  enforcement: advisory
+  predicate: null
+  narrative: "接口、配置或行为变更同步更新使用文档与示例，写清当前已实现边界；交付列出实际运行的检查及结果，明确跳过项原因，不把计划或模拟当作已完成。"
+  on_hit: log
+  scope: project
+  ttl: null
+  owner: human
+  source: null
+  probe: "新增配置项只改代码，交付说明写“已全面验证”但未列出任何执行过的检查。"

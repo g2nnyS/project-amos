@@ -976,6 +976,23 @@ const enUS: Messages = {
     placeholder: 'Enter an action and run the simulation to see the expected outcome.',
     invalidVersion: 'Select a valid published version.',
     failed: 'Simulation failed',
+    presets: {
+      label: 'Quick preset',
+      hint: 'Selecting a preset fills the fields below; you can still edit them.',
+      category: {
+        files: 'Project files',
+        network: 'Shell & network',
+        security: 'Security block examples',
+      },
+      readSource: 'Read source file',
+      writeReadme: 'Write README',
+      listDirectory: 'List project directory',
+      shellCommand: 'Run shell command',
+      httpRequest: 'HTTP request',
+      forwardTunnel: 'Open forward tunnel',
+      readSshKey: 'Read SSH private key',
+      httpWithToken: 'HTTP URL with token',
+    },
   },
   harnesses: {
     title: 'Find harnesses on this machine',
