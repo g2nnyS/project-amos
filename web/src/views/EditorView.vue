@@ -6,7 +6,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RuleForm from '@/components/rules/RuleForm.vue'
 import DraftSimulation from '@/components/editor/DraftSimulation.vue'
-import { activationIssues, clone, newRule, type DraftCandidate } from '@/components/rules/model'
+import { activationIssues, clone, effectLabel, newRule, ruleEffect, type DraftCandidate } from '@/components/rules/model'
 import { generateProposalMeta } from '@/lib/editor'
 import { api } from '@/lib/api'
 import { useGovernanceStore } from '@/stores/governance'
@@ -271,7 +271,7 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
               <li v-for="(rule, i) in draft.rules" :key="i" class="flex items-center gap-1">
                 <button type="button" class="min-w-0 flex-1 rounded p-2 text-left text-xs hover:bg-accent" :class="selected === i ? 'bg-accent' : ''" @click="selected = i">
                   <span class="block truncate font-medium">{{ rule.id || t('editor.noId') }}</span>
-                  <span class="block truncate text-muted-foreground">{{ rule.dimension }} · {{ rule.on_hit }}</span>
+                  <span class="block truncate text-muted-foreground">{{ rule.dimension }} · {{ effectLabel(ruleEffect(rule)) }}</span>
                 </button>
                 <button type="button" class="rounded p-2 text-xs text-muted-foreground hover:text-destructive" :aria-label="t('editor.deleteRule', { id: rule.id })" @click="removeRule(i)">{{ t('common.delete') }}</button>
               </li>

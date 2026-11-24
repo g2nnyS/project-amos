@@ -1,9 +1,20 @@
-import type { Candidate, RulePredicate, RuleRecord } from '@/types'
+import type { Candidate, RuleOnHit, RulePredicate, RuleRecord } from '@/types'
 import { t } from '@/i18n'
 
 export type Mutable<T> = { -readonly [P in keyof T]: T[P] extends object ? Mutable<T[P]> : T[P] }
 export type DraftRule = Mutable<RuleRecord>
 export type DraftCandidate = Mutable<Candidate>
+export type RuleEffect = RuleOnHit | 'advisory_only'
+
+/** Display and filter by what the rule does; advisory records also carry a stored on_hit. */
+export function ruleEffect(rule: RuleRecord): RuleEffect {
+  return rule.expressivity === 'advisory_only' ? 'advisory_only' : rule.on_hit
+}
+
+export function effectLabel(effect: RuleEffect): string {
+  return effect === 'advisory_only' ? t('rules.advisoryOnly') : t(`ruleForm.action.${effect}`)
+}
+
 export const operators = ['op_in', 'target_glob', 'target_outside_glob', 'url_query_key_in', 'target_scheme_in', 'target_host_in', 'target_host_not_in'] as const
 export type Operator = typeof operators[number]
 
@@ -45,6 +56,11 @@ export function predicate(op: Operator): RulePredicate {
   }
 }
 export function values(p: RulePredicate): string[] { return Object.values(p.args)[0] ?? [] }
+
+export function conditionText(p: RulePredicate): string {
+  return `${t(`ruleForm.conditionBuilder.fields.${fieldOf(p.op)}`)} ${t(`ruleForm.conditionBuilder.operators.${p.op}`)} ${values(p).join(', ') || t('common.notSet')}`
+}
+
 export function newRule(id: string): DraftRule {
   // Start from a schema-valid project rule; provenance citations are
   // optional and left null until a human fills them in.
@@ -54,13 +70,13 @@ export function newRule(id: string): DraftRule {
     level: 1,
     expressivity: 'deterministic',
     predicate: [{ op: 'op_in', args: { operations: ['file_read'] } }],
-    narrative: 'Project-specific rule; edit before publishing.',
+    narrative: t('ruleForm.newNarrative'),
     on_hit: 'log',
     scope: 'project',
     ttl: null,
     owner: 'human',
     source: null,
-    probe: 'Project-authored rule.',
+    probe: t('ruleForm.newProbe'),
     policy_class: 'security',
     enforcement: 'runtime',
   }

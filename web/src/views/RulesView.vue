@@ -8,6 +8,7 @@ import RuleInspector from '@/components/rules/RuleInspector.vue'
 import RuleMatrix from '@/components/rules/RuleMatrix.vue'
 import RulesFilterBar from '@/components/rules/RulesFilterBar.vue'
 import RulesCategoryPanel from '@/components/rules/RulesCategoryPanel.vue'
+import { ruleEffect } from '@/components/rules/model'
 import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { t, type MessageKey } from '@/i18n'
 import { Button } from '@/components/ui/button'
@@ -37,7 +38,7 @@ const publishedVersion = computed(() => governance.policy?.version ?? null)
 const dimensions = computed(() => [...new Set(rules.value.map(r => r.dimension))].sort())
 const policyClasses: { value: RulePolicyClass; labelKey: MessageKey }[] = [{ value: 'security', labelKey: 'rules.security' }, { value: 'engineering', labelKey: 'rules.engineering' }]
 const onHits = computed(() => (['deny', 'confirm', 'log'] as const).map(value => ({ value, label: t(`ruleForm.action.${value}`) })))
-const enforcements: { value: RuleEnforcement; label: string }[] = [{ value: 'runtime', label: 'runtime' }, { value: 'ci', label: 'ci' }, { value: 'server', label: 'server' }, { value: 'advisory', label: 'advisory' }]
+const enforcements = ['runtime', 'ci', 'server', 'advisory'] as const
 const expressivities: { value: RuleExpressivity; labelKey: MessageKey }[] = [{ value: 'deterministic', labelKey: 'rules.deterministic' }, { value: 'advisory_only', labelKey: 'rules.advisoryOnly' }]
 
 const filtered = computed(() => rules.value.filter(r => {
@@ -46,7 +47,7 @@ const filtered = computed(() => rules.value.filter(r => {
   return matchesSearch
     && (!dimension.value || r.dimension === dimension.value)
     && (!policyClass.value || r.policy_class === policyClass.value)
-    && (!onHit.value || r.on_hit === onHit.value)
+    && (!onHit.value || ruleEffect(r) === onHit.value)
     && (!enforcement.value || r.enforcement === enforcement.value)
     && (!expressivity.value || r.expressivity === expressivity.value)
 }))
@@ -83,7 +84,7 @@ function readQuery() {
   dimension.value = pickQuery(q.dimension, dimensions.value)
   policyClass.value = pickQuery(q.policyClass, policyClasses.map(c => c.value))
   onHit.value = pickQuery(q.onHit, onHits.value.map(h => h.value))
-  enforcement.value = pickQuery(q.enforcement, enforcements.map(e => e.value))
+  enforcement.value = pickQuery(q.enforcement, enforcements)
   expressivity.value = pickQuery(q.expressivity, expressivities.map(e => e.value))
   const id = typeof q.id === 'string' ? q.id : ''
   selected.value = rules.value.some(r => r.id === id) ? id : null

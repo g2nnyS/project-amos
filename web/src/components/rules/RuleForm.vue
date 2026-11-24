@@ -2,11 +2,12 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { Plus, Trash2, ChevronDown } from 'lucide-vue-next'
 import type { DraftRule, Field, Operator } from './model'
-import { defaultOperatorForField, fieldOf, operatorsForField, predicate, values } from './model'
+import { conditionText, defaultOperatorForField, fieldOf, operatorsForField, predicate, values } from './model'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
 
 const props = defineProps<{ rule: DraftRule }>()
+const advisoryOnly = computed(() => props.rule.expressivity === 'advisory_only')
 
 const fieldOrder: Field[] = ['operations', 'target', 'url_query_key', 'scheme', 'host']
 
@@ -74,17 +75,7 @@ function rowValues(p: NonNullable<DraftRule['predicate']>[number]): string[] {
 const fieldLabelKey = (field: Field) => `ruleForm.conditionBuilder.fields.${field}` as const
 const operatorLabelKey = (op: Operator) => `ruleForm.conditionBuilder.operators.${op}` as const
 
-const previewText = computed(() => {
-  const predicateList = props.rule.predicate
-  if (!predicateList || predicateList.length === 0) return ''
-  const joiner = ` ${t('ruleForm.conditionBuilder.joiner')} `
-  return predicateList.map(p => {
-    const field = fieldForRow(p)
-    const vals = values(p)
-    const valueSet = vals.length ? `{${vals.join(', ')}}` : '{}'
-    return `${t(fieldLabelKey(field))} ${t(operatorLabelKey(p.op))} ${valueSet}`
-  }).join(joiner)
-})
+const previewText = computed(() => props.rule.predicate?.map(conditionText).join(` ${t('ruleForm.conditionBuilder.joiner')} `) ?? '')
 
 // Source citations are optional: edits go through a local draft and write back
 // an object only when at least one field is filled, otherwise null.
@@ -104,25 +95,29 @@ watch(sourceDraft, () => {
 
 <template>
   <div class="panel min-w-0">
-    <div class="panel-header">
+    <div class="panel-header flex-wrap gap-3">
       <div>
         <h2 class="panel-title">{{ t('ruleForm.title') }}</h2>
         <p class="panel-kicker">{{ t('ruleForm.kicker') }}</p>
       </div>
+      <label class="field">
+        <span class="field-label">{{ t('ruleFields.expressivity') }}</span>
+        <select :value="rule.expressivity" class="control h-9" @change="setExpression">
+          <option value="deterministic">{{ t('rules.deterministic') }}</option>
+          <option value="advisory_only">{{ t('rules.advisoryOnly') }}</option>
+        </select>
+      </label>
     </div>
     <div class="panel-body space-y-6 text-xs">
-      <!-- Condition builder -->
       <section class="panel">
         <div class="panel-header">
           <div>
-            <h3 class="panel-title">{{ t('ruleForm.conditionBuilder.heading') }}</h3>
-            <p class="panel-kicker">{{ t('ruleForm.conditionBuilder.description') }}</p>
+            <h3 id="rule-editor-purpose" class="panel-title">{{ t(advisoryOnly ? 'ruleForm.guidance' : 'ruleForm.conditionBuilder.heading') }}</h3>
+            <p id="rule-editor-purpose-note" class="panel-kicker">{{ t(advisoryOnly ? 'ruleForm.advisoryNote' : 'ruleForm.conditionBuilder.description') }}</p>
           </div>
         </div>
         <div class="panel-body space-y-4">
-          <p v-if="rule.expressivity === 'advisory_only'" class="rounded-md border border-border bg-muted/40 p-3 text-muted-foreground">
-            {{ t('ruleForm.advisoryNote') }}
-          </p>
+          <textarea v-if="advisoryOnly" v-model="rule.narrative" aria-labelledby="rule-editor-purpose" aria-describedby="rule-editor-purpose-note" rows="3" class="control w-full" />
           <template v-else>
             <!-- Column headers -->
             <div class="condition-header">
@@ -200,7 +195,7 @@ watch(sourceDraft, () => {
       </section>
 
       <!-- Action -->
-      <section class="panel">
+      <section v-if="!advisoryOnly" class="panel">
         <div class="panel-header">
           <div>
             <h3 class="panel-title">{{ t('ruleForm.action.heading') }}</h3>
@@ -242,37 +237,22 @@ watch(sourceDraft, () => {
               <input v-model.number="rule.level" type="number" min="0" step="1" class="control h-9 w-full" />
             </label>
           </div>
-          <div class="grid gap-3 sm:grid-cols-3">
-            <label class="field">
-              <span class="field-label">{{ t('ruleFields.expressivity') }}</span>
-              <div class="relative">
-                <select :value="rule.expressivity" class="control h-9 w-full appearance-none pr-8" @change="setExpression">
-                  <option value="deterministic">{{ t('rules.deterministic') }}</option>
-                  <option value="advisory_only">{{ t('rules.advisoryOnly') }}</option>
-                </select>
-                <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
-            </label>
+          <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">
               <span class="field-label">{{ t('ruleFields.policyClass') }}</span>
               <div class="relative">
                 <select v-model="rule.policy_class" class="control h-9 w-full appearance-none pr-8">
-                  <option>security</option>
-                  <option>engineering</option>
+                  <option value="security">{{ t('rules.security') }}</option>
+                  <option value="engineering">{{ t('rules.engineering') }}</option>
                 </select>
                 <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               </div>
             </label>
-            <label class="field">
+            <label v-if="!advisoryOnly" class="field">
               <span class="field-label">{{ t('ruleFields.enforcement') }}</span>
               <div class="relative">
                 <select v-model="rule.enforcement" class="control h-9 w-full appearance-none pr-8">
-                  <option v-if="rule.expressivity === 'advisory_only'">advisory</option>
-                  <template v-else>
-                    <option>runtime</option>
-                    <option>ci</option>
-                    <option>server</option>
-                  </template>
+                  <option v-for="checkpoint in (['runtime', 'ci', 'server'] as const)" :key="checkpoint" :value="checkpoint">{{ t(`ruleValues.enforcement.${checkpoint}`) }}</option>
                 </select>
                 <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               </div>
@@ -283,8 +263,8 @@ watch(sourceDraft, () => {
               <span class="field-label">{{ t('ruleFields.scope') }}</span>
               <div class="relative">
                 <select v-model="rule.scope" class="control h-9 w-full appearance-none pr-8">
-                  <option>project</option>
-                  <option>session</option>
+                  <option value="project">{{ t('ruleValues.scope.project') }}</option>
+                  <option value="session">{{ t('ruleValues.scope.session') }}</option>
                 </select>
                 <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               </div>
@@ -293,8 +273,8 @@ watch(sourceDraft, () => {
               <span class="field-label">{{ t('ruleFields.owner') }}</span>
               <div class="relative">
                 <select v-model="rule.owner" class="control h-9 w-full appearance-none pr-8">
-                  <option>human</option>
-                  <option>agent</option>
+                  <option value="human">{{ t('roles.human') }}</option>
+                  <option value="agent">{{ t('roles.agent') }}</option>
                 </select>
                 <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               </div>
@@ -308,7 +288,7 @@ watch(sourceDraft, () => {
               <input v-model="rule.probe" class="control h-9 w-full" />
             </label>
           </div>
-          <label class="field">
+          <label v-if="!advisoryOnly" class="field">
             <span class="field-label">{{ t('ruleFields.narrativeField') }}</span>
             <textarea v-model="rule.narrative" rows="3" class="control w-full" />
           </label>
@@ -334,7 +314,7 @@ watch(sourceDraft, () => {
               </div>
               <div class="grid gap-3 sm:grid-cols-2">
                 <label v-for="key in (['repo', 'rev', 'path', 'section', 'lines', 'quote'] as const)" :key="key" class="field">
-                  <span class="field-label">{{ key }}</span>
+                  <span class="field-label">{{ t(`ruleForm.source.labels.${key}`) }}</span>
                   <textarea v-if="key === 'quote'" v-model="sourceDraft[key]" rows="3" class="control w-full" />
                   <input v-else v-model="sourceDraft[key]" class="control h-9 w-full" />
                 </label>

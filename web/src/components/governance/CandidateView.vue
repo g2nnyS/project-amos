@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Candidate, RuleRecord } from '@/types'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { conditionText, effectLabel, ruleEffect } from '@/components/rules/model'
 import { t, type MessageKey } from '@/i18n'
 
 const props = defineProps<{ candidate: Candidate; before?: Candidate | null }>()
@@ -42,9 +43,13 @@ function effectiveRuleIds(candidate: Candidate | null | undefined): string[] {
   return rules.filter(r => included.includes(r.id) && !activation.excludedRuleIds.includes(r.id)).map(r => r.id)
 }
 
+function semanticFields(rule: RuleRecord | undefined): Record<string, unknown> {
+  return rule ? { ...rule, on_hit: ruleEffect(rule) } : {}
+}
+
 function fields(a: RuleRecord | undefined, b: RuleRecord | undefined) {
-  const left = (a ?? {}) as unknown as Record<string, unknown>
-  const right = (b ?? {}) as unknown as Record<string, unknown>
+  const left = semanticFields(a)
+  const right = semanticFields(b)
   const order = ['narrative', 'on_hit', 'scope', 'enforcement', 'expressivity', 'dimension', 'level', 'policy_class', 'owner', 'ttl', 'predicate', 'source', 'probe']
   const all = [...new Set([...order, ...Object.keys(left), ...Object.keys(right)])]
   return all
@@ -56,7 +61,21 @@ function fields(a: RuleRecord | undefined, b: RuleRecord | undefined) {
       if (iy !== -1) return 1
       return x.localeCompare(y)
     })
-    .map(key => ({ key, before: show(left[key]), after: show(right[key]) }))
+    .map(key => ({ key, before: fieldText(a, key, left[key]), after: fieldText(b, key, right[key]) }))
+}
+
+function fieldText(rule: RuleRecord | undefined, key: string, value: unknown): string {
+  if (!rule) return t('common.absent')
+  switch (key) {
+    case 'on_hit': return effectLabel(ruleEffect(rule))
+    case 'expressivity': return t(rule.expressivity === 'advisory_only' ? 'rules.advisoryOnly' : 'rules.deterministic')
+    case 'enforcement': return t(`ruleValues.enforcement.${rule.enforcement}`)
+    case 'policy_class': return t(`rules.${rule.policy_class}`)
+    case 'scope': return t(`ruleValues.scope.${rule.scope}`)
+    case 'owner': return t(`roles.${rule.owner}`)
+    case 'predicate': return rule.predicate?.map(conditionText).join('\n') ?? t('ruleForm.conditionBuilder.emptyPreview')
+    default: return show(value)
+  }
 }
 
 function show(value: unknown): string {
@@ -71,7 +90,7 @@ function changeKind(a: RuleRecord | undefined, b: RuleRecord | undefined): strin
 }
 
 const fieldNames: Readonly<Record<string, MessageKey>> = {
-  narrative: 'ruleFields.narrative', on_hit: 'ruleFields.onHit', scope: 'ruleFields.scope', enforcement: 'ruleFields.enforcement',
+  narrative: 'ruleFields.narrative', on_hit: 'rules.columnOnHit', scope: 'ruleFields.scope', enforcement: 'ruleFields.enforcement',
   expressivity: 'ruleFields.expressivity', dimension: 'ruleFields.dimension', level: 'ruleFields.level', policy_class: 'ruleFields.policyClass',
   owner: 'ruleFields.owner', ttl: 'ruleFields.ttl', predicate: 'ruleFields.predicate', source: 'ruleFields.source', probe: 'ruleFields.probe'
 }
@@ -113,6 +132,7 @@ function fieldName(key: string): string { const label = fieldNames[key]; return 
           </div>
           <details v-for="change in changes" :key="change.id" class="p-4" open>
             <summary class="cursor-pointer text-sm font-medium">{{ change.id }} <span class="ml-2 text-xs text-muted-foreground">{{ changeKind(change.a, change.b) }}</span></summary>
+            <p v-if="!change.fields.length" class="mt-3 text-xs text-muted-foreground">{{ t('candidate.rawOnly') }}</p>
             <div v-for="field in change.fields" :key="field.key" class="mt-3 border-t border-border pt-3 text-xs">
               <p class="font-mono text-muted-foreground">{{ fieldName(field.key) }}</p>
               <div class="mt-1 grid gap-3 sm:grid-cols-2">
@@ -124,10 +144,11 @@ function fieldName(key: string): string { const label = fieldNames[key]; return 
         </div>
         <div v-else class="divide-y divide-border">
           <details v-for="rule in candidate.rules" :key="rule.id" class="p-4">
-            <summary class="cursor-pointer text-sm font-medium">{{ rule.id }} <span class="ml-2 text-xs text-muted-foreground">{{ rule.dimension }} · {{ rule.on_hit }}</span></summary>
+            <summary class="cursor-pointer text-sm font-medium">{{ rule.id }} <span class="ml-2 text-xs text-muted-foreground">{{ rule.dimension }} · {{ effectLabel(ruleEffect(rule)) }}</span></summary>
             <div class="mt-3 grid gap-3 text-xs sm:grid-cols-2">
-              <div><p class="text-[11px] text-muted-foreground">{{ t('ruleFields.narrative') }}</p><p class="mt-1 whitespace-pre-wrap break-words">{{ rule.narrative }}</p></div>
-              <div><p class="text-[11px] text-muted-foreground">{{ t('ruleFields.predicate') }}</p><p class="mt-1 break-all">{{ rule.predicate ? rule.predicate.map(p => p.op).join(' · ') : t('candidate.advisory') }}</p></div>
+              <div><p class="text-[11px] text-muted-foreground">{{ t(rule.expressivity === 'advisory_only' ? 'ruleForm.guidance' : 'ruleFields.narrative') }}</p><p class="mt-1 whitespace-pre-wrap break-words">{{ rule.narrative }}</p></div>
+              <p v-if="rule.expressivity === 'advisory_only'" class="text-muted-foreground">{{ t('ruleForm.advisoryNote') }}</p>
+              <div v-else><p class="text-[11px] text-muted-foreground">{{ t('ruleFields.predicate') }}</p><p class="mt-1 break-all">{{ rule.predicate?.map(conditionText).join(` ${t('ruleForm.conditionBuilder.joiner')} `) }}</p></div>
             </div>
           </details>
         </div>

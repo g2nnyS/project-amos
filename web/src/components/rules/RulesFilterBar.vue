@@ -30,7 +30,7 @@ defineProps<{
   dimensions: string[]
   policyClasses: { value: RulePolicyClass; labelKey: MessageKey }[]
   onHits: { value: RuleOnHit; label: string }[]
-  enforcements: { value: RuleEnforcement; label: string }[]
+  enforcements: readonly RuleEnforcement[]
   expressivities: { value: RuleExpressivity; labelKey: MessageKey }[]
 }>()
 </script>
@@ -100,7 +100,7 @@ defineProps<{
 
       <select v-model="enforcement" :aria-label="t('rules.filterEnforcement')">
         <option value="">{{ t('rules.allEnforcements') }}</option>
-        <option v-for="e in enforcements" :key="e.value" :value="e.value">{{ e.label }}</option>
+        <option v-for="e in enforcements" :key="e" :value="e">{{ t(`ruleValues.enforcement.${e}`) }}</option>
       </select>
 
       <select v-model="expressivity" :aria-label="t('rules.filterExpressivity')">

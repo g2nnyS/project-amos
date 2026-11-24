@@ -453,15 +453,29 @@ try {
   })
 
   await mkdir(workspace, { recursive: true })
+  const guidance = '修改项目前先说明影响范围。'
+  const guidanceInput = 'textarea[aria-labelledby="rule-editor-purpose"]'
+  const hitSelect = 'select:has(option[value="deny"])'
 
-  await check('global baseline is selected by default and supports rule editing', async () => {
+  await check('switch a draft between match actions and editable context guidance', async () => {
     await nav('编辑草稿')
     await click('button', '内置示例')
     await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
     await setByLabel('规则 ID', 'global-smoke-rule')
-    await setByLabel('说明', 'E2E global baseline smoke rule; never an execution authorization.')
+    await setByLabel('处理方式', 'deny')
+    await setByLabel('规则类型', 'advisory_only')
+    await waitFor(visible(guidanceInput))
+    assert.equal(await evaluate(`!!document.querySelector(${q(`.condition-grid, ${hitSelect}, select:has(option[value="runtime"])`)})`), false, 'guidance exposes a match or execution control')
+    await setBySelector(guidanceInput, guidance)
+    await evaluate(`document.querySelector(${q(guidanceInput)}).closest('section').scrollIntoView({ block: 'center' })`)
+    await screenshot('desktop-rule-editor-guidance')
+    await setByLabel('规则类型', 'deterministic')
+    await waitFor(visible('.condition-grid'))
+    assert.equal(await evaluate(`document.querySelector(${q(hitSelect)}).value`), 'deny')
+    assert.equal(await evaluate(`document.querySelector('textarea').value`), guidance)
+    await setByLabel('规则类型', 'advisory_only')
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
   })
@@ -479,6 +493,12 @@ try {
   await check('global baseline version is visible in version history', async () => {
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 1')`)
+    await click('a', '版本 1')
+    await waitFor(`Array.from(document.querySelectorAll('details summary')).some(e => e.textContent.includes('global-smoke-rule') && e.textContent.includes('仅建议'))`)
+    await click('[role="tab"]', '原始 JSON')
+    await waitFor(visible('[role="tabpanel"] pre'))
+    const saved = await evaluate(`JSON.parse(document.querySelector('[role="tabpanel"] pre').textContent).rules.find(r => r.id === 'global-smoke-rule')`)
+    assert.deepEqual([saved.expressivity, saved.enforcement, saved.predicate, saved.on_hit, saved.narrative], ['advisory_only', 'advisory', null, 'deny', guidance])
     await nav('规则库')
     await waitFor(`document.querySelector('h1')?.textContent.includes('全局规则')`)
     await screenshot('desktop-global-rules')
@@ -628,7 +648,7 @@ try {
     // Condition-builder regression: measured control widths, labelled icon
     // buttons and a real add/remove value round-trip before server validation.
     const conditionBuilderGeometry = `function () {
-      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      const section = document.querySelector('.condition-grid')?.closest('section.panel')
       const rect = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
       const grid = section?.querySelector('.condition-grid') ?? null
       const selects = grid ? Array.from(grid.querySelectorAll('select')) : []
@@ -650,15 +670,14 @@ try {
       }
     }`
     const conditionBuilderScroll = `function () {
-      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
+      const section = document.querySelector('.condition-grid')?.closest('section.panel')
       if (!section) return false
       section.scrollIntoView({ block: 'center', behavior: 'instant' })
       return true
     }`
 
     await waitForCall(`function () {
-      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
-      return !!section && section.querySelectorAll('.condition-grid .value-row input').length === 1
+      return document.querySelectorAll('.condition-grid .value-row input').length === 1
     }`)
     assert.equal(await callInPage(conditionBuilderScroll), true, 'condition builder section missing')
     await sleep(150)
@@ -679,8 +698,7 @@ try {
 
     await click('button', '添加值')
     await waitForCall(`function () {
-      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
-      return !!section && section.querySelectorAll('.condition-grid .value-row').length === 2 && !!section.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
+      return document.querySelectorAll('.condition-grid .value-row').length === 2 && !!document.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
     }`)
     const markedDelete = await evaluate(`(() => {
       const input = document.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
@@ -692,8 +710,7 @@ try {
     assert.ok(markedDelete, 'added value row has no delete control')
     await click('button[data-e2e-delete-value]')
     await waitForCall(`function () {
-      const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
-      const inputs = section ? Array.from(section.querySelectorAll('.condition-grid .value-row input')) : []
+      const inputs = Array.from(document.querySelectorAll('.condition-grid .value-row input'))
       return inputs.length === 1 && inputs[0].value === 'file_read'
     }`)
 
@@ -701,8 +718,7 @@ try {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     try {
       await waitForCall(`function () {
-        const section = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim().startsWith('当助手动作匹配时'))
-        const selects = section ? Array.from(section.querySelectorAll('.condition-grid select')) : []
+        const selects = Array.from(document.querySelectorAll('.condition-grid select'))
         if (selects.length < 2) return false
         return selects[1].getBoundingClientRect().top >= selects[0].getBoundingClientRect().bottom - 1
       }`, [], 5000)
@@ -770,7 +786,7 @@ try {
     }`)
 
     await setBySelector('.condition-grid .value-row input', 'execute')
-    await setByLabel('选择操作', 'deny')
+    await setByLabel('处理方式', 'deny')
 
     await setByLabel('操作', 'execute')
     await click('button', '开始模拟')
@@ -950,14 +966,14 @@ try {
     await sleep(100)
   }
 
-  const advancedFiltersVisible = `(${visible('select[aria-label="筛选领域"]')}) && (${visible('select[aria-label="筛选拦截时机"]')}) && (${visible('select[aria-label="筛选类型"]')})`
+  const advancedFiltersVisible = `(${visible('select[aria-label="筛选领域"]')}) && (${visible('select[aria-label="筛选应用方式"]')}) && (${visible('select[aria-label="筛选类型"]')})`
   async function ensureMoreFilters() {
     if (await evaluate(advancedFiltersVisible)) return
     await click('button, [role="button"], summary', '更多筛选')
     await waitFor(advancedFiltersVisible)
   }
 
-  const securityDenyRules = publishedRules.filter((rule) => rule.policy_class === 'security' && rule.on_hit === 'deny')
+  const securityDenyRules = publishedRules.filter((rule) => rule.policy_class === 'security' && rule.expressivity === 'deterministic' && rule.on_hit === 'deny')
   assert.ok(securityDenyRules.length > 0, 'published policy has no security deny rules')
 
   await check('rule library renders grouped security and engineering tables from the published policy', async () => {
@@ -1025,25 +1041,30 @@ try {
     // visible, so both group tables must react to the same combined filter.
     const sharedRules = publishedRules.filter((rule) => rule.expressivity === 'advisory_only' && rule.enforcement === 'advisory')
     const searchRule = sharedRules
-      .filter((rule) => rule.policy_class === 'engineering' && rule.on_hit === 'log')
+      .filter((rule) => rule.policy_class === 'engineering')
       .sort((a, b) => b.id.length - a.id.length)[0]
     assert.ok(searchRule, 'no engineering advisory rule for the search filter')
 
     await ensureMoreFilters()
     await setBySelector('[aria-label="筛选类型"]', 'advisory_only')
-    await setBySelector('[aria-label="筛选拦截时机"]', 'advisory')
+    await setBySelector('[aria-label="筛选应用方式"]', 'advisory')
     await waitFor(`(() => {
       const p = new URLSearchParams(location.hash.split('?')[1] || '')
       return p.get('expressivity') === 'advisory_only' && p.get('enforcement') === 'advisory'
     })()`)
     await assertGroups(groupsFor(sharedRules), 'combined advisory filters')
+    const adviceLabels = await evaluate(`Array.from(document.querySelectorAll('.rules-category-action'), cell => cell.innerText.trim())`)
+    assert.ok(adviceLabels.every(label => label === '仅建议'), 'a guidance rule is labeled as a match action')
 
     await setBySelector('[aria-label="筛选分类"]', 'engineering')
     await setBySelector('[aria-label="筛选命中后处理"]', 'log')
+    await waitFor(`new URLSearchParams(location.hash.split('?')[1]).get('onHit') === 'log'`)
+    await assertGroups([], 'advice has no log action')
+    await setBySelector('[aria-label="筛选命中后处理"]', '')
     await setBySelector('[aria-label="搜索规则"]', searchRule.id)
     await waitFor(`(() => {
       const p = new URLSearchParams(location.hash.split('?')[1] || '')
-      return p.get('policyClass') === 'engineering' && p.get('onHit') === 'log'
+      return p.get('policyClass') === 'engineering' && !p.has('onHit')
         && p.get('enforcement') === 'advisory' && p.get('expressivity') === 'advisory_only'
         && p.get('search') === ${q(searchRule.id)} && !p.has('dimension')
     })()`)
@@ -1052,11 +1073,11 @@ try {
       const value = (label) => document.querySelector('select[aria-label="' + label + '"], input[aria-label="' + label + '"]')?.value ?? null
       return {
         search: value('搜索规则'), policyClass: value('筛选分类'), onHit: value('筛选命中后处理'),
-        enforcement: value('筛选拦截时机'), expressivity: value('筛选类型'),
+        enforcement: value('筛选应用方式'), expressivity: value('筛选类型'),
       }
     })()`)
     assert.deepEqual(controls, {
-      search: searchRule.id, policyClass: 'engineering', onHit: 'log',
+      search: searchRule.id, policyClass: 'engineering', onHit: '',
       enforcement: 'advisory', expressivity: 'advisory_only',
     }, 'filter controls do not reflect the combined URL state')
     await screenshot('desktop-rules-combined-filters')
@@ -1077,6 +1098,15 @@ try {
 
   await check('matrix filters, deep links and browser history keep grouped data aligned with the URL', async () => {
     await click('button, [role="button"], summary', '规则矩阵')
+    await waitFor(visible('#rule-matrix-panel'))
+    const advice = publishedRules.filter(rule => rule.expressivity === 'advisory_only')
+    const totals = await evaluate(`Array.from(document.querySelector('#rule-matrix-panel tbody tr:last-child').cells, cell => Number(cell.textContent)).slice(1)`)
+    const hardTotals = ['deny', 'confirm', 'log'].map(hit => publishedRules.filter(rule => rule.expressivity === 'deterministic' && rule.on_hit === hit).length)
+    assert.deepEqual(totals, [...hardTotals, advice.length, publishedRules.length], 'advice counted as a match action')
+    await click('#rule-matrix-panel th button', '仅建议')
+    await waitFor(`new URLSearchParams(location.hash.split('?')[1]).get('expressivity') === 'advisory_only'`)
+    await assertGroups(groupsFor(advice), 'advice matrix column')
+    await click('button', '规则矩阵')
     await waitFor(visible('#rule-matrix-panel'))
     const cell = await evaluate(`(() => {
       for (const row of document.querySelectorAll('#rule-matrix-panel tbody tr')) {
@@ -1100,7 +1130,7 @@ try {
     await ensureMoreFilters()
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]')?.value`), cell.dimension)
     assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]')?.value`), cell.hit)
-    const matrixRules = publishedRules.filter((rule) => rule.dimension === cell.dimension && rule.on_hit === cell.hit)
+    const matrixRules = publishedRules.filter((rule) => rule.dimension === cell.dimension && rule.expressivity === 'deterministic' && rule.on_hit === cell.hit)
     assert.ok(matrixRules.length > 0, 'matrix filter has no published rules')
     await assertGroups(groupsFor(matrixRules), 'matrix filter')
 

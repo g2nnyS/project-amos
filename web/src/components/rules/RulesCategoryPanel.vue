@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { RuleOnHit, RulePolicyClass, RuleRecord } from '@/types'
+import type { RulePolicyClass, RuleRecord } from '@/types'
 import { t } from '@/i18n'
+import { effectLabel, ruleEffect } from './model'
 
 const props = defineProps<{
   title: string
@@ -21,24 +22,6 @@ const counts = computed(() => {
   const selected = props.rules.filter(r => props.selectedIds.has(r.id)).length
   return { total, selected }
 })
-
-function actionLabel(onHit: RuleOnHit): string {
-  switch (onHit) {
-    case 'deny': return t('ruleForm.action.deny')
-    case 'confirm': return t('ruleForm.action.confirm')
-    case 'log': return t('ruleForm.action.log')
-  }
-}
-
-function actionClass(onHit: RuleOnHit): string {
-  switch (onHit) {
-    case 'deny': return 'action-deny'
-    case 'confirm': return 'action-confirm'
-    case 'log':
-    default:
-      return 'action-log'
-  }
-}
 
 function statusClass(isSelected: boolean): string {
   return isSelected ? 'status-selected' : 'status-not'
@@ -89,15 +72,12 @@ function statusClass(isSelected: boolean): string {
             <td class="rules-category-meta-cell">
               <div class="rules-category-meta">
                 <span class="rules-meta-pill">{{ rule.dimension }}</span>
-                <span class="rules-meta-pill">{{ rule.enforcement }}</span>
-                <span v-if="rule.expressivity === 'advisory_only'" class="rules-meta-pill advisory">
-                  {{ t('rules.advisoryOnly') }}
-                </span>
+                <span v-if="rule.expressivity === 'deterministic'" class="rules-meta-pill">{{ t(`ruleValues.enforcement.${rule.enforcement}`) }}</span>
               </div>
             </td>
             <td class="rules-category-action">
-              <span class="rules-pill" :class="actionClass(rule.on_hit)">
-                {{ actionLabel(rule.on_hit) }}
+              <span class="rules-pill" :class="`action-${ruleEffect(rule)}`">
+                {{ effectLabel(ruleEffect(rule)) }}
               </span>
             </td>
             <td class="rules-category-status">
@@ -244,12 +224,6 @@ function statusClass(isSelected: boolean): string {
   text-transform: lowercase;
 }
 
-.rules-meta-pill.advisory {
-  background: hsl(var(--warning) / 0.1);
-  color: hsl(var(--warning));
-  border-color: hsl(var(--warning) / 0.18);
-}
-
 .rules-pill {
   display: inline-flex;
   align-items: center;
@@ -273,7 +247,7 @@ function statusClass(isSelected: boolean): string {
   border-color: hsl(var(--warning) / 0.22);
 }
 
-.action-log {
+.action-log, .action-advisory_only {
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   border-color: hsl(var(--border));
