@@ -4,9 +4,16 @@
 
 OpenCode V2 保留为参考适配器。Pi 因用户确认日常主用而解锁为第二适配器；两者只共享结构化归一化结果、快照评估和 JSONL 记录，不共享模型 provider，也不建立通用 harness 框架。
 
-## 配置
+## 配置与接入
 
-`.pi/` 是本地配置目录，已由 `.gitignore` 忽略，不属于仓库内容；新环境需要自行创建。Pi 扩展通过当次事件的 `ctx.cwd` 读取 `.pi/amos.json`，不依赖进程 cwd：
+### 1. 控制台一键接入与项目投影（推荐）
+
+- **用户级扩展一键安装**：在治理控制台打开 **Harness 检测**（`#/harnesses`），对已探测到的 Pi 点击 **接入 Amos 插件**。控制台会写入 `~/.pi/agent/extensions/amos.js`，一行转发到本仓编译产物 `dist/adapters/pi/index.js`，随 Pi 自动加载（无需每次传 `-e`）。
+- **项目级托管投影**：项目在控制台发布或保存配置后，工作区会生成 `<workspace>/.pi/activation.json` 与 `<workspace>/.pi/amos.managed.json`。Pi 适配器优先读取 `.pi/amos.managed.json`（决定 `log-only` 或 `managed` 模式、`advisoryInjection` 开关、Jev 审查配置与 `workflowGate`），并在启动与工具评估时写出 `<workspace>/.pi/runtime.pi.json` 回执。
+
+### 2. 本地手工配置（无项目投影时的回退）
+
+`.pi/` 是本地配置目录，已由 `.gitignore` 忽略，不属于仓库内容；未生成 `.pi/amos.managed.json` 时，Pi 扩展通过当次事件的 `ctx.cwd` 读取 `.pi/amos.json`，不依赖进程 cwd：
 
 ```json
 {

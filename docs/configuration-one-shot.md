@@ -68,6 +68,8 @@ rules:                       # 项目候选中的规则定义（含硬规则与�
 `{valid, issues, candidate}`。GUI 的“导入 YAML/JSON”使用同一端点；导入成功
 后仍需“校验候选→提交提案→人工批准并发布”。
 
+Agent 辅助编写：可使用 [`amos-skill`](https://github.com/g2nnyS/amos-skill) 让编码 Agent 为内置 `global` 基线或工作区项目生成/编辑完整 `format: amos-project-policy` YAML 草案。完整文档必须先走 `POST /api/projects/:id/import`（保留 `injection` 并返回 `candidate`），再将返回的 `candidate` 传给 `/validate`、`/simulate`（支持未发布草稿模拟）与获授权时的 `/proposals`；审批与发布始终由人类在控制台完成。
+
 规则约束：
 
 - 仓库全局 catalog（`constraints/rules.yaml` + `guidance/packs.ts`）在服务
@@ -95,19 +97,27 @@ npm run console:init      # 初始化 SQLite、human.token、agent.token（0600�
 npm run console:serve     # 127.0.0.1:4310；可用 --data-dir/--workspace/--port
 ```
 
-- 人类令牌文件默认 `~/.local/state/amos-governance/human.token`；浏览器
-  登录使用该令牌，令牌不会打印。
-- 项目 workspace 必须是已存在的绝对路径；发布时写入
-  `<workspace>/.pi/activation.json`。写入失败不会回滚数据库版本，控制台
+- 首次打开控制台先设置并确认登录密码（12–1024 字符）：浏览器粘贴一次 `~/.local/state/amos-governance/human.token`，Tauri 自启动服务通过私有 IPC 获取一次性设置授权；之后使用密码登录。令牌不会打印到终端。
+- 项目 workspace 必须是已存在的绝对路径；发布或保存配置时原子写入
+  `<workspace>/.pi/activation.json` 与 `<workspace>/.pi/amos.managed.json`。写入失败不会回滚数据库版本，控制台
   runtime 状态会显示 `never`/`stale`，不会伪装成已生效。
 - `GET /api/projects/:id/runtime` 分别读取 `<workspace>/.pi/runtime.pi.json` 与
   `.pi/runtime.opencode.json`；专属回执缺失时按 Harness 回退到旧版 `.pi/runtime.json`。
   状态：`loaded`/`loaded-unverified`/`stale`/`never`/`invalid`/`unpublished`；
   `loaded-unverified` 表示身份匹配、配置摘要尚待核验。
 
-## 4. Pi managed 配置
+## 4. Harness 插件接入与 Managed 配置
 
-`.pi/extensions/amos.js`：
+### 4.1 控制台一键安装与 `.pi/amos.managed.json` 投影（推荐）
+
+在控制台 `#/harnesses` 页面可一键为 Pi（写入 `~/.pi/agent/extensions/amos.js`）或 OpenCode（写入 `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc`）安装插件。项目发布或更新配置后，控制台自动在工作区写出 `<workspace>/.pi/amos.managed.json`（`amos-managed-host-projection` v2），Pi 与 OpenCode 均优先读取该投影：
+
+- 投影包含解析后的 `harness: { enabled, mode: "log-only" | "managed", advisoryInjection }`、`configDigest`、`activation`、`managed`（固定 `reviewer: "jev"` 与全局配置的 `jevConfigPath`）及 `workflowGate`。
+- 旧版 HTTP reviewer 配置形状（`endpoint`/`model`/`apiKeyEnv`）已退役，遇到时会以 `reviewer_migration_required` 停止，不会隐式放行。
+
+### 4.2 手工配置 `.pi/amos.json`（无宿主投影时的项目级配置）
+
+`.pi/extensions/amos.js`（若未通过控制台做用户级安装）：
 
 ```js
 export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
@@ -126,12 +136,12 @@ export { default } from '/abs/path/to/project-amos/dist/adapters/pi/index.js';
     "enabled": true,
     "auditPath": "/abs/audit/managed.jsonl",
     "requirementEgress": "denied",
+    "grantTtlMs": 20000,
     "review": {
-      "endpoint": "http://127.0.0.1:<port>/review",
-      "model": "<reviewer-model-id>",
-      "apiKeyEnv": "AMOS_REVIEW_KEY",
+      "reviewer": "jev",
+      "jevConfigPath": "/abs/state/amos-governance/jev.local.json",
       "policy": { /* ReviewerPolicy */ },
-      "calibration": { /* CalibrationEvidence | null */ },
+      "calibration": { /* CalibrationEvidence */ },
       "ceilingDigest": "sha256:<64 hex>",
       "grantTtlMs": 20000
     }
@@ -170,5 +180,5 @@ reviewer；8 个合成校准场景 0 false allow。没有本地模型时以固�
 ## 6. 不在本轮
 
 OS 隔离（独立 UID/挂载域/bwrap/cgroup）、防篡改审计/远程锚定、完整
-rollout、临时收紧持久化、远端 CI 接纳、OpenCode 受管拦截、运行中热切换。
+rollout、远端 CI 接纳、运行中热切换。
 这些是明确范围外，不是隐藏阻塞。

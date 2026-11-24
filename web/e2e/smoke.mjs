@@ -224,7 +224,10 @@ try {
 
   async function click(selector, text) {
     const locate = `function (selector, text, mode) {
-      const e = Array.from(document.querySelectorAll(selector)).find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && (text === null || el.textContent.trim().includes(text)))
+      const visible = Array.from(document.querySelectorAll(selector)).filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none')
+      const e = text === null
+        ? visible[0]
+        : visible.find((el) => el.textContent.trim().includes(text)) ?? visible.find((el) => (el.getAttribute('aria-label') || '').trim().includes(text))
       if (mode === 'scroll') { e?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); return null }
       if (!e) return null
       const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2, top = document.elementFromPoint(x, y)
@@ -906,39 +909,233 @@ try {
     await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
-  await check('matrix filters update URL and search survives navigation back', async () => {
+  /** Fetch the published policy once; every rule-table expectation derives from it. */
+  const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+  assert.ok(projectId, 'active project missing')
+  const policy = await evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/policy`)}).then((response) => response.json())`)
+  assert.ok(policy && Array.isArray(policy.candidate?.rules) && policy.candidate.rules.length > 0, 'published policy rules missing')
+  const publishedRules = policy.candidate.rules
+  const groupsFor = (rules) => [
+    { policyClass: 'security', ids: rules.filter((rule) => rule.policy_class === 'security').map((rule) => rule.id).sort() },
+    { policyClass: 'engineering', ids: rules.filter((rule) => rule.policy_class === 'engineering').map((rule) => rule.id).sort() },
+  ].filter((group) => group.ids.length)
+  const unfilteredGroups = groupsFor(publishedRules)
+  const readGroups = `(() => {
+    const groups = { security: [], engineering: [] }
+    for (const section of document.querySelectorAll('.rules-category')) {
+      const title = section.querySelector('h3')?.textContent || ''
+      const policyClass = title.includes('安全') ? 'security' : title.includes('工程') ? 'engineering' : null
+      if (policyClass) groups[policyClass] = Array.from(section.querySelectorAll('.rules-category-link')).map((button) => button.textContent.trim()).sort()
+    }
+    return groups
+  })()`
+
+  async function assertGroups(expected, label) {
+    const expectedIds = { security: [], engineering: [] }
+    for (const group of expected) expectedIds[group.policyClass] = group.ids
+    await waitFor(`JSON.stringify(${readGroups}) === ${q(JSON.stringify(expectedIds))}`)
+    assert.deepEqual(await evaluate(readGroups), expectedIds, `${label}: grouped rule IDs`)
+  }
+
+  async function markRuleRow(ruleId) {
+    const marked = await evaluate(`(() => {
+      const target = Array.from(document.querySelectorAll('.rules-category-link')).find((button) => button.textContent.trim() === ${q(ruleId)})
+      if (!target) return false
+      document.querySelectorAll('[data-e2e-rule-row]').forEach((element) => element.removeAttribute('data-e2e-rule-row'))
+      target.setAttribute('data-e2e-rule-row', '')
+      target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+      return true
+    })()`)
+    assert.ok(marked, `rule row link not found: ${ruleId}`)
+    await sleep(100)
+  }
+
+  const advancedFiltersVisible = `(${visible('select[aria-label="筛选领域"]')}) && (${visible('select[aria-label="筛选拦截时机"]')}) && (${visible('select[aria-label="筛选类型"]')})`
+  async function ensureMoreFilters() {
+    if (await evaluate(advancedFiltersVisible)) return
+    await click('button, [role="button"], summary', '更多筛选')
+    await waitFor(advancedFiltersVisible)
+  }
+
+  const securityDenyRules = publishedRules.filter((rule) => rule.policy_class === 'security' && rule.on_hit === 'deny')
+  assert.ok(securityDenyRules.length > 0, 'published policy has no security deny rules')
+
+  await check('rule library renders grouped security and engineering tables from the published policy', async () => {
     await nav('规则库')
-    await waitFor(`document.body.innerText.includes('规则矩阵') && !!document.querySelector('section table tbody tr td:nth-child(2) button, section table tbody tr td:nth-child(3) button, section table tbody tr td:nth-child(4) button')`)
-    const cell = await evaluate(`(() => {
-      const section = Array.from(document.querySelectorAll('section')).find(s => s.querySelector('h2')?.textContent.includes('规则矩阵'));
-      for (const row of section.querySelectorAll('tbody tr')) {
-        const cells = row.querySelectorAll('td');
-        for (let i = 1; i <= 3; i++) if (cells[i]?.querySelector('button')) return { dimension: cells[0].innerText.trim(), hit: ['deny','confirm','log'][i - 1], row: Array.from(row.parentElement.children).indexOf(row) + 1, column: i + 1 };
+    await assertGroups(unfilteredGroups, 'unfiltered')
+    await screenshot('desktop-rules-groups')
+  })
+
+  await check('dark desktop rules preview is captured and the prior theme preference is restored', async () => {
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    const priorTheme = await evaluate(`(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('amos:console:preferences') || '{}')
+        return ['light', 'dark', 'system'].includes(stored.theme) ? stored.theme : 'light'
+      } catch { return 'light' }
+    })()`)
+    const priorLabel = { light: '浅色', dark: '深色', system: '跟随系统' }[priorTheme]
+    const priorDark = await evaluate(`document.documentElement.classList.contains('dark')`)
+    try {
+      await nav('设置')
+      await click('nav[aria-label="设置分区"] button', '外观与语言')
+      await waitFor(visible('#pref-appearance'))
+      await click('#pref-appearance button', '深色')
+      await waitFor(`document.documentElement.classList.contains('dark')`)
+      await nav('规则库')
+      await assertGroups(unfilteredGroups, 'dark desktop')
+      await evaluate(`document.querySelector('main.workspace')?.scrollTo(0, 0)`)
+      await screenshot('desktop-rules-groups-dark')
+    } finally {
+      await nav('设置')
+      await click('nav[aria-label="设置分区"] button', '外观与语言')
+      await waitFor(visible('#pref-appearance'))
+      await click('#pref-appearance button', priorLabel)
+      await waitFor(`Array.from(document.querySelectorAll('#pref-appearance button[aria-pressed="true"]')).some(button => button.textContent.includes(${q(priorLabel)}))`)
+      await waitFor(`(() => { try { return JSON.parse(localStorage.getItem('amos:console:preferences') || '{}').theme === ${q(priorTheme)} } catch { return false } })()`)
+      await waitFor(`document.documentElement.classList.contains('dark') === ${priorDark}`)
+      assert.equal(await evaluate(`document.documentElement.classList.contains('dark')`), priorDark, 'resolved theme was not restored')
+      await nav('规则库')
+      await assertGroups(unfilteredGroups, 'after theme restore')
+    }
+  })
+
+  await check('390px rules preview shows the populated grouped list without horizontal overflow', async () => {
+    await nav('规则库')
+    await assertGroups(unfilteredGroups, 'before 390px')
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await sleep(300)
+      await assertGroups(unfilteredGroups, '390px')
+      const layout = await evaluate(`(() => {
+        const main = document.querySelector('main.workspace')
+        return { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, mainScroll: main?.scrollWidth ?? 0, mainClient: main?.clientWidth ?? 0 }
+      })()`)
+      assert.ok(layout.scroll <= layout.client, `390px rules preview overflows horizontally: ${JSON.stringify(layout)}`)
+      assert.ok(layout.mainScroll <= layout.mainClient, `390px rules preview main area overflows: ${JSON.stringify(layout)}`)
+      await evaluate(`document.querySelector('main.workspace')?.scrollTo(0, 0)`)
+      await screenshot('mobile-rules-groups')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+  })
+
+  await check('combined rule filters narrow both groups and persist in the URL across reload', async () => {
+    // advisory_only + advisory keeps rules from both security and engineering
+    // visible, so both group tables must react to the same combined filter.
+    const sharedRules = publishedRules.filter((rule) => rule.expressivity === 'advisory_only' && rule.enforcement === 'advisory')
+    const searchRule = sharedRules
+      .filter((rule) => rule.policy_class === 'engineering' && rule.on_hit === 'log')
+      .sort((a, b) => b.id.length - a.id.length)[0]
+    assert.ok(searchRule, 'no engineering advisory rule for the search filter')
+
+    await ensureMoreFilters()
+    await setBySelector('[aria-label="筛选类型"]', 'advisory_only')
+    await setBySelector('[aria-label="筛选拦截时机"]', 'advisory')
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('expressivity') === 'advisory_only' && p.get('enforcement') === 'advisory'
+    })()`)
+    await assertGroups(groupsFor(sharedRules), 'combined advisory filters')
+
+    await setBySelector('[aria-label="筛选分类"]', 'engineering')
+    await setBySelector('[aria-label="筛选命中后处理"]', 'log')
+    await setBySelector('[aria-label="搜索规则"]', searchRule.id)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('policyClass') === 'engineering' && p.get('onHit') === 'log'
+        && p.get('enforcement') === 'advisory' && p.get('expressivity') === 'advisory_only'
+        && p.get('search') === ${q(searchRule.id)} && !p.has('dimension')
+    })()`)
+    await assertGroups(groupsFor([searchRule]), 'combined engineering filters')
+    const controls = await evaluate(`(() => {
+      const value = (label) => document.querySelector('select[aria-label="' + label + '"], input[aria-label="' + label + '"]')?.value ?? null
+      return {
+        search: value('搜索规则'), policyClass: value('筛选分类'), onHit: value('筛选命中后处理'),
+        enforcement: value('筛选拦截时机'), expressivity: value('筛选类型'),
       }
-      return null;
+    })()`)
+    assert.deepEqual(controls, {
+      search: searchRule.id, policyClass: 'engineering', onHit: 'log',
+      enforcement: 'advisory', expressivity: 'advisory_only',
+    }, 'filter controls do not reflect the combined URL state')
+    await screenshot('desktop-rules-combined-filters')
+
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`document.readyState === 'complete' && ${visible('#project-select')} && new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(searchRule.id)}`)
+    await assertGroups(groupsFor([searchRule]), 'after reload')
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), 'engineering', 'filter control did not survive reload')
+
+    await click('button', '重置')
+    await waitFor(`!location.hash.includes('?')`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="搜索规则"]')?.value`), '', 'search was not cleared')
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), '', 'policy class was not cleared')
+    await assertGroups(unfilteredGroups, 'after reset')
+  })
+
+  await check('matrix filters, deep links and browser history keep grouped data aligned with the URL', async () => {
+    await click('button, [role="button"], summary', '规则矩阵')
+    await waitFor(visible('#rule-matrix-panel'))
+    const cell = await evaluate(`(() => {
+      for (const row of document.querySelectorAll('#rule-matrix-panel tbody tr')) {
+        const cells = row.querySelectorAll('td')
+        for (let i = 1; i <= 3; i++) {
+          const button = cells[i]?.querySelector('button')
+          if (!button) continue
+          document.querySelectorAll('[data-e2e-matrix-cell]').forEach((element) => element.removeAttribute('data-e2e-matrix-cell'))
+          button.setAttribute('data-e2e-matrix-cell', '')
+          return { dimension: cells[0].innerText.trim(), hit: ['deny', 'confirm', 'log'][i - 1] }
+        }
+      }
+      return null
     })()`)
     assert.ok(cell, 'no non-empty matrix cell')
-    await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
+    await click('[data-e2e-matrix-cell]')
     await waitForCall(`function (dimension, hit) {
       const p = new URLSearchParams(location.hash.split('?')[1] || '')
-      return p.get('dimension') === dimension && p.get('onHit') === hit
+      return p.get('dimension') === dimension && p.get('onHit') === hit && !p.has('search') && !p.has('policyClass') && !p.has('enforcement') && !p.has('expressivity')
     }`, [cell.dimension, cell.hit])
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
-    const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
-    assert.ok(id, 'filtered rule missing')
-    await setBySelector('[aria-label="搜索规则"]', id)
-    await waitFor(`new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(id)}`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]')?.value`), cell.dimension)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]')?.value`), cell.hit)
+    const matrixRules = publishedRules.filter((rule) => rule.dimension === cell.dimension && rule.on_hit === cell.hit)
+    assert.ok(matrixRules.length > 0, 'matrix filter has no published rules')
+    await assertGroups(groupsFor(matrixRules), 'matrix filter')
+
+    const focusRule = matrixRules.slice().sort((a, b) => b.id.length - a.id.length)[0]
+    await setBySelector('[aria-label="搜索规则"]', focusRule.id)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('search') === ${q(focusRule.id)} && p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}
+    })()`)
+    await assertGroups(groupsFor([focusRule]), 'matrix filter plus search')
+
     await nav('项目概况')
     await waitFor(`location.hash === '#/boundary' && document.querySelector('h1')?.textContent.includes('项目概况')`)
     await evaluate('history.back()')
-    await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(id)}`)
+    await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(focusRule.id)}`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('dimension')`), cell.dimension)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('onHit')`), cell.hit)
+    await assertGroups(groupsFor([focusRule]), 'after browser back')
+
+    const directFilters = { policyClass: 'security', onHit: 'deny' }
+    await evaluate(`location.hash = ${q(`#/rules?${new URLSearchParams(directFilters).toString()}`)}`)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('policyClass') === 'security' && p.get('onHit') === 'deny'
+    })()`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), 'security')
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]')?.value`), 'deny')
+    await assertGroups(groupsFor(securityDenyRules), 'direct deep link')
   })
 
   await check('rule inspector tabs, read-only raw data and Escape focus restoration', async () => {
-    const rowButton = 'section:has(input[aria-label="搜索规则"]) tbody tr:first-child button'
+    const target = securityDenyRules[0]
+    await markRuleRow(target.id)
+    const rowButton = '[data-e2e-rule-row]'
     await click(rowButton)
     const inspector = '[role="complementary"][aria-label="规则检查器"]'
     await waitFor(visible(inspector))
@@ -954,17 +1151,20 @@ try {
       const pre = panel.querySelector('pre')
       return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }
     }`, [inspector])
-    assert.ok(raw.text && JSON.parse(raw.text).id, 'raw rule JSON missing or invalid')
+    assert.ok(raw.text, 'raw rule JSON missing')
+    assert.equal(JSON.parse(raw.text).id, target.id, 'raw inspector shows a different rule')
     assert.equal(raw.editable, false, 'raw inspector contains editable fields')
     await screenshot('desktop-rules-inspector')
     await key('Escape')
     await waitFor(`!${visible(inspector)} && document.activeElement === document.querySelector(${q(rowButton)})`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').has('id')`), false)
+    assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('policyClass')`), 'security')
   })
 
   await check('mobile rule inspector is accessible and does not cause global overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     const inspector = '[role="dialog"][aria-labelledby="rule-inspector-title"]'
+    const target = securityDenyRules[0]
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
@@ -974,7 +1174,8 @@ try {
         button.click()
         return true
       })()`)) await sleep(50)
-      await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
+      await markRuleRow(target.id)
+      await click('[data-e2e-rule-row]')
       await waitFor(visible(inspector))
       const layout = await callInPage(`function (selector) {
         const e = document.querySelector(selector), r = e.getBoundingClientRect()

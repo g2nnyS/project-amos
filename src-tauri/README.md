@@ -1,6 +1,6 @@
 # Tauri Desktop Application
 
-Amos控制台的桌面应用，使用Tauri框架构建，相比Electron减少90%+体积。
+Amos控制台的可选桌面应用，使用Tauri框架构建。浏览器控制台是主要支持路径；桌面产物在签名与公证流程完成前仅用于本机开发验证。
 
 ## 架构
 
@@ -26,7 +26,7 @@ Amos控制台的桌面应用，使用Tauri框架构建，相比Electron减少90%
 └──────────────────────────────┘
 ```
 
-## 体积对比
+## 体积说明
 
 ### Electron (旧方案)
 - Linux x64: 127 MB
@@ -34,10 +34,9 @@ Amos控制台的桌面应用，使用Tauri框架构建，相比Electron减少90%
 - macOS: 122 MB
 
 ### Tauri (当前方案)
-- Linux x64: ~10 MB (92%减少)
-- Linux ARM64: ~10 MB
-- Windows: ~5 MB (96%减少)
-- macOS: ~3 MB (98%减少)
+- Linux 包依赖系统 Node.js 26，产物保持在约 10 MB 级别。
+- macOS / Windows 包内置 Node.js sidecar，实际体积以 `npm run tauri:build` 产物为准；当前本地 macOS DMG 约 49 MB。
+- 不要用固定体积承诺替代每次构建后的实际产物检查。
 
 ## 开发环境设置
 
@@ -213,7 +212,7 @@ npm run tauri:build
 node scripts/verify-tauri-macos.mjs
 ```
 
-环境变量会覆盖配置中的 ad-hoc 身份。公证还需要 Apple ID 或 App Store Connect API 凭据；CI 对应的证书、公证变量见 `.github/workflows/tauri-package.yml`。
+环境变量会覆盖配置中的 ad-hoc 身份。公证需要 `APPLE_ID`、`APPLE_PASSWORD` 与 `APPLE_TEAM_ID`，或 App Store Connect API 凭据；CI 对应的证书、公证变量见 `.github/workflows/tauri-package.yml`。当前默认产物仍是 ad-hoc 签名，浏览器下载后可能被 Gatekeeper 拦截；完成 Developer ID 签名、公证与 staple 校验前不要分发 DMG。
 
 ### 构建体积仍然很大
 确保使用release模式：

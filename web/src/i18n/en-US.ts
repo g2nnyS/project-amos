@@ -698,6 +698,12 @@ const enUS: Messages = {
     selected: 'Selected',
     notSelected: 'Not selected',
     noMatch: 'No matching rules.',
+    categorySecurity: 'Security rules',
+    categoryEngineering: 'Engineering rules',
+    categoryCount: '{count} rules',
+    categorySelected: '{count} selected',
+    columnMetadata: 'Domain & enforcement',
+    moreFilters: 'More filters',
   },
   candidate: {
     diffTitle: 'Draft changes',

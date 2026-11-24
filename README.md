@@ -11,55 +11,24 @@
 
 ---
 
-## What Is Amos?
+## What Amos gives you
 
 Amos is a locally run governance and oversight system for AI coding agents.
 
-Hard boundaries written into a monolithic `AGENTS.md` or system prompt rely on model goodwill and flood the context with every rule at once; approving each action by hand turns the human into the throughput bottleneck. Amos turns both kinds of limits into versioned, auditable data and separates governance from execution:
+- **Humans govern**: a local console manages the global baseline and workspace projects, security rules, engineering conventions, proposals, approvals, atomic publications, versions, rollback, audit, and draft simulation.
+- **The system decides before execution**: the explicit managed harness gate evaluates normalized tool calls against the published project snapshot — `deny` blocks before the tool runs, `confirm` stops for a bounded Jev review and a one-shot grant, `allow` executes.
+- **Agents receive guidance**: the same snapshot compiles an advisory projection that injects task-relevant `<amos-guidance>` conventions without changing hard-rule verdicts.
+- **Every decision leaves a trail**: sanitized audit records and per-harness runtime receipts make coverage and gaps visible; unsupported tools and opaque shells are recorded, never silently dropped.
 
-- **Humans govern**: in a local console they curate security rules, engineering conventions, and design preferences, submit proposals, and approve an atomic publication.
-- **The system decides before execution**: the managed harness gate evaluates normalized tool calls against the published project snapshot — `deny` blocks before the tool runs, `confirm` is held for a bounded Jev semantic review and a one-shot grant, `allow` executes.
-- **Agents get guidance, not just gates**: the same snapshot compiles an advisory projection that injects task-relevant conventions (`<amos-guidance>`) by area, path, task tag, and prompt tokens.
-- **Everything leaves a trail**: sanitized JSONL verdicts, runtime receipts, and governance events; unsupported tools and opaque shells surface as coverage records, never silent drops.
+Current stage: **Harness-Layer MVP** — Vue governance console · optional Tauri desktop app · Pi & OpenCode managed gate (explicit opt-in) · default adapters log-only.
 
-Current stage: **Harness-Layer MVP** — Vue governance console · Tauri desktop app · Pi managed gate (explicit opt-in) · default adapters log-only.
-
-> **Security boundary**: Default adapters are log-only. `managed.enabled` is an explicit opt-in Harness-layer gate; it is **not an OS sandbox**, does not cover every entry or side effect, and its audit is not tamper-proof. OS isolation is out of scope for this round. See [Security Model](docs/security-model.md), [Harness Gate ADR](docs/adr-harness-gate.md), and [Runtime Status](docs/go-no-go.md).
+> **Security boundary**: Default adapters are log-only. `managed` mode is an explicit opt-in Harness-layer gate; it has no OS sandbox, does not cover every entry or side effect, and its audit is not tamper-proof. See [Security Model](docs/security-model.md) and [Runtime Status](docs/go-no-go.md).
 
 ---
 
-## Product Tour
+## Install and verify
 
-### Governance console (browser + Tauri desktop, localized UI)
-
-- First run sets and confirms a login password (12–1024 chars): a browser session pastes the human token from the state directory once, while a Tauri self-started service receives a 10-minute one-time setup authorization through private IPC. Afterwards, log in with the password; the desktop offers password login.
-- Projects, rule-matrix editing, YAML import/export, validation, immutable proposals, human approval and atomic publish, version history, rollback proposals, governance audit, policy simulation, and opt-in observation logs (`--audit-log` at startup).
-- Settings are organized in tabs with an about panel; the Harness discovery page probes local installations of Pi, OpenCode, Oh My Pi, Codex, Claude Code, and DSH and reports whether each is under Amos management.
-
-### Managed harness gate (Pi / OpenCode V2, explicit opt-in)
-
-- The real `tool_call` hook evaluates the activation execution projection before the tool runs: `deny` blocks with an audit record, `confirm` stops for the Jev semantic reviewer (`review/jev-reviewer.ts`) and a one-shot HMAC grant, `allow` executes and `tool_result` records the outcome.
-- The session loads the published snapshot, writes a runtime receipt the console reads back (`loaded` / `stale` / `never` / …), and injects the advisory projection into the real system prompt.
-
-### Dynamic engineering guidance
-
-- Engineering conventions, architecture invariants, and design preferences are first-class versioned rules compiled from the same activation snapshot. Two-stage deterministic selection (applicability filter, then weighted area/path/task/token signals) renders bounded `<amos-guidance>` blocks under strict character budgets.
-- Prompts, task tags, and budgets only rank or truncate advisory text; hard enforcement rules, permissions, and gate/audit outcomes stay untouched.
-
-### Default observers and the engineering workflow gate
-
-- Default Pi/OpenCode adapters stay Stage A log-only: normalized tool events produce hypothetical verdicts, sanitized JSONL audit logs, and snapshot archives; coverage gaps are recorded, never silently dropped.
-- The separate opt-in workflow gate assesses a closed subset of bash commands before execution, runs fixed local checks, and holds work for Jev engineering review; OpenCode completion feedback is advisory.
-
-### Desktop application (Tauri)
-
-- The console also ships as a native desktop app: ~10 MB Linux AppImage, ~5 MB Windows NSIS, ~3 MB macOS DMG. It reuses a healthy console service from the same state directory and leaves a pre-existing service running when the window closes; each state directory accepts exactly one service instance.
-
----
-
-## Installation & Quick Start
-
-Requires Node.js 26 and npm (desktop development additionally needs the Rust toolchain):
+Requires Node.js 26 and npm. Desktop development additionally needs the Rust toolchain.
 
 ```bash
 npm ci
@@ -67,214 +36,169 @@ npm run typecheck
 npm test
 ```
 
-### 1. Launch the governance console
+Optional browser acceptance test:
 
 ```bash
-npm run console        # build + serve
-npm run console:serve  # serve without rebuilding
-npm run service        # backend-only build, API-only mode (no console assets)
+npm run e2e:smoke   # requires a local Chromium executable
 ```
 
-Open the emitted `http://127.0.0.1:4310` (keep `127.0.0.1` to preserve Host/Origin checks). The default state directory is `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`, holding `governance.sqlite`, `human.token`, and `agent.token` (plus `human-password.json` after setup). Token files are owner-only `0600` — never paste tokens into chat, URLs, or logs. One `serve` instance per state directory; a second start is rejected with `service_already_running`.
+---
 
-### 2. Publish a project snapshot
-
-Create a project with a normalized absolute workspace path, import the repository rules or edit your own, validate, submit a proposal, and approve the publication: the console atomically writes the P1 snapshot to `<workspace>/.pi/activation.json`. Rollback creates a new proposal; versions export as YAML or JSON. Full operational details: [Local Governance](docs/local-governance.md) and [Console README](web/README.md).
-
-### 3. Wire up Pi or OpenCode V2
-
-- **Pi managed gate (explicit opt-in)**: configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). The session loads the snapshot, writes a runtime receipt (`.pi/runtime.pi.json` for the v2 projection), injects `<amos-guidance>`, and gates normalized tool calls before execution.
-- **Default log-only adapters**: the root `opencode.jsonc` is pre-configured without a plugin `mode` option. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. Console project configuration controls OpenCode through `.pi/amos.managed.json`; without that projection, the observer fallback remains active. Default Pi setup: [Pi Adapter Guide](docs/pi-adapter.md); engineering gating and Jev configuration: [Workflow Gate](docs/workflow-gate.md).
-
-### 4. Desktop application (Tauri)
+## Start the governance console
 
 ```bash
-npm run tauri:dev    # development, requires Rust toolchain
+npm run console        # build and serve the full console
+npm run console:serve  # serve an existing build
+npm run service        # build and serve the API only
+```
+
+Open the emitted `http://127.0.0.1:4310` URL. Keep the `127.0.0.1` host so Host/Origin checks remain active. On first run, set and confirm the login password; a browser session pastes `human.token` once, while the Tauri-started service receives its setup authorization through private IPC. Afterwards, sign in with the password.
+
+The default state directory is:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance
+```
+
+It contains `governance.sqlite`, `human.token`, and `agent.token` (plus `human-password.json` after setup). Token files are owner-only `0600`; never paste tokens into chat, URLs, or logs. One `serve` instance is allowed per state directory, and a second start is rejected with `service_already_running`.
+
+For a custom port, state directory, or remote SSH tunnel, see [Local Governance](docs/local-governance.md).
+
+---
+
+## Use the console and author rules
+
+1. **Choose the governance scope.** The built-in Global Project (`global`) holds shared baseline rules inherited by every workspace project. Create a workspace project when a repository needs supplementary rules; enter its normalized absolute workspace path.
+2. **Curate rules in the UI or via YAML.** Edit rules with the console's WAF-style condition builder or import a versioned `format: amos-project-policy` YAML document. Security and engineering rules are grouped, validated against the closed 7-operator schema, and can be activated or excluded per project.
+3. **Simulate before proposing.** Use the simulation page or the editor draft panel. Quick presets fill a tool call and calculate the verdict against either the published version or an unpublished draft without executing the tool.
+4. **Publish through governance.** Submit a proposal, review the diff, approve, and publish. Publication atomically writes `<workspace>/.pi/activation.json` (P1 execution + advisory snapshot) and `<workspace>/.pi/amos.managed.json` (host projection).
+5. **Operate versions and inspect the trail.** Export YAML or JSON, inspect version history, create rollback proposals (publishing a new version without rewinding history), and review governance events and read-only observation logs (`--audit-log` at service startup) directly in the console.
+
+### Agent-assisted rule authoring with `amos-skill`
+
+Instead of hand-writing rule tables from scratch, give your coding agent [`amos-skill`](https://github.com/g2nnyS/amos-skill) (for example, install it under `~/.claude/skills/amos-skill/` or point the agent at its `SKILL.md`):
+
+- **What it produces**: a complete, importable `format: amos-project-policy` YAML draft for `global` or a specific workspace project (`activation`, `injection`, and 14-field `rules` covering both deterministic `deny`/`confirm`/`log` rules and `advisory_only` engineering conventions).
+- **How the draft enters Amos**:
+  1. Inspect the active schema (`GET /api/schema`) or export the current published baseline (`GET /api/projects/:id/versions/:n/export?format=yaml`) when editing an existing policy.
+  2. Import and validate the full YAML via `POST /api/projects/:id/import` (`{"yaml": "..."}`), which preserves `injection` and returns `{valid, issues, candidate}`.
+  3. Pass the returned `candidate` to `POST /api/projects/:id/validate` and `POST /api/projects/:id/simulate` (`{"candidate": ..., "action": ...}`) to verify at least one matching and one non-matching action.
+  4. When explicitly authorized, the agent can submit a proposal via `POST /api/projects/:id/proposals` using the Agent Bearer token (`agent.token`). **Approval and publication (`POST /api/proposals/:id/decision`) are always performed by a human in the console.**
+
+Console details and API contracts: [Local Governance](docs/local-governance.md) · [Console README](web/README.md) · [`amos-skill`](https://github.com/g2nnyS/amos-skill).
+
+---
+
+## Connect an agent harness
+
+### 1. One-click plugin installation from the console
+
+Open **Harness Detection** (`#/harnesses`) in the console. For any detected **Pi** or **OpenCode** installation, click **Install Amos Plugin**:
+
+- **Pi** (`~/.pi/agent/extensions/amos.js`): writes a user-level extension entry that forwards to this repository's compiled `dist/adapters/pi/index.js` and loads automatically with Pi (Oh My Pi reuses the Pi adapter).
+- **OpenCode** (`${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc`): appends the Amos plugin entry pointing at `dist/adapters/opencode-v2` with absolute `rulesPath`, `schemaPath`, and `logPath`, preserving existing plugins and comments.
+
+Before writing, the console previews the target path and exact content; existing conflicting files are never silently overwritten. Details: [Harness Discovery](docs/harness-discovery-usage.md).
+
+### 2. Project mode and host projection (`.pi/amos.managed.json`)
+
+Once a project is published, the console writes `<workspace>/.pi/activation.json` and `<workspace>/.pi/amos.managed.json`:
+
+- Both **Pi** and **OpenCode** prioritize `.pi/amos.managed.json`, which carries the resolved project mode (`log-only` or `managed`), `advisoryInjection` toggle, `configDigest`, and Jev review/workflow-gate settings configured in the console.
+- When `mode: "managed"` is active for the project, normalized file and search tool calls are evaluated before execution (`deny` blocks, `confirm` stops for Jev semantic review and a one-shot HMAC grant, `allow` executes) and `<amos-guidance>` is injected from the same snapshot.
+- On startup and tool evaluation, the adapter writes `<workspace>/.pi/runtime.pi.json` or `<workspace>/.pi/runtime.opencode.json` so the console shows whether the latest policy and configuration digest are `loaded`, `stale`, or `never` loaded.
+- Without a published project projection, adapters stay in default Stage A `log-only` observer mode (recording sanitized verdicts and coverage gaps without blocking tools).
+
+Adapter and configuration guides: [Configuration & Managed Startup](docs/configuration-one-shot.md) · [Pi Adapter Guide](docs/pi-adapter.md) · [OpenCode V2 Seam Notes](spike/README.md) · [Workflow Gate](docs/workflow-gate.md).
+
+---
+
+## Optional desktop app
+
+The console can also run as a Tauri desktop app:
+
+```bash
+npm run tauri:dev    # development; requires Rust toolchain
 npm run tauri:build  # production bundles
 ```
 
-Architecture and bundle details: [src-tauri/README.md](src-tauri/README.md).
+The browser console is the primary supported path. Current desktop bundles are development-stage artifacts: without Developer ID signing and Apple notarization secrets, macOS Gatekeeper may block a downloaded DMG. Do not distribute desktop bundles until the signing and notarization workflow is completed.
 
-### 5. Generate a human review worksheet
-
-```bash
-npm run audit:review -- \
-  --rules constraints/rules.yaml \
-  --log spike/logs/opencode.jsonl \
-  --output spike/review/new-review.md
-```
-
-*(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
+Architecture and packaging details: [src-tauri/README.md](src-tauri/README.md).
 
 ---
 
-## Technical Overview
+## Command reference
 
-### How it works today
-
-```text
-[1] Managed Governance & Harness Gate (Pi opt-in: .pi/amos.json managed.enabled = true)
-Vue Console / SQLite ── publish P1 catalog-v2 ──► .pi/activation.json
-   │
-   ▼
-Pi session loads snapshot (writes .pi/runtime.pi.json) + injects <amos-guidance> into system prompt
-   │
-   ▼
-Tool call (read/write/edit/ls/find/grep)
-   ├─ deny     → blocked before tool runs + audit record
-   ├─ confirm  → bounded Jev semantic reviewer ──► one-shot HMAC grant ──► execute once
-   └─ allow    → execute + tool_result audit & path/task advisory
-
-[2] Default Log-Only Adapters (OpenCode V2 & default Pi)
-Tool event ──► Adapter normalization (unsupported tool / opaque shell → coverage record)
-   │
-   ▼
-Content-addressed policy snapshot ──► Deterministic evaluation (matched / no_match / error)
-   │
-   ▼
-Sanitized JSONL audit log & snapshot archive ──► injection-safe human review worksheet
-```
-
-In default `log-only` mode, the only side effects are writing the audit record and its content-addressed policy snapshot. When Pi `managed.enabled` is turned on, normalized file/search tool calls are gated before execution against the published P1 snapshot. The separate engineering workflow gate can also block dangerous shell commands or hold work for review.
-
-### Dual projections from one activation set
-
-Amos splits one project-activated catalog into two synchronized projections: a deterministic policy engine evaluates structured actions against hard rules (`deny`/`confirm`/`allow`), while a session-pinned advisory injector dynamically delivers relevant engineering conventions, architecture invariants, and design preferences (`<amos-guidance>`) by area, path, task tag, and prompt tokens.
-
-- **Curated engineering packs & custom conventions**: seeded with 7 domain packs in `guidance/packs.ts` (`typescript-base`, `engine-invariants`, `adapters`, `supervisor-core`, `decision-jev`, `dependencies-and-manifests`, `workflow-security`). Teams author project-specific `advisory_only` design preferences or attach `narrative` guidance to deterministic rules in the console or YAML (`injection.baselineRuleIds` + `injection.routes`).
-- **Two-stage deterministic selection (`injector/select.ts`)**: filters active rules by `languages` / `frameworks` applicability, then ranks candidates by level ascending and weighted signals (`areas`, `pathHints` globs, `taskTags`, bounded prompt keyword tokens), plus explicit route `add`/`suppress`. With no matching signal or on routing failure it falls back to the project's active narratives (`baselineRuleIds` prioritized).
-- **Session-pinned delivery & budgets (`injector/session.ts`, `injector/render.ts`)**: renders XML-escaped `<amos-guidance policy="..." digest="..." mode="advisory">` blocks under strict character budgets (`1,800` prompt / `1,200` fallback / `900` area / `6,000` session total, max `6` rules per block). Budget-dropped rules are reported via `omittedRefs` / `incomplete: true`.
-- **Non-interference invariant**: prompts, task tags, and character budgets only rank or truncate advisory text; they never filter hard enforcement rules, grant permissions, or alter gate/audit outcomes.
-
-### Module map
-
-| Module | Role |
+| Command | Purpose |
 | --- | --- |
-| `engine/` | Pure, fail-closed policy evaluation: `deny > confirm > log > allow`, seven predicate operators, injected clock, no I/O |
-| `catalog/` + `activation/` | Offline catalog-v2 compilation; the console publishes project activation snapshots with paired enforcement/advisory projections |
-| `adapters/` | OpenCode V2 and Pi event normalization; log-only observers with explicit coverage records; managed paths consume the activation projection |
-| `injector/` | Two-stage deterministic selection, session pinning, character budgets, `<amos-guidance>` rendering |
-| `control-plane/` | SQLite governance service (single primary) with the typed HTTP API for projects, proposals, versions, and audit |
-| `managed/` + `host/` + `review/` | Managed gate wiring; closed-set file host with real path/symlink/hard-link checks and audit-before-effect; Jev semantic reviewer with one-shot HMAC grants |
-| `decision/` | Harness-captured `RequirementFrame`, versioned requirement registry, provider-neutral Jev access |
-| `supervisor/` | In-memory session context, hypothetical decisions, and process-local stop fencing |
-| `workflow/` | Opt-in engineering shell gate: closed-subset command assessor, fixed local checks, advisory completion review |
-| `rollout/` + `check/` | Version-bound probe-evidence promotion gate, `CheckBinding`, approved temporary-tightening templates (local libraries) |
-| `strict/` + `autonomy/` | Experimental in-memory harness and bounded file-create host (dev line, separate from the managed path) |
-| `storage/` | Content-addressed snapshot archives, sanitized JSONL, injection-safe review worksheets |
-
-### What's built
-
-- **Pure Policy Engine & Snapshot Archives**: A strict, schema-validated TypeScript engine that cleanly separates *matched*, *no match*, *engine error*, and *not evaluated*. Every policy digest archives its exact rules, schema, and workspace context under the log directory.
-- **In-Memory Supervisor Core**: Manages registered session context, hypothetical decisions, and process-local stop fencing for in-memory supervisor workflows; live Pi tool interception is handled by the Harness-Layer Blocking MVP (`managed/`).
-- **Log-Only Security Adapters (OpenCode V2 & Default Pi)**: Covers file-channel operations and explicitly logs coverage gaps for unsupported tools or opaque shell commands instead of silently dropping them.
-- **Opt-In Engineering Workflow Gate**: Versioned guidance packs, a closed-subset dangerous-command assessor, pre-execution blocking where the harness supports it, and post-change local/Jev feedback. OpenCode uses the `experimental.idle` hook for a single-repair continuation, mirroring Pi's `agent_before_settle`; like Pi it is advisory (soft-block), and the hook is an experimental API that may change in a future release.
-- **Session-Pinned Advisory Injection**: Compiles versioned guidance seeds into an immutable advisory snapshot, selects only active rules through deterministic area, path, task-tag, and prompt-token scoring, and renders bounded `<amos-guidance>` blocks with policy and digest provenance. A prompt can rank active rules but cannot introduce one, and injection failures never change a gate decision.
-- **P1 Project Rule Catalog + Publication**: Imports the repository YAML rules and guidance seeds, compiles project execution/advisory projections, and publishes a catalog-v2 artifact from the console. The Pi managed path consumes the same artifact for enforcement and injection.
-- **Harness-Layer Blocking MVP (Pi, explicit opt-in)**: The real Pi `tool_call` hook evaluates an activation execution projection; `deny` blocks before the tool runs, `confirm` is held for the Jev semantic reviewer and a one-shot HMAC grant, and `tool_result` records the outcome. Activation advisory is injected into the real system prompt and path/task guidance is appended to tool results. Verified by `managed/pi-harness.test.ts` (real Pi session, real extension, real write tool, loopback Jev protocol responses, real file effects) and `managed/harness-requirement.test.ts`. Not an OS sandbox; default remains log-only.
-- **Offline Managed Host & One-Shot Review**: A closed-set file host with real path/symlink/hard-link checks, capability roots, audit-before-effect, and crash-recovery replay refusal; a Jev semantic reviewer (`review/jev-reviewer.ts`) with a bounded projection, calibration gate, and HMAC one-shot grants; `managed/` wires the deterministic confirm stop, review, grant consumption, and single effect end to end.
-- **Vue Governance Console, Tauri Desktop & SQLite API**: Login, projects, rule editing/import, validation, proposals, human approval/publish, versions, rollback, audit, and observations, with a localized UI, first-run password enrollment (browser token paste; Tauri private-IPC setup grant), settings tabs with an about panel, harness discovery, and a single-instance service lifecycle that the Tauri desktop reuses. SQLite remains the single primary; publication compiles catalog-v2 and writes the harness artifact. A real browser test covers login→publish→YAML export/import→runtime status→rollback. Host receipt is a same-UID runtime report, not remote attestation.
-- **Bound Checkpoint, Rollout Gate & Temporary Tightening**: A deterministic TypeScript checkpoint bound to an exact tree (`CheckBinding`/`FindingBatch`), a version-bound probe-evidence promotion gate, and append-only approved-template tightening with TTL/quota/epoch. These are local libraries; no remote CI enforcement, real probe, or persisted TTL recovery.
-- **Requirement Conformance & Literal Grants**: Captures the current human requirement as a harness-owned `RequirementFrame` and asks Jev whether an action serves it. `mismatch` denies, `partial`/`unclear` require confirmation, and `match` never relaxes a baseline. A command the human typed literally can lift a non-`deny` shell verdict; deterministic denies always remain. Audit records carry frame and command digests, never requirement text.
-- **Redacted Logs & Injection-Safe Review Worksheets**: Redacts sensitive URL components before persistence and never logs file contents or shell command text. Review worksheets encode untrusted fields so audited targets cannot inject Markdown or HTML.
-- **Advisory Jev Integration**: Provider-neutral System One assessment with TypeSafe and OpenRouter configuration. Jev can use a protected local credential file; deterministic policy remains authoritative and Jev may only tighten a verdict, never relax it.
-
-### Current limitations
-
-- The default Pi/OpenCode adapters still use Stage A log-only behavior. Pi `managed.enabled` is the explicit opt-in Harness gate; OpenCode's explicit managed path reads the same projection and ordinary adapters stay log-only.
-- `managed` covers normalized `read/write/edit/ls/find/grep`; shell, PowerShell, custom tools, MCP, subprocesses, bypass paths and side effects inside an allowed shell are outside the guarantee.
-- OS isolation (independent UID, mount domains, bwrap/cgroup, kernel sandboxing, full side-effect mediation, tamper-proof audit) is **out of scope for this MVP**, not a blocker; do not claim it.
-- No publisher authentication. Snapshot verification is structural/identity consistency, not a signature; control-plane tokens and runtime reports are same-UID local observations.
-- The reviewer is Jev, configured through a local Jev config file; the calibration set is not a security certification. A hosted Jev or local llama live probe was not run this round; it needs operator credentials and a local endpoint. *(Historical, 2026-11-05: the reviewer was a local model behind an independent service; it was replaced on 2026-11-07.)*
-- No complete rollout, temporary-tightening persistence, remote CI acceptance gate, or host effective-receipt across machines.
-- SQLite owner-only files, in-process HMAC, JSONL, and digests are not tamper-proof or authenticated trust boundaries.
-- `strict/` and `autonomy/` remain local experimental libraries from the dev line; they are not the MVP managed path.
+| `npm run console` | Build backend and console, then serve |
+| `npm run console:serve` | Serve an existing build |
+| `npm run service` | Build backend and serve API only |
+| `npm run build` | Compile backend (`dist/`) and console (`dist/console/`) |
+| `npm run typecheck` | Typecheck backend and console |
+| `npm test` | Build and run backend plus console tests |
+| `npm run e2e:smoke` | Optional real-browser acceptance run |
+| `npm run tauri:dev` | Start the desktop app in development |
+| `npm run tauri:build` | Build desktop bundles |
 
 ---
 
-## Quick Start
+## Integrate Amos directly into your own harness
 
-Requires Node.js 26 and npm:
+If you are building or maintaining an agent harness and want to integrate Amos's governance, pre-execution gating, and dynamic guidance directly, follow the same five-step contract used by the built-in Pi (`adapters/pi/`) and OpenCode V2 (`adapters/opencode-v2/`) adapters:
 
-```bash
-npm ci
-npm run typecheck
-npm test
-```
+### 1. Load the console-published workspace artifacts
 
-### 1. Launch the Governance Console (Publish a Project Snapshot)
+In the target project's workspace root, read the two files written by the governance console:
 
-```bash
-npm run console
-# Or skip rebuilding if dist/ is already up to date: npm run console:serve
-# Headless: build only the backend and serve the governance API without console assets
-npm run service
-```
+- **Host projection (`<workspace>/.pi/amos.managed.json`)**: call `readHostProjection(workspace)` (`adapters/shared/host-projection.ts`). It validates the `amos-managed-host-projection` v2 contract via descriptor checks (`O_NOFOLLOW`) and returns `{ status: 'ready', projection }` with `harness: { enabled, mode: 'log-only' | 'managed', advisoryInjection }`, `activation: { snapshotPath, projectId }`, `managed` review settings, `workflowGate`, and `configDigest`. If `status === 'error'`, **fail closed** rather than silently falling back to unverified config.
+- **Activation snapshot (`<workspace>/.pi/activation.json`)**: call `loadActivationRuntime({ snapshotPath, projectId, workspace })` (`adapters/shared/activation-guidance.ts`) or `createActivationRuntime(snapshot, { projectId, workspace })` (`activation/runtime.ts`). It verifies the `amos-unified-rule-catalog` v2 digests and project/workspace identity, returning an immutable `ActivationRuntime` that exposes both `runtime.execution('runtime')` and `runtime.injectorSession(now)`.
 
-### Desktop Application (Tauri)
+### 2. Normalize tool events into closed Action Envelopes
 
-Run the governance console as a native desktop app with 90%+ smaller bundle size:
+Before a tool runs, translate your harness's native tool payload into the closed 3-field action `{ tool, operation, target }` (see `adapters/pi/normalize.ts` and `adapters/opencode-v2/normalize.ts`):
 
-```bash
-# Development (requires Rust toolchain)
-npm run tauri:dev
+- Map operations to the canonical vocabulary: `file_read`, `file_write`, `file_search`, `file_list` (plus `file_mkdir` / `file_delete` if your host mediates directory/delete operations).
+- Normalize file targets to lexical absolute paths within the session workspace; never include file contents, shell command text, URL secret values, or raw prompts in the action envelope or audit log.
+- For unsupported tools, opaque shell commands (`shell_input`), or unparseable payloads, emit an explicit coverage record (`not_evaluated`, `unknown_payload`, or `parse_error`) in `log-only` mode, and block them in `managed` mode—never treat an unevaluated tool as an implicit `allow`.
 
-# Production build
-npm run tauri:build
-```
+### 3. Wire pre-execution evaluation and the managed gate
 
-The desktop reuses a healthy console service from the same state directory and leaves that existing service running when the window closes. A second `serve` on the same state directory is rejected; see [Local Governance](docs/local-governance.md) and [src-tauri/README.md](src-tauri/README.md).
+- **In `log-only` mode**: evaluate `runtime.execution('runtime').rules` with `evaluatePolicy(action, rules, { now })` (`engine/engine.ts`) or the shared observer recorder (`adapters/shared/log-only.ts`), and append the sanitized decision record to your JSONL log without interrupting the tool call.
+- **In `managed` mode**: create a gate with `createHarnessGate` (`managed/harness.ts`), passing the verified `ActivationRuntime`, an `auditPath` outside the workspace, the session's harness-captured user requirement (`decision/requirement-registry.ts`), and the Jev semantic reviewer (`createJevSemanticReviewer` in `review/jev-reviewer.ts`):
+  - **Pre-tool hook**: call `const decision = await gate.preCall({ callId, action })`.
+    - `deny` (or any engine, snapshot, or requirement state error) returns `{ action: 'block' }` before the tool executes.
+    - `confirm` holds execution, builds a minimal bounded projection (`tool`, `operation`, workspace-relative `target`, matched rule IDs, requirement digest), invokes the Jev reviewer, verifies the response against the active `ReviewerPolicy` and requirement version, and consumes a single-use HMAC grant before returning `{ action: 'allow' }`.
+    - `allow` writes the authorization journal entry first (`host/journal.ts`) and returns `{ action: 'allow' }`.
+  - **Post-tool hook**: call `gate.recordResult(callId, 'executed' | 'failed' | 'cancelled')` so the audit journal pairs every authorized call with its outcome.
+  - **User prompt hook**: capture the human prompt into the versioned `RequirementRegistry` (`decision/requirement-registry.ts`) from the trusted user-input channel only (never from tool outputs or model text); a requirement update bumps the version and automatically invalidates in-flight reviews and unconsumed grants.
 
-**Bundle sizes:**
-- Linux AppImage: ~10 MB
-- Windows NSIS: ~5 MB
-- macOS DMG: ~3 MB
+### 4. Inject session-pinned `<amos-guidance>` blocks
 
+When `harness.advisoryInjection` is enabled, create one injector session per harness session via `const injector = runtime.injectorSession(now)` (`activation/injector.ts`, `injector/session.ts`):
 
-The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md). Engineering gating, Jev configuration, and its honest harness limits are documented in [Workflow Gate](docs/workflow-gate.md).
+- **On user turns**: select active conventions using prompt tokens, task tags, and active path hints, render the bounded XML block (`<amos-guidance policy="..." digest="..." mode="advisory">`), append it to the system or turn context, and call `commit` once emitted so rules are deduplicated across the session.
+- **On write/edit tool calls**: derive the target path's area and attach path-matched conventions to the tool result or next turn context.
+- **Preserve non-interference**: advisory selection, prompt tokens, and character budgets must never filter `runtime.execution('runtime')` or alter a gate verdict; if injection fails, log or drop the advisory block and keep enforcement unchanged.
 
-Open the emitted `http://127.0.0.1:4310` URL (use `127.0.0.1` to preserve Host/Origin checks). Open `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` in a local editor and paste it into the login form—never paste tokens into chat, URLs, or logs. Create a project, import or edit rules, submit a proposal, and approve/publish it to write `<workspace>/.pi/activation.json`. See [Local Governance](docs/local-governance.md) and [Console README](web/README.md).
+### 5. Write the runtime receipt and register harness discovery
 
-### 2. Run with Pi or OpenCode V2
-
-- **Pi Managed Gate (explicit opt-in)**: Configure `.pi/amos.json` with `managed.enabled: true` pointing at `.pi/activation.json` as documented in [Configuration & Managed Startup](docs/configuration-one-shot.md). Pi loads the snapshot, writes `.pi/runtime.pi.json` for a v2 projection (or the legacy `.pi/runtime.json`), injects `<amos-guidance>`, and gates normalized tool calls before execution.
-- **Default Log-Only Adapters**: The root `opencode.jsonc` is pre-configured. Run `npm run build` and launch OpenCode V2 from the repo root to record security verdicts to `spike/logs/opencode.jsonl`. For default Pi setup, see the [Pi Adapter Guide](docs/pi-adapter.md); for the engineering workflow gate and Jev setup, see [Workflow Gate](docs/workflow-gate.md).
-
-### 3. Generate a Human Review Worksheet
-
-```bash
-npm run audit:review -- \
-  --rules constraints/rules.yaml \
-  --log spike/logs/opencode.jsonl \
-  --output spike/review/new-review.md
-```
-
-*(Note: `--output` must point to a new file so existing human review notes are never overwritten.)*
+- **Runtime receipt (`<workspace>/.pi/runtime.<harness>.json`)**: when the snapshot loads and when tool calls are evaluated, atomically write a v2 receipt (`format: "amos-harness-runtime"`, `version: 2`, `projectId`, `activationDigest`, `epoch`, `policyVersion`, `configDigest`, `harness`, `mode: "enforcing" | "log-only" | "disabled"`, `loadedAt`, `lastToolAt`; see `control-plane/runtime-status.ts`). The console reads this receipt to report whether the harness has loaded the current policy and configuration.
+- **Console detection & one-click install**: to list your harness in `#/harnesses`, add its binary probe and plugin marker check to `control-plane/harness-discovery.ts`, and add its idempotent user-level config installer to `control-plane/harness-plugin-install.ts`.
 
 ---
 
-## Workflow & Documentation
+## Documentation
 
-- **Delivery Conventions**: Use `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, `test/`, or `ci/` branches. Branch protection, force-push prevention, and release authority belong on the Git host. Security-sensitive changes require human review—**agents never self-approve, merge, or release** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
-
-**Documentation Index**:
-- [Product Scope](docs/product-design.md) · [Project Activation & Dual Projections](docs/project-activation.md) · [Implementation Status](docs/product-gap-plan.md) · [MVP Delivery](docs/mvp-delivery.md)
-- [Local Governance](docs/local-governance.md) · [Console README](web/README.md) · [Desktop App](src-tauri/README.md) · [Harness Discovery](docs/harness-discovery-usage.md)
-- [Security Model & Current Status](docs/security-model.md) · [Runtime Status](docs/go-no-go.md)
-- [Supervisor Core](docs/supervisor-core.md) · [Workflow Gate & Advisory Injection](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
-- [Product & Engineering Decisions](docs/decisions.md) · [Fixture Coverage](docs/fixture-coverage.md)
-- [Delivery Status](docs/delivery-status.md) · [AC-01–22 Acceptance Matrix](docs/acceptance-one-shot.md) · [One-Shot Verification](docs/verification-one-shot.md) · [Configuration & Managed Startup](docs/configuration-one-shot.md)
-- Safety & Architecture ADRs: [unified rule catalog](docs/adr-unified-rule-catalog.md) · [harness gate](docs/adr-harness-gate.md) · [source authentication](docs/adr-source-authentication.md) · [managed host](docs/adr-managed-file-host.md) · [review protocol](docs/adr-review-protocol.md) · [governance store](docs/adr-governance-store.md) · [check binding](docs/adr-check-binding.md) · [temporary tightening](docs/adr-temporary-tightening.md)
-- [OpenCode V2 Seam Notes](spike/README.md) · [Pi Adapter Guide](docs/pi-adapter.md)
+- **Using Amos & authoring rules**: [Local Governance](docs/local-governance.md) · [Console README](web/README.md) · [Harness Discovery](docs/harness-discovery-usage.md) · [`amos-skill` (Rule Authoring Skill)](https://github.com/g2nnyS/amos-skill)
+- **Agent & harness integration**: [Configuration & Managed Startup](docs/configuration-one-shot.md) · [Pi Adapter Guide](docs/pi-adapter.md) · [OpenCode V2 Seam Notes](spike/README.md) · [Workflow Gate](docs/workflow-gate.md) · [Jev Integration](docs/jev-integration.md)
+- **Status and safety**: [Security Model](docs/security-model.md) · [Runtime Status](docs/go-no-go.md) · [Product Closure](docs/product-closure.md) · [Implementation Status](docs/product-gap-plan.md)
+- **Architecture and decisions**: [Product Scope](docs/product-design.md) · [Project Activation](docs/project-activation.md) · [Harness Gate ADR](docs/adr-harness-gate.md) · [Decisions](docs/decisions.md)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---
 
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
-
----
-
-<p align="center">
-  <sub>A policy engine is useful only when its trust boundary, coverage gaps, and audit trail are as explicit as its verdicts.</sub>
-</p>

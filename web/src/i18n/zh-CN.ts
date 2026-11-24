@@ -698,6 +698,12 @@ const zhCN = {
     selected: '已选用',
     notSelected: '未选用',
     noMatch: '没有匹配的规则。',
+    categorySecurity: '安全规则',
+    categoryEngineering: '工程规则',
+    categoryCount: '{count} 条',
+    categorySelected: '已选用 {count} 条',
+    columnMetadata: '领域与执行方式',
+    moreFilters: '更多筛选',
   },
   candidate: {
     diffTitle: '草稿改动',

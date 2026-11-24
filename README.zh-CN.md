@@ -11,55 +11,24 @@
 
 ---
 
-## 这是什么？
+## Amos 提供什么
 
 Amos 是一个本地运行的 AI Agent 治理与监管系统。
 
-把硬性边界写进单一的 `AGENTS.md` 或系统提示词，等于把安全托付给模型的自觉，还让全部规范一次性挤占上下文；逐条动作都等人审批，人又成了吞吐瓶颈。Amos 把这两类约束都变成版本化、可审计的数据，把治理与执行分开：
+- **人类负责治理**：本地控制台统一管理全局基线与工作区项目、安全规则、工程规范、提案、审批、原子发布、版本历史、回滚、审计与草稿模拟。
+- **系统在执行前裁决**：显式启用的 managed harness 门禁按已发布的项目快照评估归一化工具调用——`deny` 在工具执行前阻断，`confirm` 先停给有界 Jev 审查与一次性授权，`allow` 放行执行。
+- **Agent 同时获得指导**：同一快照编译出 advisory 投影，按任务相关内容注入 `<amos-guidance>` 工程规范；注入不改变硬规则裁决。
+- **每个决定都有记录**：脱敏审计记录与按 Harness 区分的运行期回执让覆盖范围与缺口可见；不支持的工具与黑盒 Shell 会被显式记录，绝不静默丢弃。
 
-- **人类负责治理**：在本地控制台维护安全规则、工程规范与设计偏好，提交提案，批准后原子发布。
-- **系统在执行前裁决**：受到管理的 harness 门禁按已发布的项目激活快照评估归一化工具调用——`deny` 执行前阻断，`confirm` 先停给有界 Jev 语义审查加一次性授权，`allow` 直接执行。
-- **Agent 同时收到指导**：同一快照编译出 advisory 投影，按区域、路径、任务标签与词元注入 `<amos-guidance>` 工程规范。
-- **每一步都有迹可查**：脱敏 JSONL 裁决、运行期回执与治理事件；不支持的工具与黑盒 Shell 显式留下覆盖记录，绝不静默丢弃。
+当前阶段：**Harness 层 MVP** —— Vue 治理控制台 · 可选 Tauri 桌面应用 · Pi 与 OpenCode managed 门禁（显式 opt-in）· 默认适配器 log-only。
 
-当前阶段：**Harness 层 MVP** —— Vue 治理控制台 · Tauri 桌面应用 · Pi 管理门禁（显式 opt-in）· 默认适配器 log-only。
-
-> **安全边界**：默认适配器为 log-only。`managed.enabled` 是显式 opt-in 的 Harness 层门；它**不是 OS 沙箱**，不覆盖所有入口与副作用，审计也不防篡改；OS 隔离不在本轮范围。详见[安全模型](docs/security-model.md)、[Harness gate ADR](docs/adr-harness-gate.md)与[运行期状态](docs/go-no-go.md)。
+> **安全边界**：默认适配器为 log-only。`managed` 模式是显式 opt-in 的 Harness 层门禁；它没有 OS 沙箱能力，未覆盖全部入口与副作用，审计也不防篡改。详见[安全模型](docs/security-model.md)与[运行期状态](docs/go-no-go.md)。
 
 ---
 
-## 产品介绍
+## 安装与验证
 
-### 治理控制台（浏览器 + Tauri 桌面，中英文界面）
-
-- 首次运行设置并确认登录密码（12–1024 字符）：浏览器会话从状态目录粘贴一次 `human.token` 完成首次验证；Tauri 自启动的服务经私有 IPC 获得 10 分钟一次性设置授权。之后用密码登录，桌面只提供密码方式。
-- 覆盖项目、规则矩阵编辑、YAML 导入导出、校验、不可变提案、人工批准与原子发布、版本历史、回滚提案、治理审计、策略模拟与可选观察日志（启动时 `--audit-log`）。
-- 设置页分标签管理并附关于面板；Harness 探测页一键探测本机 Pi、OpenCode、Oh My Pi、Codex、Claude Code、DSH 的安装情况与 Amos 管理状态。
-
-### 受到管理的 harness 门禁（Pi / OpenCode V2，显式 opt-in）
-
-- 真实 `tool_call` 钩子在工具执行前用激活执行投影裁决：`deny` 连同审计记录直接阻断；`confirm` 先停给 Jev 语义 reviewer（`review/jev-reviewer.ts`）与一次性 HMAC grant；`allow` 执行后由 `tool_result` 记录结果。
-- 会话加载已发布快照、写出供控制台读取的运行期回执（`loaded` / `stale` / `never` / …），并把 advisory 投影注入真实 system prompt。
-
-### 工程规范动态注入
-
-- 工程规范、架构不变量与设计偏好是一等版本化规则，与硬规则从同一激活快照同源编译；两阶段确定性选择（适用性过滤 → 区域/路径/任务/词元加权）在严格字符预算内渲染 `<amos-guidance>` 块。
-- 提示词、任务标签与预算只影响 advisory 文本的排序与截断；硬性拦截规则、权限与门禁/审计结果不受影响。
-
-### 默认观察与工程工作流门
-
-- 默认 Pi/OpenCode 适配器保持 Stage A log-only：归一化工具事件产生假设裁决、脱敏 JSONL 审计与快照归档；覆盖缺口显式记录，绝不静默丢弃。
-- 独立可选的工作流门在执行前评估封闭子集 bash 命令、运行固定本地检查并按 Jev 工程审查暂缓工作；OpenCode 的完成审查保持 advisory。
-
-### 桌面应用（Tauri）
-
-- 控制台同时发布为原生桌面应用：Linux AppImage 约 10 MB、Windows NSIS 约 5 MB、macOS DMG 约 3 MB。桌面复用同状态目录中健康的控制台服务，关闭窗口时保留已有实例；同一状态目录同一时间只接受一个服务实例。
-
----
-
-## 安装与快速上手
-
-环境要求 Node.js 26 与 npm（桌面开发另需 Rust 工具链）：
+环境要求 Node.js 26 与 npm；桌面开发另需 Rust 工具链。
 
 ```bash
 npm ci
@@ -67,192 +36,169 @@ npm run typecheck
 npm test
 ```
 
-### 1. 启动治理控制台
+可选的真实浏览器验收：
 
 ```bash
-npm run console        # 构建并启动
-npm run console:serve  # 已构建时直接启动
-npm run service        # 只编译后端，API-only 模式（不加载控制台资源）
+npm run e2e:smoke   # 需本机 Chromium
 ```
 
-打开服务输出的 `http://127.0.0.1:4310`（请使用 `127.0.0.1` 以保留 Host/Origin 校验）。默认状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance`，内含 `governance.sqlite`、`human.token`、`agent.token`（设置密码后另有 `human-password.json`）。令牌文件属当前用户且权限 0600；切勿把令牌发到聊天、URL 或日志。同一状态目录同一时间只允许一个 `serve` 实例，重复启动返回 `service_already_running`。
+---
 
-### 2. 发布项目快照
-
-创建项目并填写规范化绝对 workspace 路径，导入仓库规则或自行编辑，先校验再提交提案，人工批准发布后控制台将 P1 快照原子写入 `<workspace>/.pi/activation.json`；回滚生成新提案，版本页可导出 YAML/JSON。完整运维说明见[本地治理控制台](docs/local-governance.md)与[前端说明](web/README.md)。
-
-### 3. 接入 Pi / OpenCode V2
-
-- **Pi 管理门禁（显式 opt-in）**：按[配置迁移与受管启动](docs/configuration-one-shot.md)配置 `.pi/amos.json`（`managed.enabled: true` 并指向 `.pi/activation.json`）。会话启动即加载快照、写出运行期回执（v2 投影为 `.pi/runtime.pi.json`）、注入 `<amos-guidance>` 并在工具执行前完成 `deny`/`confirm`/`allow` 裁决。
-- **默认 log-only 观察路径**：根目录 `opencode.jsonc` 已预配置，执行 `npm run build` 后在仓库根启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程门与 Jev 配置见[工作流硬门](docs/workflow-gate.md)。
-
-### 4. 桌面应用（Tauri）
+## 启动治理控制台
 
 ```bash
-npm run tauri:dev    # 开发模式，需 Rust 工具链
+npm run console        # 构建并启动完整控制台
+npm run console:serve  # 启动已有构建
+npm run service        # 只构建并启动治理 API
+```
+
+打开服务输出的 `http://127.0.0.1:4310`。请保留 `127.0.0.1` 主机名以维持 Host/Origin 校验。首次打开时先设置并确认登录密码；浏览器会话粘贴一次 `human.token`，Tauri 自启动服务则通过私有 IPC 获得设置授权。之后使用密码登录。
+
+默认状态目录：
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance
+```
+
+目录内含 `governance.sqlite`、`human.token`、`agent.token`（设置密码后另有 `human-password.json`）。令牌文件属当前用户且权限 `0600`；切勿把令牌发到聊天、URL 或日志。同一状态目录同一时间只允许一个 `serve` 实例，重复启动返回 `service_already_running`。
+
+自定义端口、状态目录或远程 SSH 隧道见[本地治理控制台](docs/local-governance.md)。
+
+---
+
+## 使用控制台与编写规则
+
+1. **选择治理范围。** 内置 Global Project（`global`）维护所有工作区项目默认继承的共享基线；当某个仓库需要补充规则时创建工作区项目，并填写规范化绝对 workspace 路径。
+2. **界面构建或 YAML 导入规则。** 使用控制台的 WAF 式条件构建器编辑规则，或导入版本化 `format: amos-project-policy` YAML。安全与工程规则分组展示，按封闭的 7 算子 Schema 校验，并支持按项目激活或排除。
+3. **提交前先模拟。** 在模拟页或编辑器草稿面板中使用快速预设；预设可填充常见工具调用，直接对已发布版本或未提交草稿计算裁决，不执行真实工具。
+4. **走治理发布流程。** 提交提案、查看差异、批准并发布。发布以单个原子操作向工作区写出 `<workspace>/.pi/activation.json`（P1 执行与 advisory 双投影快照）和 `<workspace>/.pi/amos.managed.json`（宿主配置投影）。
+5. **运营版本与查看审计。** 导出 YAML/JSON、查看历史版本，需要时创建回滚提案（发布递增新版本，不改写既有历史）；在控制台直接查看治理事件与启动时配置的只读观察日志（`--audit-log`）。
+
+### 使用 `amos-skill` 让 Agent 协助编写与验证规则
+
+无需手工从零拼写 YAML 规则表，可以让你的编码 Agent 加载 [`amos-skill`](https://github.com/g2nnyS/amos-skill)（例如放到 `~/.claude/skills/amos-skill/` 或客户端的 skills 目录，或直接让 Agent 阅读其 `SKILL.md`）：
+
+- **产出内容**：面向内置 `global` 基线或指定工作区项目的完整、可导入 `format: amos-project-policy` YAML 草案（包含 `activation`、`injection` 及 14 字段 `rules`，同时涵盖确定性 `deny`/`confirm`/`log` 硬规则与 `advisory_only` 工程规范）。
+- **草案接入流程**：
+  1. 查询当前规则表 Schema（`GET /api/schema`）；若修改既有策略，先导出当前已发布版本（`GET /api/projects/:id/versions/:n/export?format=yaml`）作为基线。
+  2. 调用 `POST /api/projects/:id/import`（提交 `{"yaml": "..."}`）导入并校验完整文档，保留 `injection` 配置并取得返回的 `{valid, issues, candidate}`。
+  3. 将同一个 `candidate` 传给 `POST /api/projects/:id/validate` 和 `POST /api/projects/:id/simulate`（提交 `{"candidate": ..., "action": ...}`），至少验证一个应命中与一个不应命中的正反例动作。
+  4. 获得用户明确授权时，Agent 可使用 `agent.token` Bearer 凭据调用 `POST /api/projects/:id/proposals` 提交提案；**审批与发布（`POST /api/proposals/:id/decision`）始终由人类在控制台完成。**
+
+控制台详情与 API 合同：[本地治理控制台](docs/local-governance.md) · [前端说明](web/README.md) · [`amos-skill` 规则编写指南](https://github.com/g2nnyS/amos-skill)。
+
+---
+
+## 接入 Agent Harness
+
+### 1. 在控制台一键接入插件
+
+在控制台打开 **Harness 检测**（`#/harnesses`）。对已探测到的 **Pi** 或 **OpenCode**，点击行内 **接入 Amos 插件**：
+
+- **Pi**（`~/.pi/agent/extensions/amos.js`）：写入用户级扩展入口，一行转发到本仓编译后的 `dist/adapters/pi/index.js`，随 Pi 自动加载（Oh My Pi 兼容并复用该适配器）。
+- **OpenCode**（`${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc`）：在全局配置中追加指向 `dist/adapters/opencode-v2` 的插件项（写入 `rulesPath`、`schemaPath`、`logPath` 绝对路径），保留原有插件与注释。
+
+写入前界面会预览目标路径与完整内容；若已有文件内容冲突则拒绝覆盖。详见 [Harness 探测使用指南](docs/harness-discovery-usage.md)。
+
+### 2. 项目模式与宿主投影（`.pi/amos.managed.json`）
+
+项目在控制台发布或更新配置后，工作区会生成 `<workspace>/.pi/activation.json` 与 `<workspace>/.pi/amos.managed.json`：
+
+- **Pi** 与 **OpenCode** 启动时都优先读取 `.pi/amos.managed.json`。该文件携带控制台解析后的项目模式（`log-only` 或 `managed`）、`advisoryInjection` 开关、`configDigest` 以及 Jev 审查与工程工作流门配置。
+- 当项目启用 `mode: "managed"` 时，归一化文件与检索工具调用在执行前按激活快照裁决（`deny` 执行前阻断，`confirm` 先停给 Jev 语义审查与一次性 HMAC grant，`allow` 放行执行），同时从同一快照注入 `<amos-guidance>`。
+- 适配器加载快照与评估工具时会写出 `<workspace>/.pi/runtime.pi.json` 或 `<workspace>/.pi/runtime.opencode.json` 回执，控制台据此展示各 Harness 是 `loaded`、`stale` 还是 `never`。
+- 未生成项目投影时，适配器保持默认 Stage A `log-only` 观察模式（记录脱敏假设裁决与覆盖缺口，不阻断工具执行）。
+
+适配器与配置说明：[配置迁移与受管启动](docs/configuration-one-shot.md) · [Pi 适配器说明](docs/pi-adapter.md) · [OpenCode V2 接入笔记](spike/README.md) · [工作流硬门](docs/workflow-gate.md)。
+
+---
+
+## 可选桌面应用
+
+控制台也可以作为 Tauri 桌面应用运行：
+
+```bash
+npm run tauri:dev    # 开发模式；需 Rust 工具链
 npm run tauri:build  # 生产构建
 ```
 
-架构与产物细节见 [src-tauri/README.md](src-tauri/README.md)。
+浏览器控制台是主要支持路径。当前桌面产物仍属开发阶段：没有 Developer ID 签名与 Apple 公证配置时，macOS Gatekeeper 可能拦截下载的 DMG。签名与公证流程完成前，请勿分发桌面产物。
 
-### 5. 生成人工审核工作表
-
-```bash
-npm run audit:review -- \
-  --rules constraints/rules.yaml \
-  --log spike/logs/opencode.jsonl \
-  --output spike/review/new-review.md
-```
-
-*（注：`--output` 必须指向尚不存在的新文件，防止覆盖已有的人工审核结论。）*
+架构与打包细节见 [src-tauri/README.md](src-tauri/README.md)。
 
 ---
 
-## 技术介绍
+## 命令速查
 
-### 当前工作原理
-
-```text
-[1] 受管治理与 Harness 硬门路径（Pi 显式启用：.pi/amos.json managed.enabled = true）
-Vue 治理控制台 / SQLite ── 发布 P1 catalog-v2 ──► .pi/activation.json
-   │
-   ▼
-Pi 会话加载快照（写 .pi/runtime.pi.json 回执）+ 将 <amos-guidance> 动态注入系统提示词
-   │
-   ▼
-工具调用事件 (read/write/edit/ls/find/grep)
-   ├─ deny     → 执行前直接阻断 + 写入审计记录
-   ├─ confirm  → Jev 语义 reviewer 审查 ──► 一次性 HMAC grant ──► 放行执行一次
-   └─ allow    → 放行执行 + tool_result 审计记录 & 路径/任务级 advisory 附加
-
-[2] 默认 log-only 适配器路径（OpenCode V2 & 默认 Pi）
-工具调用事件 ──► 适配器归一化（不支持的工具 / 不可解析的 Shell → 写入覆盖缺口记录）
-   │
-   ▼
-按内容 Digest 寻址策略快照 ──► 确定性策略求值（命中 / no_match / 引擎或快照错误）
-   │
-   ▼
-脱敏写入 JSONL 审计日志 & 快照归档 ──► 生成防注入的人工审核表
-```
-
-在默认 `log-only` 模式下，唯一副作用是写审计日志与快照归档。显式启用 Pi `managed.enabled` 后，归一化文件与检索工具调用会在执行前按已发布的 P1 快照做真实阻断与一次性授权审查。独立工程工作流硬门也可用于阻断危险 Shell 命令或暂缓工作。
-
-### 一个激活集，双投影
-
-Amos 把同一个项目激活目录拆分为同源双投影：确定性策略引擎对结构化动作执行硬性裁决（`deny`/`confirm`/`allow`），按会话固定的动态注入器（`<amos-guidance>`）按代码区域、目标路径、任务标签与输入词元投递当前任务相关的工程规范、架构不变量与设计偏好。
-
-- **内置工程规范包与自定义设计偏好**：`guidance/packs.ts` 内置 7 个领域规范包（`typescript-base`、`engine-invariants`、`adapters`、`supervisor-core`、`decision-jev`、`dependencies-and-manifests`、`workflow-security`）。团队可在控制台或 YAML 中新增项目级 `advisory_only` 设计偏好、为确定性规则维护 `narrative` 说明，并配置项目默认基线（`injection.baselineRuleIds`）与任务/路径路由（`injection.routes`）。
-- **两阶段确定性选择与打分（`injector/select.ts`）**：先按 `languages` / `frameworks` 过滤适用规则，再按 `level` 升序及多维结构化信号（`areas`、`pathHints` glob、`taskTags` 与有界 prompt 关键词序列）确定性打分排序，并叠加路由的显式 `add` / `suppress`。无信号命中或路由异常时，自动回退至当前项目已激活的 narrative 集合（优先 `baselineRuleIds`）。
-- **会话固定投递与字符预算（`injector/session.ts`、`injector/render.ts`）**：在严格字符与条数预算下（prompt `1,800` / fallback `1,200` / area `900` / 会话总计 `6,000` 字符，单块最多 `6` 条）渲染 XML 转义的 `<amos-guidance policy="..." digest="..." mode="advisory">` 块；超出预算被裁剪的规则通过 `omittedRefs` 与 `incomplete: true` 显式上报。
-- **裁决零干扰不变量**：提示词词元、任务标签与字符预算仅影响 advisory 文本的排序与截断，绝不裁剪硬性拦截规则、不授予执行权限，注入失败也绝不改变任何门禁裁决或审计结果。
-
-### 模块地图
-
-| 模块 | 职责 |
+| 命令 | 用途 |
 | --- | --- |
-| `engine/` | 纯函数、fail-closed 策略求值：`deny > confirm > log > allow`、七种谓词操作符、注入时钟、无 I/O |
-| `catalog/` + `activation/` | 离线编译 catalog-v2；控制台发布项目激活快照，产出执行/advisory 双投影 |
-| `adapters/` | OpenCode V2 与 Pi 事件归一化；log-only 观察器显式记录覆盖缺口；受管路径消费激活投影 |
-| `injector/` | 两阶段确定性选择、会话固定、字符预算、`<amos-guidance>` 渲染 |
-| `control-plane/` | SQLite 治理服务（单主存储）与项目/提案/版本/审计的类型化 HTTP API |
-| `managed/` + `host/` + `review/` | 管理门禁接线；闭集文件宿主做真实路径/符号链接/硬链接检查、审计前置；Jev 语义 reviewer 与一次性 HMAC grant |
-| `decision/` | harness 捕获的 `RequirementFrame`、版本化 requirement 注册表、provider 无关的 Jev 接入 |
-| `supervisor/` | 进程内会话上下文、假设裁决与停止栅栏（Stop Fencing）核心 |
-| `workflow/` | 可选工程 Shell 门：封闭子集命令判定、固定本地检查、advisory 完成审查 |
-| `rollout/` + `check/` | 版本绑定的 probe 证据晋升门、`CheckBinding`、已批准的临时收紧模板（本地库） |
-| `strict/` + `autonomy/` | 实验性内存 harness 与受限文件创建宿主（dev 线，独立于受管路径） |
-| `storage/` | 内容寻址快照归档、脱敏 JSONL、防注入人工审核表 |
-
-### 已实现
-
-- **纯函数策略引擎与快照归档**：基于严格 Schema 校验的 TypeScript 引擎，清晰区分“命中、未命中、引擎错误、未评估”。每次策略变更按内容摘要（Digest）归档完整快照（含规则原文、Schema 与有效工作区）。
-- **Supervisor 会话与停止栅栏核心**：提供进程内的已注册会话上下文、假设裁决与停止栅栏核心逻辑；真实 Pi 工具执行前拦截由 Harness 层阻断 MVP（`managed/`）承接。
-- **双端安全 `log-only` 默认适配器**：支持 **OpenCode V2** 与 **默认 Pi** 的文件通道。遇到不支持的工具或黑盒 Shell 动作时，显式生成覆盖缺口记录，绝不静默跳过。
-- **可选的工程工作流硬门**：版本化规范包、封闭子集的危险命令判定、harness 支持时的执行前阻断，以及变更后的本地/Jev 审查反馈。OpenCode 通过 `experimental.idle` 钩子获得单次修复续跑，与 Pi 的 `agent_before_settle` 对齐；两者均为 advisory 软阻断，该钩子是实验性 API，未来版本可能调整。
-- **按会话固定的 advisory 注入**：把版本化规范种子编译成不可变 advisory 快照，按区域、路径、任务标签和 prompt 词元做确定性选择，渲染带 policy 与 digest 出处的有界 `<amos-guidance>` 块。prompt 只能给已激活规则排序，不能引入新规则；注入失败不会改变任何门禁裁决。
-- **P1 项目规则目录与发布**：把仓库 YAML 规则和 guidance seed 导入版本化目录，按项目编译执行与 advisory 投影，并由控制台发布 catalog-v2 产物；Pi managed 路径直接消费同一产物完成执行前拦截与动态注入。
-- **Harness 层阻断 MVP（Pi，显式 opt-in）**：真实 Pi `tool_call` 钩子用 activation execution 投影裁决；`deny` 在执行前阻断，`confirm` 先停住并交有界投影的 Jev 语义 reviewer 审查与一次性 HMAC 授权，`tool_result` 记录结果；activation advisory 注入真实 system prompt 并在工具结果附加路径/任务级指导。已由 `managed/pi-harness.test.ts`（真实 Pi 会话 + 真实扩展 + 真实 write 工具 + loopback Jev 协议应答 + 真实文件副作用）与 `managed/harness-requirement.test.ts` 验证。不是 OS 沙箱，默认仍 log-only。
-- **离线受管宿主与一次性审查**：闭集文件宿主做真实路径/符号链接/硬链接检查、能力根、审计前置和崩溃 unknown 不重放；Jev reviewer（`review/jev-reviewer.ts`）只接收最小有界投影，经过校准门与 HMAC 一次性 grant；`managed/` 把 confirm 先停、审查、消费 grant、单次执行串成端到端闭环。Pi 与 OpenCode 的 managed 路径都接入该 review/grant 链路。
-- **Vue 治理控制台、Tauri 桌面与 SQLite API**：登录、项目、规则编辑与 YAML 导入导出、校验、不可变提案、人工审批/发布、版本、回滚、审计与观察，含中英文界面、首次运行密码设置（浏览器粘贴 token；Tauri 私有 IPC 启动授权）、设置分标签页与关于面板、Harness 探测，以及 Tauri 复用的单实例服务生命周期。SQLite 单主存储，发布事务原子编译 catalog-v2 并写出 harness 产物；真实 Chromium 端到端测试已覆盖登录→发布→YAML 导出/导入→runtime 状态→回滚全链路。宿主 v2 回执为同 UID 本地 `.pi/runtime.pi.json` 或 `.pi/runtime.opencode.json` 报告。
-- **CheckBinding、rollout 与临时收紧**：精确 tree 的 TypeScript 检查合同、版本绑定的 probe 证据晋升门、已批准模板的附加型 TTL/配额/epoch 收紧。均为本地库；无远端 CI 强制、真实 probe 或持久 TTL 恢复。
-- **要求一致性与逐字授权**：把当前人类要求捕获为 harness 持有的 `RequirementFrame`，由 Jev 判断动作是否服务于该要求。`mismatch` 拒绝，`partial`/`unclear` 要求确认，`match` 绝不放宽基线。人类逐字输入的命令可把非 `deny` 的 Shell 裁决提升为 `allow`；确定性 `deny` 永远保留。审计只记录 frame 与命令 digest，不记录要求原文。
-- **隐私脱敏与防注入人审表**：落盘前自动脱敏 URL 敏感参数，绝不记录文件内容或 Shell 命令原文；生成的人工审核表会对不可信字段做安全编码，防止 Markdown/HTML 注入。
-- **Jev 语义顾问接入**：支持 TypeSafe 直连与 OpenRouter System One，可通过受保护的本地配置文件提供凭据。确定性规则才是权威，模型评估**只能收紧裁决，绝不能放宽裁决**。
-
-### 当前限制
-
-- Pi/OpenCode 默认适配器仍是 Stage A log-only；Pi `managed.enabled` 是显式 opt-in 的 Harness 门，OpenCode 的显式 managed 路径读取同一投影，普通适配器仍 log-only。
-- `managed` 只覆盖归一化 `read/write/edit/ls/find/grep`；Shell、PowerShell、自定义工具、MCP、子进程、绕过路径以及获准 Shell 内部副作用不在保证内。
-- **OS 隔离（独立 UID、挂载域、bwrap/cgroup、内核沙箱、全副作用中介、防篡改审计）本轮不做，不是阻塞项**，不得宣称已具备。
-- 来源认证未实现；快照 verify 是结构/身份一致性检查，不是签名；控制台令牌与 runtime 报告都是同 UID 本地观察。
-- reviewer 是 Jev，通过本地 Jev 配置文件提供；校准集不是安全认证。本轮未运行 hosted Jev 或本地 llama live probe，需要人工提供凭据与本机端点。*（历史，2026-11-05：reviewer 是独立服务后的本地模型，已于 2026-11-07 被 Jev 取代。）*
-- 完整 rollout、临时收紧持久化、远端 CI 接纳门、跨机器生效回执未实现。
-- SQLite owner-only 文件、同进程 HMAC、JSONL 和 digest 都不是防篡改或来源认证边界。
-- `strict/`、`autonomy/` 是 dev 线保留的本地实验库，不是本 MVP 受管路径。
+| `npm run console` | 构建后端与控制台并启动 |
+| `npm run console:serve` | 启动已有构建 |
+| `npm run service` | 只构建后端并启动治理 API |
+| `npm run build` | 编译后端（`dist/`）与控制台（`dist/console/`） |
+| `npm run typecheck` | 后端与控制台类型检查 |
+| `npm test` | 构建并运行后端与控制台测试 |
+| `npm run e2e:smoke` | 可选真实浏览器验收 |
+| `npm run tauri:dev` | 开发模式启动桌面应用 |
+| `npm run tauri:build` | 构建桌面产物 |
 
 ---
 
-## 快速上手
+## 把这套机制直接集成到你自己的 Harness
 
-环境要求：Node.js 26 与 npm。
+如果你正在开发或维护自己的 Agent Harness，希望直接接入 Amos 的治理投影、执行前门禁与动态规范注入，可以按内置 Pi（`adapters/pi/`）和 OpenCode V2（`adapters/opencode-v2/`）适配器所遵循的五步契约完成集成：
 
-```bash
-npm ci
-npm run typecheck
-npm test
-```
+### 1. 读取控制台发布的工作区产物
 
-### 1. 启动本地治理控制台（发布项目快照）
+在目标项目工作区根目录读取治理控制台生成的两份文件：
 
-```bash
-npm run console
-# 若已执行过构建，可直接运行：npm run console:serve
-# 无界面运行：只编译后端，提供治理 API，不加载控制台资源
-npm run service
-```
+- **宿主配置投影（`<workspace>/.pi/amos.managed.json`）**：调用 `readHostProjection(workspace)`（`adapters/shared/host-projection.ts`）。它通过文件描述符（`O_NOFOLLOW`）校验 `amos-managed-host-projection` v2 结构，返回 `{ status: 'ready', projection }`，内含 `harness: { enabled, mode: 'log-only' | 'managed', advisoryInjection }`、`activation: { snapshotPath, projectId }`、`managed` 审查配置、`workflowGate` 与 `configDigest`。当 `status === 'error'` 时必须 **fail closed**，不能静默回退到未校验的手写配置。
+- **项目激活快照（`<workspace>/.pi/activation.json`）**：调用 `loadActivationRuntime({ snapshotPath, projectId, workspace })`（`adapters/shared/activation-guidance.ts`）或 `createActivationRuntime(snapshot, { projectId, workspace })`（`activation/runtime.ts`）。它校验 `amos-unified-rule-catalog` v2 摘要及项目/工作区身份绑定，返回不可变的 `ActivationRuntime`，同时提供 `runtime.execution('runtime')` 执行投影与 `runtime.injectorSession(now)` 注入会话。
 
-在浏览器打开服务输出的 `http://127.0.0.1:4310`（请使用 `127.0.0.1` 以保留 Host/Origin 校验）。在本机编辑器打开服务提示的 `${XDG_STATE_HOME:-$HOME/.local/state}/amos-governance/human.token` 粘贴登录（切勿将令牌发到聊天、URL 或日志）。同一状态目录只允许一个服务实例；Tauri 会复用健康的已有控制台服务，关闭窗口不会停止该实例。创建项目、导入或编辑规则、提交提案并人工批准发布后，控制台会将 P1 快照原子写入 `<workspace>/.pi/activation.json`。完整参数与备份说明见 [本地治理控制台](docs/local-governance.md) 与 [前端说明](web/README.md)。
+### 2. 将工具事件归一化为封闭 Action Envelope
 
-### 2. 接入 Pi / OpenCode V2
+在工具真正执行前，把 Harness 原生工具参数转换为封闭的三字段动作 `{ tool, operation, target }`（参考 `adapters/pi/normalize.ts` 与 `adapters/opencode-v2/normalize.ts`）：
 
-- **Pi 管理门禁路径（显式 opt-in）**：按 [配置迁移与受管启动](docs/configuration-one-shot.md) 配置 `.pi/amos.json`（设置 `managed.enabled: true` 并指向 `.pi/activation.json`）。Pi 会话启动时加载快照并写入回执：v2 投影使用 `.pi/runtime.pi.json`，旧投影使用 `.pi/runtime.json`；工具执行前进行 `deny`/`confirm`/`allow` 裁决与 `<amos-guidance>` 动态注入。
-- **默认 `log-only` 观察路径**：根目录 `opencode.jsonc` 已配置好插件，执行 `npm run build` 后在项目根目录启动 OpenCode V2 即可把安全裁决写入 `spike/logs/opencode.jsonl`。默认 Pi 接入见 [Pi 适配器说明](docs/pi-adapter.md)，工程工作流门、Jev 配置及各 harness 的真实限制见 [工作流硬门](docs/workflow-gate.md)。
+- 将动作映射到统一词表：`file_read`、`file_write`、`file_search`、`file_list`（若宿主中介目录创建与删除，可含 `file_mkdir` / `file_delete`）。
+- 文件 `target` 规范化为工作区上下文下的词法绝对路径；**绝不**将文件内容、Shell 命令原文、URL secret 值或原始提示词放进 Action Envelope 或审计日志。
+- 对不支持的工具、不可解析的 Shell（`shell_input`）或畸形参数，在 `log-only` 模式下显式写出覆盖缺口记录（`not_evaluated`、`unknown_payload` 或 `parse_error`），在 `managed` 模式下直接阻断——绝不把“未评估”当成隐式 `allow`。
 
-### 3. 生成人工审核工作表
+### 3. 接入执行前策略评估与 Managed Gate
 
-```bash
-npm run audit:review -- \
-  --rules constraints/rules.yaml \
-  --log spike/logs/opencode.jsonl \
-  --output spike/review/new-review.md
-```
+- **`log-only` 模式**：取 `runtime.execution('runtime').rules` 调用纯函数 `evaluatePolicy(action, rules, { now })`（`engine/engine.ts`）或共享观察记录器（`adapters/shared/log-only.ts`），把脱敏裁决追加写入 JSONL 审计日志，不中断工具调用。
+- **`managed` 模式**：使用 `createHarnessGate`（`managed/harness.ts`）创建门禁实例，传入已验证的 `ActivationRuntime`、位于工作区外的 `auditPath`、当前会话捕获的用户需求状态（`decision/requirement-registry.ts`）以及 Jev 语义审查器（`createJevSemanticReviewer`，位于 `review/jev-reviewer.ts`）：
+  - **工具执行前钩子（pre-tool hook）**：调用 `const decision = await gate.preCall({ callId, action })`。
+    - `deny`（以及任何引擎、快照或需求状态异常）在副作用发生前返回 `{ action: 'block' }`。
+    - `confirm` 先停住执行，构造最小有界投影（`tool`、`operation`、工作区相对 `target`、命中规则 ID、需求摘要）交给 Jev 审查器，按 `ReviewerPolicy` 与当前需求版本号核验通过后签发并立即消费一次性 HMAC grant，才返回 `{ action: 'allow' }`。
+    - `allow` 先将授权记录持久化到 journal（`host/journal.ts`），再返回 `{ action: 'allow' }`。
+  - **工具执行后钩子（post-tool hook）**：调用 `gate.recordResult(callId, 'executed' | 'failed' | 'cancelled')`，在 journal 中将每次获准调用与实际执行结果配对。
+  - **用户输入钩子（user-prompt hook）**：仅从受信的用户输入通道捕获人类要求并写入版本化 `RequirementRegistry`（`decision/requirement-registry.ts`），绝不从工具输出或模型文本采信；需求更新会递增版本号，使旧审查结果与未消费的 grant 自动失效。
 
-*(注：`--output` 必须指向尚不存在的新文件，防止覆盖已有的人工审核结论。)*
+### 4. 注入按会话固定的 `<amos-guidance>` 工程规范
+
+当 `harness.advisoryInjection` 开启时，为每个 Harness 会话创建一个注入器实例 `const injector = runtime.injectorSession(now)`（`activation/injector.ts`、`injector/session.ts`）：
+
+- **用户轮次**：按提示词词元、任务标签与路径提示筛选已激活规范，在字符预算内渲染 XML 转义的 `<amos-guidance policy="..." digest="..." mode="advisory">` 块并附加到系统提示词或当前轮上下文；仅在宿主确认发出后调用 `commit` 记录会话去重。
+- **写/改文件调用**：根据目标路径推导代码区域，在工具结果或下一轮上下文中附加匹配的区域规范。
+- **保持零干扰不变量**：advisory 的排序、路由与字符预算截断绝不能过滤 `runtime.execution('runtime')` 中的硬规则，也不能改变任何门禁裁决；注入异常只丢弃建议块，不影响门禁与审计。
+
+### 5. 写出运行期回执并注册 Harness 探测
+
+- **运行期回执（`<workspace>/.pi/runtime.<harness>.json`）**：在加载快照和评估工具调用时，原子写入 v2 回执（`format: "amos-harness-runtime"`、`version: 2`、`projectId`、`activationDigest`、`epoch`、`policyVersion`、`configDigest`、`harness`、`mode: "enforcing" | "log-only" | "disabled"`、`loadedAt`、`lastToolAt`，格式定义见 `control-plane/runtime-status.ts`）。控制台通过该回执展示策略与配置在你的 Harness 中是否已生效（`loaded` / `stale` / `never`）。
+- **控制台探测与一键接入**：若希望在控制台 `#/harnesses` 页面展示你的 Harness 并支持一键安装插件，可在 `control-plane/harness-discovery.ts` 中注册命令探测与插件标记检查，并在 `control-plane/harness-plugin-install.ts` 中添加幂等的用户级配置写入器。
 
 ---
 
-## 协作规范与延伸文档
+## 文档索引
 
-- **分支与权限**：日常开发请使用 `feat/`、`fix/`、`docs/`、`chore/`、`refactor/`、`test/` 或 `ci/` 分支。分支保护、禁止强推与发布权限由 Git 服务端强制执行；安全敏感变更必须经过人工审查，**Agent 不得自我批准、合并或发布**（详见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
-
-**核心文档索引**：
-- [产品范围](docs/product-design.md) · [项目激活与双投影](docs/project-activation.md) · [实现状态](docs/product-gap-plan.md) · [MVP 交付](docs/mvp-delivery.md)
-- [本地治理控制台](docs/local-governance.md) · [前端说明](web/README.md) · [桌面应用](src-tauri/README.md) · [Harness 探测](docs/harness-discovery-usage.md)
-- [安全模型与当前状态](docs/security-model.md) · [运行期状态](docs/go-no-go.md)
-- [Supervisor 核心说明](docs/supervisor-core.md) · [工程工作流硬门与动态注入](docs/workflow-gate.md) · [Jev 语义接入说明](docs/jev-integration.md)
-- [产品与工程决策记录](docs/decisions.md) · [测试覆盖说明](docs/fixture-coverage.md)
-- [交付状态](docs/delivery-status.md) · [AC-01–22 验收矩阵](docs/acceptance-one-shot.md) · [One-shot 验证记录](docs/verification-one-shot.md) · [配置迁移与受管启动](docs/configuration-one-shot.md)
-- 安全与架构 ADR：[统一规则目录](docs/adr-unified-rule-catalog.md) · [Harness gate](docs/adr-harness-gate.md) · [来源认证](docs/adr-source-authentication.md) · [受管宿主](docs/adr-managed-file-host.md) · [review 协议](docs/adr-review-protocol.md) · [治理库](docs/adr-governance-store.md) · [CheckBinding](docs/adr-check-binding.md) · [临时收紧](docs/adr-temporary-tightening.md)
-- [OpenCode V2 接入笔记](spike/README.md) · [Pi 适配器说明](docs/pi-adapter.md)
+- **使用 Amos 与编写规则**：[本地治理控制台](docs/local-governance.md) · [前端说明](web/README.md) · [Harness 探测](docs/harness-discovery-usage.md) · [`amos-skill` 规则编写指南](https://github.com/g2nnyS/amos-skill)
+- **Agent 与 Harness 接入**：[配置迁移与受管启动](docs/configuration-one-shot.md) · [Pi 适配器说明](docs/pi-adapter.md) · [OpenCode V2 接入笔记](spike/README.md) · [工作流硬门](docs/workflow-gate.md) · [Jev 语义接入](docs/jev-integration.md)
+- **状态与安全**：[安全模型](docs/security-model.md) · [运行期状态](docs/go-no-go.md) · [产品闭环与宿主投影](docs/product-closure.md) · [实现状态](docs/product-gap-plan.md)
+- **架构与决策**：[产品范围](docs/product-design.md) · [项目激活](docs/project-activation.md) · [Harness gate ADR](docs/adr-harness-gate.md) · [决策记录](docs/decisions.md)
+- **参与贡献**：[CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---
 
 ## 许可
 
 本项目采用 [Apache License 2.0](LICENSE)。
-
----
-
-<p align="center">
-  <sub>一个策略引擎真正的价值，不只在于它会给出什么裁决，更在于它的信任边界、覆盖死角和审计链同样坦诚透明。</sub>
-</p>

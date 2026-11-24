@@ -129,8 +129,12 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | GET | `/api/proposals/:id` | Proposal |
 | POST | `/api/proposals/:id/decision` | `{decision,note,expectedDigest}` → Proposal |
 | POST | `/api/proposals/:id/withdraw` | `{}` → Proposal |
+| POST | `/api/projects/:id/import` | `{yaml}` → `{valid,issues,candidate}`；解析并校验完整 `format: amos-project-policy` 文档（保留 `injection`），不直接发布 |
 | POST | `/api/projects/:id/validate` | `{candidate}` → ValidationResult |
 | POST | `/api/projects/:id/simulate` | `{action,version?}` 或 `{action,candidate}`（未发布草稿，与 version 互斥） → 引擎观察裁决；仅在请求内求值，不保存动作原文/草稿或治理状态；执行授权仍由宿主审批流程决定 |
+| GET | `/api/projects/:id/runtime` | RuntimeStatus：按 Pi / OpenCode 读取 `.pi/runtime.<harness>.json` 与 `.pi/amos.managed.json` 状态 |
+| GET/POST | `/api/config` | 全局 Harness 默认配置（`enabled`、`mode`、`advisoryInjection`）；POST 仅 human 浏览器变更 |
+| GET/POST | `/api/projects/:id/config` | 项目级 Harness 覆盖、managed、workflowGate、tightening、rollout 配置；POST 仅 human 浏览器变更 |
 | GET | `/api/audit?projectId=&limit=&before=` | 治理事件分页 |
 | GET | `/api/audit/observations` | 启动时配置的脱敏观察日志与覆盖缺口；未配置返回 available:false |
 | GET | `/api/schema` | 固定规则 JSON Schema |
@@ -142,7 +146,7 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | POST | `/api/jev` | SaveJevSettingsInput → JevSettingsView；仅 human 浏览器变更，密钥写入私有文件且不回显 |
 | POST | `/api/jev/test` | `{}` → `{ok,model}`；仅 human 浏览器变更，用已保存密钥发起一次真实连接测试 |
 
-校验/提案也接受 `{yaml: '...', activation?}` 代替 candidate，YAML 只在服务器有界解析，必须通过同一规则校验。浏览器端是否提供对应入口以界面为准。
+校验/提案也接受 `{yaml: '...', activation?}` 代替 candidate，YAML 只在服务器有界解析，必须通过同一规则校验；但完整 `format: amos-project-policy` 文档（含 `injection`）应先调用 `POST /api/projects/:id/import` 取得 `candidate`，再传给 `/validate`、`/simulate` 或 `/proposals`（直接向 `/validate` 或 `/proposals` 传裸 `yaml` 只解析 `rules` 与 `activation`，会丢弃 `injection`）。Agent 辅助编写完整规则 YAML 的流程见 [`amos-skill`](https://github.com/g2nnyS/amos-skill)。浏览器端是否提供对应入口以界面为准。
 浏览器先 GET session 获取 CSRF，所有 POST（含登录）须精确 Origin、application/json 与 `X-CSRF-Token`；human cookie 为 HttpOnly/SameSite=Strict/host-only，有服务端有效期、退出撤销。明文 localhost 不宣称 Secure cookie。
 agent 仅使用独立 Bearer token；拒绝 cookie+bearer 混用，human token 不接受 Bearer 方式。令牌不进入 URL、日志、localStorage 或错误响应。
 只监听 127.0.0.1，严格校验唯一 Host（含实际端口），忽略转发头，不开 CORS；限制请求体、超时、登录尝试和 YAML 别名。静态路由只有固定资产，不接受任意文件路径或网络抓取。
