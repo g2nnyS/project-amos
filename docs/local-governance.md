@@ -101,7 +101,7 @@ getVersion(projectId, version): PublishedVersion
 getCurrentPolicy(projectId): PublishedVersion | null
 createRollbackProposal(projectId, version, {title, rationale, baseVersion, expiresAt}, actor): Proposal
 listAudit({projectId?, limit?, before?}): {items: GovernanceEvent[], nextCursor: number | null}
-simulate(projectId, {action, version?}): PolicyDecision
+simulate(projectId, {action, version?, candidate?}): PolicyDecision
 ```
 
 human 可创建项目、提案、审批和撤回；agent 只能读取、校验、模拟、提交提案、撤回自己的提案，不能审批或创建项目。
@@ -130,7 +130,7 @@ human 可创建项目、提案、审批和撤回；agent 只能读取、校验�
 | POST | `/api/proposals/:id/decision` | `{decision,note,expectedDigest}` → Proposal |
 | POST | `/api/proposals/:id/withdraw` | `{}` → Proposal |
 | POST | `/api/projects/:id/validate` | `{candidate}` → ValidationResult |
-| POST | `/api/projects/:id/simulate` | `{action,version?}` → 引擎观察裁决；不保存动作原文 |
+| POST | `/api/projects/:id/simulate` | `{action,version?}` 或 `{action,candidate}`（未发布草稿，与 version 互斥） → 引擎观察裁决；仅在请求内求值，不保存动作原文/草稿或治理状态；执行授权仍由宿主审批流程决定 |
 | GET | `/api/audit?projectId=&limit=&before=` | 治理事件分页 |
 | GET | `/api/audit/observations` | 启动时配置的脱敏观察日志与覆盖缺口；未配置返回 available:false |
 | GET | `/api/schema` | 固定规则 JSON Schema |

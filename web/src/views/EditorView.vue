@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { FileUp, Plus, RotateCcw, Save, CheckCircle, AlertCircle } from 'lucide-vue-next'
+import { FileUp, Plus, RotateCcw, Save, CheckCircle, AlertCircle, Play } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RuleForm from '@/components/rules/RuleForm.vue'
+import DraftSimulation from '@/components/editor/DraftSimulation.vue'
 import { activationIssues, clone, newRule, type DraftCandidate } from '@/components/rules/model'
+import { generateProposalMeta } from '@/lib/editor'
 import { api } from '@/lib/api'
 import { useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
@@ -24,14 +26,12 @@ const draft = ref<DraftCandidate | null>(null)
 const baseVersion = ref(0)
 const initial = ref('')
 const selected = ref(0)
-const title = ref('')
-const rationale = ref('')
-const expires = ref('')
 const busy = ref(false)
 const error = ref('')
 const validation = ref<ValidationResult | null>(null)
+const showSimulation = ref(false)
 
-const dirty = computed(() => !!draft.value && (JSON.stringify(draft.value) !== initial.value || !!title.value || !!rationale.value || !!expires.value))
+const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== initial.value)
 const issues = computed(() => draft.value ? activationIssues(draft.value) : [])
 const selectedRule = computed(() => draft.value?.rules[selected.value])
 let epoch = 0
@@ -41,12 +41,10 @@ function reset() {
   draft.value = null
   initial.value = ''
   selected.value = 0
-  title.value = ''
-  rationale.value = ''
-  expires.value = ''
   validation.value = null
   error.value = ''
   busy.value = false
+  showSimulation.value = false
 }
 
 watch(() => governance.activeProjectId, reset)
@@ -67,6 +65,7 @@ function install(candidate: Candidate, version: number) {
   selected.value = 0
   validation.value = null
   error.value = ''
+  showSimulation.value = false
 }
 
 async function load(source: 'current' | 'seed' | 'history') {
@@ -150,7 +149,6 @@ async function validate(): Promise<boolean> {
 async function submit() {
   if (!draft.value || !governance.activeProjectId) { error.value = t('editor.noDraft'); return }
   if (busy.value) return
-  if (!title.value.trim() || !rationale.value.trim() || !expires.value || !Number.isFinite(Date.parse(expires.value)) || Date.parse(expires.value) <= Date.now()) { error.value = t('editor.missingFields'); return }
   if (!(await validate())) return
   if (!window.confirm(t('editor.confirmSubmit'))) return
   if (!draft.value || !governance.activeProjectId) return
@@ -158,13 +156,14 @@ async function submit() {
   const project = governance.activeProjectId
   busy.value = true
   error.value = ''
+  const meta = generateProposalMeta(project, baseVersion.value, draft.value)
   let proposal: Proposal
   try {
     proposal = await api.createProposal(project, {
-      title: title.value.trim(),
-      rationale: rationale.value.trim(),
+      title: meta.title,
+      rationale: meta.rationale,
       baseVersion: baseVersion.value,
-      expiresAt: new Date(expires.value).toISOString(),
+      expiresAt: meta.expiresAt,
       candidate: clone(draft.value)
     })
   } catch {
@@ -218,6 +217,9 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
         <Button v-if="draft" variant="outline" size="sm" :disabled="busy || !!issues.length" @click="validate">
           <CheckCircle class="mr-1 size-3.5" />{{ busy ? t('common.processing') : t('editor.validate') }}
         </Button>
+        <Button v-if="draft" variant="outline" size="sm" :disabled="busy || !!issues.length" @click="showSimulation = !showSimulation">
+          <Play class="mr-1 size-3.5" />{{ showSimulation ? t('editor.hideSimulation') : t('editor.showSimulation') }}
+        </Button>
         <Button v-if="draft" size="sm" :disabled="busy || !!issues.length" @click="submit">
           <Save class="mr-1 size-3.5" />{{ busy ? t('common.processing') : t('editor.submit') }}
         </Button>
@@ -255,6 +257,8 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
           <li v-for="(issue, i) in validation.issues" :key="i" class="break-all">{{ issue.path }} · {{ issue.code }}</li>
         </ul>
       </section>
+
+      <DraftSimulation v-if="draft && showSimulation" :project-id="governance.activeProjectId" :candidate="draft" />
 
       <template v-if="draft">
         <div class="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -308,27 +312,6 @@ function toggle(id: string, field: 'includedRuleIds' | 'excludedRuleIds', checke
               </table>
             </div>
             <ul v-if="issues.length" class="space-y-1 text-destructive"><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2 class="panel-title">{{ t('editor.proposalTitle') }}</h2>
-            <span class="text-xs text-muted-foreground">{{ t('editor.baseVersion', { version: baseVersion }) }}</span>
-          </div>
-          <div class="panel-body grid gap-4 text-xs lg:grid-cols-3">
-            <label class="field lg:col-span-1">
-              <span class="field-label">{{ t('common.title') }}</span>
-              <input v-model="title" class="control" maxlength="160" />
-            </label>
-            <label class="field lg:col-span-2">
-              <span class="field-label">{{ t('common.rationale') }}</span>
-              <textarea v-model="rationale" class="control" rows="2" />
-            </label>
-            <label class="field lg:col-span-1">
-              <span class="field-label">{{ t('editor.expires') }}</span>
-              <input v-model="expires" type="datetime-local" class="control" />
-            </label>
           </div>
         </section>
       </template>

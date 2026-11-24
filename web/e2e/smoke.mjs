@@ -464,10 +464,6 @@ try {
   })
 
   await check('submit and approve a global baseline proposal', async () => {
-    await setByLabel('标题', 'E2E global baseline proposal')
-    await setByLabel('理由', 'Synthetic global baseline rationale; never an execution authorization.')
-    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('申请过期时间（本地时间）', expiry)
     await click('button', '提交审批')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
@@ -629,11 +625,35 @@ try {
     await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
+  await check('simulate draft before submission and assert editor has no request fields', async () => {
+    await click('button', '模拟草稿')
+    await waitFor(`${visible('section.panel')} && document.body.innerText.includes('工具') && document.body.innerText.includes('操作') && document.body.innerText.includes('对象')`)
+    assert.equal(await evaluate(`document.body.innerText.includes('申请信息')`), false, 'editor still shows request information section')
+    assert.equal(await evaluate(`document.querySelector('input[type="datetime-local"]')`), null, 'editor still has expiry field')
+
+    await setByLabel('工具', 'shell')
+    await setByLabel('操作', 'file_read')
+    await setByLabel('对象', workspace)
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('project-smoke-rule') && /处理结果\s*log/i.test(panel.textContent)
+    }`)
+
+    await setBySelector('.condition-grid .value-row input', 'execute')
+    await setByLabel('选择操作', 'deny')
+
+    await setByLabel('操作', 'execute')
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('project-smoke-rule') && /处理结果\s*deny/i.test(panel.textContent)
+    }`)
+    const draftNote = await evaluate(`document.body.innerText.includes('只反映当前编辑器内容，不会发布新版本')`)
+    assert.equal(draftNote, true, 'draft simulation does not show unpublished disclaimer')
+  })
+
   await check('submit immutable proposal from the editor', async () => {
-    await setByLabel('标题', 'E2E smoke proposal')
-    await setByLabel('理由', 'Synthetic smoke rationale; never an execution authorization.')
-    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('申请过期时间（本地时间）', expiry)
     await click('button', '提交审批')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
@@ -641,8 +661,8 @@ try {
 
   await check('new proposal is immediately visible in the shared proposal list', async () => {
     await click('a', '返回申请列表')
-    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
-    await click('a', 'E2E smoke proposal')
+    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('规则变更')`)
+    await click('table tbody tr:first-child td:first-child a')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
   })
 
@@ -894,9 +914,10 @@ try {
     await waitFor(`document.body.innerText.includes('版本 1')`)
     await click('button', '申请回滚到此版本')
     await waitFor(visible('[role="dialog"]'))
-    await setByLabel('理由', 'Synthetic rollback rationale.')
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"] input[type="datetime-local"]')`), null, 'rollback still has an expiry field')
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"] textarea')`), null, 'rollback still has a rationale field')
     await click('[role="dialog"] button', '提交申请')
-    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批') && document.body.innerText.includes('回滚到版本 1')`)
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
     await click('[role="alertdialog"] button', '确认')

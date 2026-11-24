@@ -280,6 +280,8 @@ export interface AuditPage {
 export interface SimulateInput {
   readonly action: unknown;
   readonly version?: number;
+  /** Unpublished candidate draft; mutually exclusive with `version`. */
+  readonly candidate?: unknown;
 }
 
 export interface PublishArtifactInput {

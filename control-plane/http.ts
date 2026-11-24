@@ -764,11 +764,14 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         if (!Object.prototype.hasOwnProperty.call(body, 'action')) {
           throw new HttpError(400, 'invalid_body');
         }
         const version = optionalVersion(body.version);
+        const hasCandidate = Object.prototype.hasOwnProperty.call(body, 'candidate');
         // The action is evaluated transiently and never logged by transport.
         sendJson(
           res,
@@ -776,6 +779,7 @@ export function createGovernanceServer(
           service.simulate(id, {
             action: body.action,
             ...(version === undefined ? {} : { version }),
+            ...(hasCandidate ? { candidate: body.candidate } : {}),
           }),
         );
         return;

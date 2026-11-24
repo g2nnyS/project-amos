@@ -27,8 +27,8 @@ Use the existing `/api/*` endpoints without adding governance/execution APIs.
 - Governance audit: actual paginated records, not mock activity.
 - Observations: actual sanitized configured-log report; when unavailable show
   exactly that, never insert sample events or ask the webpage for file paths.
-- Simulation: actual `/simulate`, published versions only; results are
-  hypothetical and never authorize tool execution.
+- Simulation: actual `/simulate` for published versions or the editor's current
+  in-memory candidate; results are hypothetical and never authorize tool execution.
 - Appearance: actual local UI preferences only. Do not create model, team,
   workflow or integration settings without a backend API.
 

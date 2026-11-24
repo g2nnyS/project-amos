@@ -914,19 +914,27 @@ class GovernanceControlPlane implements ControlPlane {
       if (input === null || typeof input !== 'object') {
         throw new DomainError('invalid_request');
       }
-      const version =
-        input.version === undefined ? project.current_version : input.version;
-      if (version === null || version === undefined) {
-        throw new DomainError('not_found');
+      if (input.candidate !== undefined && input.version !== undefined) {
+        throw new DomainError('invalid_request');
       }
-      assertVersionNumber(version);
 
-      const published = this.requireVersionRow(projectId, version);
-      const base = versionFromRow(published);
-      const effective = this.loadEffectiveActivation(project, base);
-      // Evaluate the P1 runtime projection even when no tightening is active,
-      // so current-global changes are visible to simulation.
-      const rules = effective.snapshot.enforcement.runtime.rules;
+      let rules: ProjectActivationSnapshot['enforcement']['runtime']['rules'];
+      if (input.candidate !== undefined) {
+        rules = this.compileSimulationDraft(project, input.candidate).enforcement
+          .runtime.rules;
+      } else {
+        const version =
+          input.version === undefined ? project.current_version : input.version;
+        if (version === null || version === undefined) {
+          throw new DomainError('not_found');
+        }
+        assertVersionNumber(version);
+        const base = versionFromRow(this.requireVersionRow(projectId, version));
+        // Published simulation keeps the existing global inheritance and
+        // temporary-tightening behavior.
+        rules = this.loadEffectiveActivation(project, base).snapshot.enforcement
+          .runtime.rules;
+      }
       // A legal empty runtime projection means "no matching rule"; do not ask
       // the engine to validate an empty table (which is deliberately an error).
       const decision: PolicyDecision =
@@ -940,6 +948,56 @@ class GovernanceControlPlane implements ControlPlane {
           : evaluatePolicy(input.action, rules, this.nowMs());
       return deepFreeze(decision);
     });
+  }
+
+  /**
+   * Compile an unpublished candidate draft directly from the request. The
+   * draft is transient: it is not stored, published, audited, or merged with a
+   * temporary-tightening snapshot, and it never enters the published expiry
+   * settlement path. Projects still inherit the current global layer at
+   * evaluation time.
+   */
+  private compileSimulationDraft(
+    project: ProjectRow,
+    rawCandidate: unknown,
+  ): ProjectActivationSnapshot {
+    const view = this.validationViewFor(project);
+    const compilation = validateAndCompileCandidate(
+      rawCandidate,
+      this.compileWorkspace(project),
+      this.validator,
+      view,
+    );
+    if (compilation.compiled === null) {
+      throw new DomainError('candidate_invalid');
+    }
+
+    let candidate = compilation.compiled.candidate;
+    let globalVersion: number | null = null;
+    if (!this.isGlobalProject(project)) {
+      const layer = this.globalLayer();
+      if (layer !== null) {
+        candidate = composeEffectiveCandidate(
+          layer,
+          candidate,
+          this.compositionCatalog(),
+        );
+        globalVersion = layer.version;
+      }
+    }
+
+    // Version fields are simulation-only activation metadata; no PolicySnapshot
+    // or provenance is produced for a draft that has never been published.
+    const version = project.current_version ?? 0;
+    const activated = compileProjectActivation(this.activationCatalog, {
+      projectId: project.id,
+      workspace: this.compileWorkspace(project),
+      version,
+      baseVersion: version,
+      candidate,
+      ...(globalVersion === null ? {} : { globalVersion }),
+    });
+    return activated.snapshot;
   }
 
   getGlobalConfig(): GlobalHarnessConfig {

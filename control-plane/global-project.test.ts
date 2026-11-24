@@ -227,6 +227,43 @@ test('a project without a published global layer keeps its original candidate an
   assert.equal(fixture.writes[0]?.projectId, project.id);
 });
 
+test('candidate simulation compiles global drafts and inherits the published global layer', (t) => {
+  const fixture = openService(t);
+  const read = readAction(fixture);
+  const globalDraft = makeCandidate([globalRule()]);
+
+  assert.equal(
+    fixture.cp.simulate(GLOBAL_ID, { action: read, candidate: globalDraft }).verdict,
+    'deny',
+  );
+  assert.equal(fixture.cp.getProject(GLOBAL_ID).currentVersion, null);
+  assert.deepEqual(fixture.cp.listVersions(GLOBAL_ID), []);
+  assert.deepEqual(fixture.writes, []);
+
+  publishGlobal(fixture, globalDraft);
+  const project = fixture.cp.createProject(
+    { name: 'Draft inheritance', workspace: workspaceFor(fixture, 'draft-inherit') },
+    human(),
+  );
+  publish(
+    fixture.cp,
+    fixture.clock,
+    project.id,
+    makeCandidate([localRule('local-log')]),
+  );
+  const localDraft = makeCandidate([
+    localRule('draft-write', {
+      predicate: [{ op: 'op_in', args: { operations: ['file_write'] } }],
+    }),
+  ]);
+  const inherited = fixture.cp.simulate(project.id, {
+    action: read,
+    candidate: localDraft,
+  });
+  assert.equal(inherited.verdict, 'deny');
+  assert.deepEqual(inherited.matched_rule_ids, ['global-deny']);
+});
+
 test('global edit -> proposal -> approve -> publish writes no workspace artifact and no fake event', (t) => {
   const fixture = openService(t);
   const rule = globalRule();

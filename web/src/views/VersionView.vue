@@ -8,6 +8,7 @@ import CandidateView from '@/components/governance/CandidateView.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
+import { generateRollbackProposalMeta } from '@/lib/editor'
 import { formatDate } from '@/lib/format'
 import { useGovernanceStore } from '@/stores/governance'
 import { useToast } from '@/composables/useToast'
@@ -26,9 +27,6 @@ const loading = ref(false)
 const error = ref('')
 const busy = ref(false)
 const restoreOpen = ref(false)
-const title = ref('')
-const rationale = ref('')
-const expires = ref('')
 let generation = 0
 
 async function load() {
@@ -56,11 +54,6 @@ async function load() {
 watch([() => store.activeProjectId, number], load, { immediate: true })
 
 function openRestore() {
-  title.value = t('version.restoreDefaultTitle', { version: number.value })
-  rationale.value = ''
-  const d = new Date(Date.now() + 7 * 86400000)
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  expires.value = d.toISOString().slice(0, 16)
   restoreOpen.value = true
 }
 
@@ -84,22 +77,19 @@ async function restore() {
   const project = store.activeProjectId
   const version = item.value?.version
   const ticket = generation
-  const expiry = new Date(expires.value)
   if (!project || !version || busy.value) return
-  if (!title.value.trim() || !rationale.value.trim() || !expires.value || !Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) {
-    error.value = t('version.restoreMissingFields')
-    return
-  }
   if (store.loading || store.error) { error.value = t('version.restoreProjectUnavailable'); return }
+  const baseVersion = store.policy?.version ?? 0
+  const meta = generateRollbackProposalMeta(project, baseVersion, version)
   busy.value = true
   error.value = ''
   let proposal: Proposal
   try {
     proposal = await api.restore(project, version, {
-      title: title.value.trim(),
-      rationale: rationale.value.trim(),
-      baseVersion: store.policy?.version ?? 0,
-      expiresAt: expiry.toISOString()
+      title: meta.title,
+      rationale: meta.rationale,
+      baseVersion,
+      expiresAt: meta.expiresAt
     })
   } catch (e) {
     if (ticket === generation) {
@@ -192,18 +182,6 @@ async function restore() {
           <form class="space-y-4" @submit.prevent="restore">
             <div v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</div>
             <p class="text-xs text-muted-foreground">{{ t('version.restoreBase', { version: store.policy?.version ?? 0 }) }}</p>
-            <label class="block text-xs">
-              {{ t('common.title') }}
-              <input v-model="title" required maxlength="160" class="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
-            </label>
-            <label class="block text-xs">
-              {{ t('common.rationale') }}
-              <textarea v-model="rationale" required rows="3" class="mt-1 w-full rounded-md border border-input bg-background p-2 text-sm" />
-            </label>
-            <label class="block text-xs">
-              {{ t('version.restoreExpires') }}
-              <input v-model="expires" required type="datetime-local" class="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
-            </label>
             <DialogFooter>
               <Button type="button" variant="outline" :disabled="busy" @click="restoreOpen = false">{{ t('common.cancel') }}</Button>
               <Button type="submit" :disabled="busy">{{ busy ? t('common.submitting') : t('version.restoreSubmit') }}</Button>
