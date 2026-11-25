@@ -2303,6 +2303,19 @@ class GovernanceControlPlane implements ControlPlane {
     }
     const base = this.requirePublishedVersion(project);
     const effective = base === null ? null : this.loadEffectiveActivation(project, base).snapshot;
+
+    // Collect rules to delete (present in input but set to null)
+    const rulesToDelete = new Set<string>();
+    const rawRuleStates = (input.rollout as Record<string, unknown>).ruleStates;
+    if (isPlainRecord(rawRuleStates)) {
+      for (const [ruleId, state] of Object.entries(rawRuleStates)) {
+        if (state === null) {
+          rulesToDelete.add(ruleId);
+        }
+      }
+    }
+
+    // Update or insert entries for active rules
     for (const [ruleId, state] of Object.entries(config.rollout.ruleStates)) {
       const active = effective?.activeRules.find((item) => item.id === ruleId);
       this.db
@@ -2316,6 +2329,13 @@ class GovernanceControlPlane implements ControlPlane {
              updated_by_json = excluded.updated_by_json`,
         )
         .run(project.id, ruleId, active?.version ?? 1, state, nowIso, JSON.stringify(actor));
+    }
+
+    // Delete entries for removed rules
+    for (const ruleId of rulesToDelete) {
+      this.db
+        .prepare('DELETE FROM rule_rollouts WHERE project_id = ? AND rule_id = ?')
+        .run(project.id, ruleId);
     }
   }
 

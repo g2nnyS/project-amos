@@ -1283,3 +1283,74 @@ test('rollout promotion rejects prototype-affecting rule ids before any write', 
     prototypeKeysBefore,
   );
 });
+
+
+test('human can delete a rule state by setting it to null', (t) => {
+  const { cp, clock } = createServiceFixture(t);
+  const project = createProject(cp);
+  const ruleId = 'test-rule';
+
+  // Publish a version with a rule
+  const rule = makeRule(ruleId);
+  approve(
+    cp,
+    createSimpleProposal(cp, project.id, clock, {
+      candidate: makeCandidate([rule]),
+    }),
+  );
+
+  // Set initial rollout state and threshold
+  cp.updateProjectConfig(
+    project.id,
+    {
+      rollout: {
+        ruleStates: {
+          [ruleId]: 'log_only',
+        },
+        thresholdsByRule: {
+          [ruleId]: createPromotionThresholds({
+            format: 'amos-rollout-thresholds',
+            version: 1,
+            id: 'threshold-test',
+            ruleRef: { id: ruleId, version: 1 },
+            fromStage: 'draft',
+            toStage: 'log_only',
+            minViolationCases: 1,
+            minControlCases: 1,
+            minCoverage: 1,
+            maxFalseAllowRate: 0,
+            maxFalseDenyRate: 0,
+            requiredHosts: [],
+            requiredEnvironments: [],
+            reviewer: null,
+            registeredAt: clock.now() - 1_000,
+            expiresAt: clock.now() + 3_600_000,
+          }),
+        },
+      },
+    },
+    human(),
+  );
+
+  let config = cp.getProjectConfig(project.id);
+  assert.equal(config.rollout.ruleStates[ruleId], 'log_only');
+  assert.equal(Object.hasOwn(config.rollout.thresholdsByRule, ruleId), true);
+
+  // Delete the rule state by setting it to null
+  cp.updateProjectConfig(
+    project.id,
+    {
+      rollout: {
+        ruleStates: {
+          [ruleId]: null,
+        },
+      },
+    },
+    human(),
+  );
+
+  config = cp.getProjectConfig(project.id);
+  assert.equal(Object.hasOwn(config.rollout.ruleStates, ruleId), false);
+  // Associated threshold should also be deleted
+  assert.equal(Object.hasOwn(config.rollout.thresholdsByRule, ruleId), false);
+});
