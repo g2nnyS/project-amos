@@ -1007,9 +1007,15 @@ try {
       await click('nav[aria-label="设置分区"] button', '外观与语言')
       await waitFor(visible('#pref-appearance'))
       await click('#pref-appearance button', priorLabel)
-      await waitFor(`Array.from(document.querySelectorAll('#pref-appearance button[aria-pressed="true"]')).some(button => button.textContent.includes(${q(priorLabel)}))`)
-      await waitFor(`(() => { try { return JSON.parse(localStorage.getItem('amos:console:preferences') || '{}').theme === ${q(priorTheme)} } catch { return false } })()`)
-      await waitFor(`document.documentElement.classList.contains('dark') === ${priorDark}`)
+      await waitForCall(`function (label) {
+        return Array.from(document.querySelectorAll('#pref-appearance button[aria-pressed="true"]')).some((button) => button.textContent.includes(label))
+      }`, [priorLabel])
+      await waitForCall(`function (theme) {
+        try { return JSON.parse(localStorage.getItem('amos:console:preferences') || '{}').theme === theme } catch { return false }
+      }`, [priorTheme])
+      await waitForCall(`function (dark) {
+        return document.documentElement.classList.contains('dark') === dark
+      }`, [priorDark])
       assert.equal(await evaluate(`document.documentElement.classList.contains('dark')`), priorDark, 'resolved theme was not restored')
       await nav('规则库')
       await assertGroups(unfilteredGroups, 'after theme restore')
