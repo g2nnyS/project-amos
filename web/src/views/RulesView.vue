@@ -25,7 +25,7 @@ const policyClass = ref<RulePolicyClass | ''>('')
 const onHit = ref<RuleOnHit | ''>('')
 const enforcement = ref<RuleEnforcement | ''>('')
 const expressivity = ref<RuleExpressivity | ''>('')
-const selected = ref<string | null>(null)
+const selectedRuleId = ref<string | null>(null)
 const tableContainer = ref<HTMLDivElement | null>(null)
 const lastFocused = ref<HTMLElement | null>(null)
 const matrixExpanded = ref(false)
@@ -71,7 +71,7 @@ const groups = computed(() => policyClasses.map(({ value }) => ({
   rules: filtered.value.filter(rule => rule.policy_class === value),
 })).filter(group => group.rules.length))
 
-const detail = computed(() => rules.value.find(r => r.id === selected.value) ?? null)
+const selectedRule = computed(() => rules.value.find(r => r.id === selectedRuleId.value) ?? null)
 
 function pickQuery<T extends string>(value: unknown, allowed: readonly T[]): T | '' {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? value as T : ''
@@ -87,7 +87,7 @@ function readQuery() {
   enforcement.value = pickQuery(q.enforcement, enforcements)
   expressivity.value = pickQuery(q.expressivity, expressivities.map(e => e.value))
   const id = typeof q.id === 'string' ? q.id : ''
-  selected.value = rules.value.some(r => r.id === id) ? id : null
+  selectedRuleId.value = rules.value.some(r => r.id === id) ? id : null
 }
 
 function pushQuery() {
@@ -99,23 +99,23 @@ function pushQuery() {
   if (onHit.value) query.onHit = onHit.value
   if (enforcement.value) query.enforcement = enforcement.value
   if (expressivity.value) query.expressivity = expressivity.value
-  if (selected.value && detail.value) query.id = selected.value
+  if (selectedRuleId.value && selectedRule.value) query.id = selectedRuleId.value
   void router.replace({ path: route.path, query })
 }
 
 function clearFilters() {
-  search.value = ''; dimension.value = ''; policyClass.value = ''; onHit.value = ''; enforcement.value = ''; expressivity.value = ''; selected.value = null
+  search.value = ''; dimension.value = ''; policyClass.value = ''; onHit.value = ''; enforcement.value = ''; expressivity.value = ''; selectedRuleId.value = null
   void router.replace({ path: route.path, query: {} })
 }
 
 function selectRule(rule: RuleRecord, event?: Event) {
   lastFocused.value = (event?.currentTarget as HTMLElement) ?? null
-  selected.value = rule.id
+  selectedRuleId.value = rule.id
   pushQuery()
 }
 
 function closeInspector() {
-  selected.value = null
+  selectedRuleId.value = null
   pushQuery()
   nextTick(() => {
     if (lastFocused.value && typeof lastFocused.value.focus === 'function') {
@@ -130,13 +130,13 @@ function applyMatrixFilter(filters: { dimension?: string; onHit?: RuleOnHit; exp
   dimension.value = filters.dimension ?? ''
   onHit.value = filters.onHit ?? ''
   expressivity.value = filters.expressivity ?? ''
-  selected.value = null
+  selectedRuleId.value = null
   pushQuery()
   tableContainer.value?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
 function keydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && selected.value) {
+  if (event.key === 'Escape' && selectedRuleId.value) {
     event.preventDefault()
     closeInspector()
   }
@@ -146,7 +146,7 @@ watch([() => route.query, () => governance.policy], readQuery, { immediate: true
 watch([search, dimension, policyClass, onHit, enforcement, expressivity], pushQuery)
 watch(() => governance.activeProjectId, (newId, oldId) => {
   if (oldId && oldId !== newId && route.query.id) {
-    selected.value = null
+    selectedRuleId.value = null
     void router.replace({ path: route.path, query: { ...route.query, id: undefined } })
   }
 })
@@ -209,16 +209,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
             v-for="group in groups"
             :key="group.policyClass"
             :title="group.title"
-            :policy-class="group.policyClass"
             :rules="group.rules"
             :selected-ids="selectedIds"
             :is-global="isGlobal"
-            :selected="selected"
+            :selected="selectedRuleId"
             @select="selectRule"
           />
           <p v-if="!filtered.length" class="py-8 text-center text-xs text-muted-foreground">{{ t('rules.noMatch') }}</p>
         </section>
-        <RuleInspector v-if="detail" :rule="detail" :activation="activation" :published-version="publishedVersion" @close="closeInspector" />
+        <RuleInspector v-if="selectedRule" :rule="selectedRule" :activation="activation" :published-version="publishedVersion" @close="closeInspector" />
       </div>
     </template>
   </div>

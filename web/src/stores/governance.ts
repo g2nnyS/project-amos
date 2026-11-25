@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../lib/api.js'
 import { readStoredJson, writeStoredJson, removeStored } from '../lib/storage.js'
 import { t } from '../i18n/index.js'
-import type { CreateProjectInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsView, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
+import type { CreateProjectInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsView, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
 
 const KEY = 'amos:console:activeProjectId'
 
@@ -25,13 +25,13 @@ export const useGovernanceStore = defineStore('governance', () => {
   const activeProject = computed(() => projects.value.find(p => p.id === activeProjectId.value) ?? null)
   const currentVersion = computed(() => policy.value?.version ?? activeProject.value?.currentVersion ?? null)
   let epoch = 0
-  let preferred = readStoredJson(KEY, (value): value is string => typeof value === 'string' && value.length > 0)
+  let preferredProjectId = readStoredJson(KEY, (value): value is string => typeof value === 'string' && value.length > 0)
   function resetProject() { policy.value = null; proposals.value = []; versions.value = []; runtime.value = null; config.value = null; tightenings.value = null; probes.value = []; rollouts.value = [] }
-  function clear() { epoch++; projects.value = []; activeProjectId.value = null; resetProject(); status.value = null; globalConfig.value = null; globalConfigSaving.value = false; jev.value = null; error.value = null; loading.value = false; preferred = null; removeStored(KEY); }
-  function save(id: string | null) { preferred = id; if (id) writeStoredJson(KEY, id); else removeStored(KEY); }
+  function clear() { epoch++; projects.value = []; activeProjectId.value = null; resetProject(); status.value = null; globalConfig.value = null; globalConfigSaving.value = false; jev.value = null; error.value = null; loading.value = false; preferredProjectId = null; removeStored(KEY); }
+  function rememberProjectId(id: string | null) { preferredProjectId = id; if (id) writeStoredJson(KEY, id); else removeStored(KEY); }
   async function refreshProjects() {
     const current = epoch
-    try { const result = await api.projects(); if (current !== epoch) return; projects.value = result; if (activeProjectId.value && !result.some(p => p.id === activeProjectId.value)) { activeProjectId.value = null; resetProject(); save(null) } }
+    try { const result = await api.projects(); if (current !== epoch) return; projects.value = result; if (activeProjectId.value && !result.some(p => p.id === activeProjectId.value)) { activeProjectId.value = null; resetProject(); rememberProjectId(null) } }
     catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : t('store.loadProjectsFailed'); throw e } }
   }
   async function refreshProject() {
@@ -59,7 +59,7 @@ export const useGovernanceStore = defineStore('governance', () => {
   }
   async function selectProject(id: string | null) {
     if (id !== null && !projects.value.some(p => p.id === id)) throw new Error(t('store.projectMissing'))
-    epoch++; activeProjectId.value = id; resetProject(); save(id); error.value = null; loading.value = false
+    epoch++; activeProjectId.value = id; resetProject(); rememberProjectId(id); error.value = null; loading.value = false
     await refreshProject()
   }
   async function initialize() {
@@ -68,8 +68,8 @@ export const useGovernanceStore = defineStore('governance', () => {
       const [list, runtime, global, jevView] = await Promise.all([api.projects(), api.status(), api.globalConfig().catch(() => null), api.jevSettings().catch(() => null)]); if (current !== epoch) return
       projects.value = list; status.value = runtime; globalConfig.value = global; jev.value = jevView
       const globalId = list.find(p => p.kind === 'global')?.id ?? null
-      const id = list.find(p => p.id === preferred)?.id ?? globalId ?? list[0]?.id ?? null
-      activeProjectId.value = id; save(id); resetProject(); await refreshProject()
+      const id = list.find(p => p.id === preferredProjectId)?.id ?? globalId ?? list[0]?.id ?? null
+      activeProjectId.value = id; rememberProjectId(id); resetProject(); await refreshProject()
     } catch (e) { if (current === epoch) { error.value = e instanceof Error ? e.message : t('store.initFailed'); throw e } }
     finally { if (current === epoch) loading.value = false }
   }
@@ -122,16 +122,6 @@ export const useGovernanceStore = defineStore('governance', () => {
       if (current === epoch) globalConfigSaving.value = false
     }
   }
-  async function applyTightening(templateId: string, ttlMs: number): Promise<TemporaryTighteningStatus | null> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) return null
-    const current = epoch
-    const result = await api.applyTightening(id, { templateId, ttlMs })
-    if (current !== epoch || id !== activeProjectId.value) return null
-    tightenings.value = result
-    await refreshRuntime()
-    return result
-  }
   async function expireTightenings(): Promise<TemporaryTighteningStatus | null> {
     const id = activeProjectId.value
     if (!id || isGlobalProject(activeProject.value)) return null
@@ -142,22 +132,5 @@ export const useGovernanceStore = defineStore('governance', () => {
     await refreshRuntime()
     return result
   }
-  async function refreshRollout(): Promise<void> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) { probes.value = []; rollouts.value = []; return }
-    try {
-      const [probe, roll] = await Promise.all([api.probes(id), api.rollouts(id)])
-      probes.value = probe; rollouts.value = roll
-    } catch { probes.value = []; rollouts.value = [] }
-  }
-  async function promoteRollout(ruleId: string, input: Parameters<typeof api.promoteRollout>[2]): Promise<RolloutEvaluation | null> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) return null
-    const current = epoch
-    const result = await api.promoteRollout(id, ruleId, input)
-    if (current !== epoch || id !== activeProjectId.value) return null
-    await refreshRollout()
-    return result
-  }
-  return { projects, activeProjectId, activeProject, currentVersion, policy, proposals, versions, status, runtime, config, globalConfig, globalConfigSaving, jev, tightenings, probes, rollouts, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, refreshJev, refreshRollout, createProject, updateGlobalConfig, updateProjectConfig, applyTightening, expireTightenings, promoteRollout, clear }
+  return { projects, activeProjectId, activeProject, currentVersion, policy, proposals, versions, status, runtime, config, globalConfig, globalConfigSaving, jev, tightenings, probes, rollouts, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, refreshJev, createProject, updateGlobalConfig, updateProjectConfig, expireTightenings, clear }
 })

@@ -206,12 +206,8 @@ const defaultExecFile: ExecFileLike = (file, args, options, callback) => {
   );
 };
 
-function npmExecutable(platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32' ? 'npm.cmd' : 'npm';
-}
-
 function fixedChecks(platform: NodeJS.Platform = process.platform): readonly FixedCheck[] {
-  const npm = npmExecutable(platform);
+  const npm = platform === 'win32' ? 'npm.cmd' : 'npm';
   return [
     { id: 'typecheck', argv: [npm, 'run', 'typecheck'] },
     { id: 'test', argv: [npm, 'test'] },
@@ -362,7 +358,7 @@ async function runCheck(
   check: FixedCheck,
 ): Promise<ChangeCheckResult> {
   const [file, ...args] = check.argv;
-  const raw = await runCommand(execFile, file!, args, {
+  const raw = await runCommand(execFile, file, args, {
     cwd,
     timeout: CHECK_TIMEOUT_MS,
     maxBuffer: CHECK_MAX_BUFFER_BYTES,

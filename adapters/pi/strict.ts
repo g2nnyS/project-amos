@@ -755,21 +755,17 @@ export async function createStrictPiSession(
    * native, MCP, deferred, codemode, hidden, or duplicate tool fails closed.
    */
   function assertRegistry(): void {
-    try {
-      assertExactToolSurface(requestedModelTools, captureToolSurface());
-      for (const name of FORBIDDEN_TOOL_NAMES) {
-        if (session.getToolDefinition(name) !== undefined) {
-          throw new Error(REGISTRY_CODE);
-        }
+    assertExactToolSurface(requestedModelTools, captureToolSurface());
+    for (const name of FORBIDDEN_TOOL_NAMES) {
+      if (session.getToolDefinition(name) !== undefined) {
+        throw new Error(REGISTRY_CODE);
       }
-      for (const name of requestedModelTools) {
-        const definition = session.getToolDefinition(name);
-        if (definition === undefined || definition.name !== name) {
-          throw new Error(REGISTRY_CODE);
-        }
+    }
+    for (const name of requestedModelTools) {
+      const definition = session.getToolDefinition(name);
+      if (definition === undefined || definition.name !== name) {
+        throw new Error(REGISTRY_CODE);
       }
-    } catch {
-      throw new Error(REGISTRY_CODE);
     }
   }
 

@@ -21,18 +21,18 @@ export function assertProtectedAssets(workspace: string, journal: string, protec
         return null;
       }
       if (actual !== p) throw 0;
-      const st = fs.lstatSync(p);
-      if (!st.isFile() && !st.isDirectory()) throw 0;
-      return { path: p, dev: st.dev, ino: st.ino, directory: st.isDirectory() };
+      const stats = fs.lstatSync(p);
+      if (!stats.isFile() && !stats.isDirectory()) throw 0;
+      return { path: p, dev: stats.dev, ino: stats.ino, directory: stats.isDirectory() };
     };
     const workspaceInfo = canonical(workspace);
     if (!workspaceInfo?.directory || !Array.isArray(protectedPaths) || protectedPaths.length > 1024) throw 0;
     const runtimePaths = [process.execPath, fileURLToPath(new URL('./worker.js', import.meta.url)), ...LINUX_RUNTIME_FILES];
     const runtime = runtimePaths.map(p => {
       const resolved = fs.realpathSync(p);
-      const st = fs.statSync(resolved);
-      if (!st.isFile()) throw 0;
-      return { path: resolved, dev: st.dev, ino: st.ino, directory: false };
+      const stats = fs.statSync(resolved);
+      if (!stats.isFile()) throw 0;
+      return { path: resolved, dev: stats.dev, ino: stats.ino, directory: false };
     });
     const assets = [journal, `${journal}.lock`, ...protectedPaths].map((p, i) => ({ path: p, object: canonical(p, i < 2) }));
     for (const asset of assets) {
@@ -50,9 +50,9 @@ export function assertProtectedAssets(workspace: string, journal: string, protec
         for (const name of fs.readdirSync(current)) {
           if (++count > 100_000) throw 0;
           const child = path.join(current, name);
-          const st = fs.lstatSync(child);
-          if (st.isSymbolicLink() || (!st.isFile() && !st.isDirectory()) || forbidden.has(key(st))) throw 0;
-          if (st.isDirectory()) todo.push(child);
+          const stats = fs.lstatSync(child);
+          if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory()) || forbidden.has(key(stats))) throw 0;
+          if (stats.isDirectory()) todo.push(child);
         }
       }
     };

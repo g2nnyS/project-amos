@@ -61,7 +61,7 @@ function keys(event: KeyboardEvent) {
   if (!commandOpen.value) return
   if (event.key === 'ArrowDown') { event.preventDefault(); selected.value = Math.min(selected.value + 1, results.value.length - 1) }
   if (event.key === 'ArrowUp') { event.preventDefault(); selected.value = Math.max(0, selected.value - 1) }
-  if (event.key === 'Enter' && results.value[selected.value]) { event.preventDefault(); navigate(results.value[selected.value]!.to) }
+  if (event.key === 'Enter' && results.value[selected.value]) { event.preventDefault(); navigate(results.value[selected.value].to) }
   if (event.key === 'Escape') { event.preventDefault(); commandOpen.value = false }
 }
 async function createProject() {

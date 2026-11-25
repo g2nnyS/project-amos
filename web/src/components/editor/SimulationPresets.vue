@@ -43,7 +43,7 @@ function apply(presetId: string) {
     <span class="field-label">{{ t('simulate.presets.label') }}</span>
     <div class="space-y-3">
       <div v-for="category in presetCategories" :key="category.id">
-        <span class="field-hint mb-1.5 block">{{ t(categoryLabels[category.id]!) }}</span>
+        <span class="field-hint mb-1.5 block">{{ t(categoryLabels[category.id]) }}</span>
         <div class="flex flex-wrap gap-2">
           <button
             v-for="preset in category.presets"
@@ -52,7 +52,7 @@ function apply(presetId: string) {
             class="inline-flex items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             @click="apply(preset.id)"
           >
-            {{ t(presetLabels[preset.id]!) }}
+            {{ t(presetLabels[preset.id]) }}
           </button>
         </div>
       </div>

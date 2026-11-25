@@ -107,7 +107,7 @@ optional active project ID, not entity records. Pages can use `api` for their
 own detail, pagination and mutations, then refresh shared lists as necessary.
 
 `usePreferencesStore`: `theme`, `resolvedTheme`, `sidebarCollapsed`, `compact`,
-`setTheme`, `toggleSidebar`, `setSidebarCollapsed`, `setCompact`.
+`setTheme`, `toggleSidebar`, `setCompact`.
 Use `amos:console:*` storage keys; remove analytics/date/customization/
 notification fake preferences and demo stores/data/composables.
 

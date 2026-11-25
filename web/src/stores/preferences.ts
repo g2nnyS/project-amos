@@ -23,7 +23,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   function setTheme(value: ThemePreference) { if (!['dark', 'light', 'system'].includes(value)) throw new Error(t('store.invalidTheme')); theme.value = value }
   function setLocale(value: Locale) { if (!isLocale(value)) throw new Error(t('store.invalidLocale')); chosenLocale.value = value }
   function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
-  function setSidebarCollapsed(value: boolean) { sidebarCollapsed.value = value }
   function setCompact(value: boolean) { compact.value = value }
-  return { theme, resolvedTheme, locale, sidebarCollapsed, compact, setTheme, setLocale, toggleSidebar, setSidebarCollapsed, setCompact }
+  return { theme, resolvedTheme, locale, sidebarCollapsed, compact, setTheme, setLocale, toggleSidebar, setCompact }
 })

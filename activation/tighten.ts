@@ -172,18 +172,13 @@ export function createTemporaryTighteningPublisher(
     added: readonly RuleRef[],
     removed: readonly RuleRef[],
   ): ProjectActivationSnapshot {
-    let compiled: ProjectActivationSnapshot;
-    try {
-      compiled = verifyProjectActivationSnapshot(compiler.compile({
-        ...previous.project,
-        projectConfigVersion: newProjectConfigVersion,
-        baseVersion: newBaseVersion,
-        epoch,
-        selectedRuleRefs: [...selectedRuleRefs],
-      }));
-    } catch {
-      throw new ActivationError();
-    }
+    const compiled = verifyProjectActivationSnapshot(compiler.compile({
+      ...previous.project,
+      projectConfigVersion: newProjectConfigVersion,
+      baseVersion: newBaseVersion,
+      epoch,
+      selectedRuleRefs: [...selectedRuleRefs],
+    }));
     assertAppendOnly(previous, compiled, selectedRuleRefs, added, removed, {
       projectConfigVersion: newProjectConfigVersion,
       baseVersion: newBaseVersion,

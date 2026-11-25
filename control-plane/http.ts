@@ -270,7 +270,7 @@ export function createGovernanceServer(
     const pathname = url.pathname;
 
     if (!pathname.startsWith('/api/')) {
-      await handleStatic(req, res, method, req.url?.split('?', 1)[0] ?? '');
+      await handleStatic(res, method, req.url?.split('?', 1)[0] ?? '');
       return;
     }
 
@@ -279,7 +279,6 @@ export function createGovernanceServer(
   }
 
   async function handleStatic(
-    req: IncomingMessage,
     res: ServerResponse,
     method: string,
     pathname: string,

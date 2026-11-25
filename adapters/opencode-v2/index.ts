@@ -930,7 +930,6 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       const managedRequested = managedConfig !== null || managedError;
 
       function managedRequirementRegistry(
-        directory: string,
         activation: ActivationRuntime | null,
       ): RequirementRegistry | null {
         const uid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -957,12 +956,11 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       }
 
       function captureManagedRequirement(
-        directory: string,
         sessionID: string,
         text: string,
         egress: "allowed" | "denied",
       ): void {
-        const registry = managedRequirementRegistry(directory, managedActivation);
+        const registry = managedRequirementRegistry(managedActivation);
         if (registry === null) {
           return;
         }
@@ -982,10 +980,9 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       }
 
       function revokeManagedRequirement(
-        directory: string,
         sessionID: string,
       ): void {
-        const registry = managedRequirementRegistry(directory, managedActivation);
+        const registry = managedRequirementRegistry(managedActivation);
         if (registry === null) {
           return;
         }
@@ -997,7 +994,6 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
       }
 
       function managedRequirementState(
-        directory: string,
         sessionID: string,
       ): HarnessRequirementState {
         const unavailable: HarnessRequirementState = {
@@ -1006,7 +1002,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
           version: null,
           digest: null,
         };
-        const registry = managedRequirementRegistry(directory, managedActivation);
+        const registry = managedRequirementRegistry(managedActivation);
         if (registry === null) {
           return unavailable;
         }
@@ -1077,7 +1073,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             auditPath: managedConfig.auditPath,
             sessionId: safeManagedSessionId(sessionID),
             requirement: () =>
-              managedRequirementState(config.directory, sessionID),
+              managedRequirementState(sessionID),
             review: managedReview,
             now: () => Date.now(),
           });
@@ -1244,7 +1240,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             if (sessionID !== null) {
               if (text === null) {
                 requirements.clear(sessionID);
-                revokeManagedRequirement(config.directory, sessionID);
+                revokeManagedRequirement(sessionID);
               } else {
                 try {
                   requirements.captureUserMessage(
@@ -1253,14 +1249,13 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
                     managedConfig?.requirementEgress ?? "denied",
                   );
                   captureManagedRequirement(
-                    config.directory,
                     sessionID,
                     text,
                     managedConfig?.requirementEgress ?? "denied",
                   );
                 } catch {
                   requirements.clear(sessionID);
-                  revokeManagedRequirement(config.directory, sessionID);
+                  revokeManagedRequirement(sessionID);
                 }
               }
             }
@@ -1268,7 +1263,7 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
             if (sessionID !== null) {
               if (text === null) {
                 requirements.clear(sessionID);
-                revokeManagedRequirement(config.directory, sessionID);
+                revokeManagedRequirement(sessionID);
               } else {
                 try {
                   requirements.captureUserMessage(
@@ -1277,20 +1272,19 @@ export function createOpenCodeV2Plugin(deps: WorkflowGateDeps = {}) {
                     parsedConfig.requirementEgress,
                   );
                   captureManagedRequirement(
-                    config.directory,
                     sessionID,
                     text,
                     parsedConfig.requirementEgress,
                   );
                 } catch {
                   requirements.clear(sessionID);
-                  revokeManagedRequirement(config.directory, sessionID);
+                  revokeManagedRequirement(sessionID);
                 }
               }
             }
           } else if (sessionID !== null) {
             requirements.clear(sessionID);
-            revokeManagedRequirement(config.directory, sessionID);
+            revokeManagedRequirement(sessionID);
           }
 
           const guidanceEnabled = advisoryAllowed && (

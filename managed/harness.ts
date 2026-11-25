@@ -38,7 +38,6 @@ import {
   JOURNAL_FORMAT,
   JOURNAL_VERSION,
   type AuthorizationEntry,
-  type Journal,
   type ResultEntry,
 } from '../host/journal.ts';
 

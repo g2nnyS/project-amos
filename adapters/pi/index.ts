@@ -973,20 +973,20 @@ export default function amosPiLogOnly(
       const configured = managed.config;
       let review: HarnessReviewOptions | null = null;
       if (configured.review !== null) {
-        const r = configured.review;
+        const reviewConfig = configured.review;
         // The Jev reviewer is loaded from the shared Jev config entry; a
         // failure here keeps the managed gate at `error` so every call blocks.
         try {
-          const jev = loadJevConfig(r.jevConfigPath);
+          const jev = loadJevConfig(reviewConfig.jevConfigPath);
           review = {
             reviewer: createJevManagedReviewer({
               provider: jev.assessmentProvider,
-              policy: r.policy,
-              calibration: r.calibration,
+              policy: reviewConfig.policy,
+              calibration: reviewConfig.calibration,
             }),
-            policy: r.policy,
-            ceilingDigest: r.ceilingDigest,
-            ...(r.grantTtlMs === undefined ? {} : { grantTtlMs: r.grantTtlMs }),
+            policy: reviewConfig.policy,
+            ceilingDigest: reviewConfig.ceilingDigest,
+            ...(reviewConfig.grantTtlMs === undefined ? {} : { grantTtlMs: reviewConfig.grantTtlMs }),
           };
         } catch {
           const state: ManagedGateState = {

@@ -97,17 +97,11 @@ function normalizeWorkspacePath(workspace: string): string {
   return trimmed.replace(/\/+$/, '')
 }
 
-function resolveWorkspaceBase(workspace: string | null | undefined): string {
-  if (workspace === null || workspace === undefined || workspace.trim() === '') {
-    return normalizeWorkspacePath(FALLBACK_WORKSPACE)
-  }
-  return normalizeWorkspacePath(workspace)
-}
-
 /** Resolve a target template against the project workspace.
  *  Falls back to a simulation-only absolute path when no workspace is available. */
 export function resolvePresetTarget(template: string, workspace: string | null | undefined): string {
-  const base = resolveWorkspaceBase(workspace)
+  const selectedWorkspace = workspace && workspace.trim() !== '' ? workspace : FALLBACK_WORKSPACE
+  const base = normalizeWorkspacePath(selectedWorkspace)
   if (base === '/') {
     return template.replace('{workspace}/', '/').replace('{workspace}', '/')
   }

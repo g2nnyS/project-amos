@@ -114,9 +114,9 @@ export function createLinuxFileExecutor({ workspace }: { workspace: string }): F
             const actual = Buffer.alloc(bytes.length);
             let offset = 0;
             while (offset < actual.length) {
-              const n = readSync(targetFd, actual, offset, actual.length - offset, offset);
-              if (!n) return unknown();
-              offset += n;
+              const bytesRead = readSync(targetFd, actual, offset, actual.length - offset, offset);
+              if (!bytesRead) return unknown();
+              offset += bytesRead;
             }
             if (createHash('sha256').update(actual).digest('hex') !== createHash('sha256').update(bytes).digest('hex')) return unknown();
             fsyncSync(targetFd);

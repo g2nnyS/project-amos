@@ -20,35 +20,35 @@ const integer = (x: unknown): x is number => typeof x === 'number' && Number.isS
 /** Validate copied inert evidence, never interpret it as a permit. */
 export function validateAuditEvidence(input: unknown): AuthorizationAuditEvidence {
   try {
-    const e = record(boundedCopy(input), keys);
-    if (e.format !== 'amos-authorization-evidence' || e.formatVersion !== 1 || e.checkpoint !== 'runtime' || e.tool !== 'fs' || e.operation !== 'file_write' || e.effect !== 'file_create') throw 0;
-    for (const k of ['operationIdHash','actorIdHash','projectIdHash','sessionIdHash','taskIdHash','capabilityIdHash']) if (typeof e[k] !== 'string' || !hashPattern.test(e[k] as string)) throw 0;
-    for (const k of ['snapshotDigest','parameterDigest','envelopeDigest']) if (typeof e[k] !== 'string' || !digestPattern.test(e[k] as string)) throw 0;
-    if (!hashes(e.capabilityChainIdHashes) || !hashes(e.matchedRuleIdHashes) || (e.capabilityChainIdHashes.length > 0 && e.capabilityChainIdHashes[0] !== e.capabilityIdHash)) throw 0;
-    if (typeof e.state !== 'string' || !Object.hasOwn(reasons, e.state) || typeof e.reason !== 'string' || !(AUTHORIZATION_REASONS as readonly string[]).includes(e.reason) || !reasons[e.state as AuthorizationState].includes(e.reason)) throw 0;
-    if (!integer(e.requestedBytes) || e.requestedBytes > MAX_FILE_CONTENT_BYTES) throw 0;
-    const bound = e.state === 'ALLOW' || e.state === 'AUTO_REVIEW';
-    if (bound ? (typeof e.capabilityChainDigest !== 'string' || !digestPattern.test(e.capabilityChainDigest) || !integer(e.authorityExpiresAt) || e.capabilityChainIdHashes.length === 0) : (e.capabilityChainDigest !== null || e.authorityExpiresAt !== null)) throw 0;
-    return deepFreeze(e) as unknown as AuthorizationAuditEvidence;
+    const evidence = record(boundedCopy(input), keys);
+    if (evidence.format !== 'amos-authorization-evidence' || evidence.formatVersion !== 1 || evidence.checkpoint !== 'runtime' || evidence.tool !== 'fs' || evidence.operation !== 'file_write' || evidence.effect !== 'file_create') throw 0;
+    for (const k of ['operationIdHash','actorIdHash','projectIdHash','sessionIdHash','taskIdHash','capabilityIdHash']) if (typeof evidence[k] !== 'string' || !hashPattern.test(evidence[k] as string)) throw 0;
+    for (const k of ['snapshotDigest','parameterDigest','envelopeDigest']) if (typeof evidence[k] !== 'string' || !digestPattern.test(evidence[k] as string)) throw 0;
+    if (!hashes(evidence.capabilityChainIdHashes) || !hashes(evidence.matchedRuleIdHashes) || (evidence.capabilityChainIdHashes.length > 0 && evidence.capabilityChainIdHashes[0] !== evidence.capabilityIdHash)) throw 0;
+    if (typeof evidence.state !== 'string' || !Object.hasOwn(reasons, evidence.state) || typeof evidence.reason !== 'string' || !(AUTHORIZATION_REASONS as readonly string[]).includes(evidence.reason) || !reasons[evidence.state as AuthorizationState].includes(evidence.reason)) throw 0;
+    if (!integer(evidence.requestedBytes) || evidence.requestedBytes > MAX_FILE_CONTENT_BYTES) throw 0;
+    const bound = evidence.state === 'ALLOW' || evidence.state === 'AUTO_REVIEW';
+    if (bound ? (typeof evidence.capabilityChainDigest !== 'string' || !digestPattern.test(evidence.capabilityChainDigest) || !integer(evidence.authorityExpiresAt) || evidence.capabilityChainIdHashes.length === 0) : (evidence.capabilityChainDigest !== null || evidence.authorityExpiresAt !== null)) throw 0;
+    return deepFreeze(evidence) as unknown as AuthorizationAuditEvidence;
   } catch { throw new AutonomyError(); }
 }
 
 export function buildAuditEvidence(envelope: ActionEnvelope, decision: AuthorizationDecision): AuthorizationAuditEvidence {
   try {
-    const e = boundedCopy(envelope) as unknown as ActionEnvelope;
-    const d = boundedCopy(decision) as unknown as AuthorizationDecision;
-    if (d.operationId !== e.operationId || !Array.isArray(d.capabilityChainIds) || !Array.isArray(d.matchedRuleIds) || d.capabilityChainIds.some(x => typeof x !== 'string' || !x) || d.matchedRuleIds.some(x => typeof x !== 'string' || !x)) throw 0;
-    const envelopeDigest = digest(ENVELOPE_DIGEST_DOMAIN, e);
-    const bytes = Buffer.byteLength(e.parameters.content, 'utf8');
-    if (d.binding && (d.binding.envelopeDigest !== envelopeDigest || d.binding.snapshotDigest !== e.context.snapshotDigest || d.binding.authorizedBytes !== bytes)) throw 0;
-    if ((d.state === 'ALLOW' || d.state === 'AUTO_REVIEW') !== (d.binding !== null)) throw 0;
+    const envelopeCopy = boundedCopy(envelope) as unknown as ActionEnvelope;
+    const decisionCopy = boundedCopy(decision) as unknown as AuthorizationDecision;
+    if (decisionCopy.operationId !== envelopeCopy.operationId || !Array.isArray(decisionCopy.capabilityChainIds) || !Array.isArray(decisionCopy.matchedRuleIds) || decisionCopy.capabilityChainIds.some(x => typeof x !== 'string' || !x) || decisionCopy.matchedRuleIds.some(x => typeof x !== 'string' || !x)) throw 0;
+    const envelopeDigest = digest(ENVELOPE_DIGEST_DOMAIN, envelopeCopy);
+    const bytes = Buffer.byteLength(envelopeCopy.parameters.content, 'utf8');
+    if (decisionCopy.binding && (decisionCopy.binding.envelopeDigest !== envelopeDigest || decisionCopy.binding.snapshotDigest !== envelopeCopy.context.snapshotDigest || decisionCopy.binding.authorizedBytes !== bytes)) throw 0;
+    if ((decisionCopy.state === 'ALLOW' || decisionCopy.state === 'AUTO_REVIEW') !== (decisionCopy.binding !== null)) throw 0;
     return validateAuditEvidence({
       format: 'amos-authorization-evidence', formatVersion: 1,
-      operationIdHash: auditId('operation', e.operationId), actorIdHash: auditId('actor', e.context.actorId), projectIdHash: auditId('project', e.context.projectId), sessionIdHash: auditId('session', e.context.sessionId), taskIdHash: auditId('task', e.context.taskId), capabilityIdHash: auditId('capability', e.capabilityId),
-      capabilityChainIdHashes: d.capabilityChainIds.map(x => auditId('capability', x)), capabilityChainDigest: d.binding?.capabilityChainDigest ?? null,
-      snapshotDigest: e.context.snapshotDigest, checkpoint: e.checkpoint, tool: e.action.tool, operation: e.action.operation, effect: e.parameters.effect,
-      state: d.state, reason: d.reason, matchedRuleIdHashes: d.matchedRuleIds.map(x => auditId('rule', x)), parameterDigest: digest('amos-action-parameters-v1', e.parameters), envelopeDigest,
-      requestedBytes: bytes, authorityExpiresAt: d.binding?.notAfter ?? null,
+      operationIdHash: auditId('operation', envelopeCopy.operationId), actorIdHash: auditId('actor', envelopeCopy.context.actorId), projectIdHash: auditId('project', envelopeCopy.context.projectId), sessionIdHash: auditId('session', envelopeCopy.context.sessionId), taskIdHash: auditId('task', envelopeCopy.context.taskId), capabilityIdHash: auditId('capability', envelopeCopy.capabilityId),
+      capabilityChainIdHashes: decisionCopy.capabilityChainIds.map(x => auditId('capability', x)), capabilityChainDigest: decisionCopy.binding?.capabilityChainDigest ?? null,
+      snapshotDigest: envelopeCopy.context.snapshotDigest, checkpoint: envelopeCopy.checkpoint, tool: envelopeCopy.action.tool, operation: envelopeCopy.action.operation, effect: envelopeCopy.parameters.effect,
+      state: decisionCopy.state, reason: decisionCopy.reason, matchedRuleIdHashes: decisionCopy.matchedRuleIds.map(x => auditId('rule', x)), parameterDigest: digest('amos-action-parameters-v1', envelopeCopy.parameters), envelopeDigest,
+      requestedBytes: bytes, authorityExpiresAt: decisionCopy.binding?.notAfter ?? null,
     });
   } catch { throw new AutonomyError(); }
 }

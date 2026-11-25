@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { RulePolicyClass, RuleRecord } from '@/types'
+import type { RuleRecord } from '@/types'
 import { t } from '@/i18n'
 import { effectLabel, ruleEffect } from './model'
 
 const props = defineProps<{
   title: string
-  policyClass: RulePolicyClass
   rules: RuleRecord[]
   selectedIds: ReadonlySet<string>
   isGlobal: boolean

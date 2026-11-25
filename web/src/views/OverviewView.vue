@@ -9,7 +9,7 @@ import { projectionView as describeProjection, toneClasses } from '@/components/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
-import { t } from '@/i18n'
+import { t, type MessageKey } from '@/i18n'
 import { auditEventLabel, roleLabel } from '@/i18n/labels'
 import { isGlobalProject, useGovernanceStore } from '@/stores/governance'
 import { useAuthStore } from '@/stores/auth'
@@ -102,19 +102,18 @@ type HarnessOverridePatch = {
   advisoryInjection?: boolean | null
 }
 
-async function saveHarnessOverride(patch: HarnessOverridePatch): Promise<void> {
-  if (!governance.config || !canEditConfig.value || configSaving.value) return
+async function runConfigUpdate(action: () => Promise<unknown>, fallbackKey: MessageKey): Promise<void> {
   configSaving.value = true
   configError.value = ''
-  try {
-    await governance.updateProjectConfig({
-      harness: { ...governance.config.harness, ...patch },
-    })
-  } catch (error) {
-    configError.value = error instanceof Error ? error.message : t('overview.config.saveHarnessFailed')
-  } finally {
-    configSaving.value = false
-  }
+  try { await action() }
+  catch (error) { configError.value = error instanceof Error ? error.message : t(fallbackKey) }
+  finally { configSaving.value = false }
+}
+
+async function saveHarnessOverride(patch: HarnessOverridePatch): Promise<void> {
+  const config = governance.config
+  if (!config || !canEditConfig.value || configSaving.value) return
+  await runConfigUpdate(() => governance.updateProjectConfig({ harness: { ...config.harness, ...patch } }), 'overview.config.saveHarnessFailed')
 }
 
 function setHarnessEnabled(value: unknown): void {
@@ -133,31 +132,14 @@ function setAdvisoryInjection(value: unknown): void {
 }
 
 async function setTighteningEnabled(enabled: boolean): Promise<void> {
-  if (!governance.config || configSaving.value) return
-  configSaving.value = true
-  configError.value = ''
-  try {
-    await governance.updateProjectConfig({
-      tightening: { ...governance.config.tightening, enabled },
-    })
-  } catch (error) {
-    configError.value = error instanceof Error ? error.message : t('overview.config.saveFailed')
-  } finally {
-    configSaving.value = false
-  }
+  const config = governance.config
+  if (!config || configSaving.value) return
+  await runConfigUpdate(() => governance.updateProjectConfig({ tightening: { ...config.tightening, enabled } }), 'overview.config.saveFailed')
 }
 
 async function expireTightenings(): Promise<void> {
   if (configSaving.value) return
-  configSaving.value = true
-  configError.value = ''
-  try {
-    await governance.expireTightenings()
-  } catch (error) {
-    configError.value = error instanceof Error ? error.message : t('overview.tightening.expireFailed')
-  } finally {
-    configSaving.value = false
-  }
+  await runConfigUpdate(() => governance.expireTightenings(), 'overview.tightening.expireFailed')
 }
 
 const pendingProposals = computed(() => governance.proposals.filter(p => p.status === 'pending').slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))

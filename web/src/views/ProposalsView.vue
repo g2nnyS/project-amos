@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { GitPullRequest, Plus } from 'lucide-vue-next'
+import { Plus } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -10,10 +10,11 @@ import { useGovernanceStore } from '@/stores/governance'
 import { formatDate } from '@/lib/format'
 import { t } from '@/i18n'
 import { proposalStatusLabel, proposalStatuses } from '@/i18n/labels'
+import type { ProposalStatus } from '@/types'
 
 const store = useGovernanceStore()
 const search = ref('')
-const status = ref('all')
+const status = ref<'all' | ProposalStatus>('all')
 const page = ref(1)
 
 const rows = computed(() => store.proposals
@@ -25,7 +26,6 @@ const visible = computed(() => rows.value.slice((page.value - 1) * 10, page.valu
 watch([search, status, () => store.activeProjectId], () => { page.value = 1 })
 watch(pages, n => { page.value = Math.min(page.value, n) })
 
-const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'approved', rejected: 'rejected', withdrawn: 'withdrawn', expired: 'expired' }
 </script>
 
 <template>
@@ -81,7 +81,7 @@ const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'app
                 <RouterLink :to="`/proposals/${encodeURIComponent(p.id)}`" class="font-medium underline-offset-4 hover:underline">{{ p.title }}</RouterLink>
                 <span v-if="p.status === 'pending' && p.baseVersion !== (store.policy?.version ?? 0)" class="ml-2 text-[11px] text-warning">{{ t('proposals.staleBase') }}</span>
               </td>
-              <td><StatusBadge :status="badgeStatus[p.status]" /></td>
+              <td><StatusBadge :status="p.status" /></td>
               <td>{{ p.author.id }} · {{ p.author.role }}</td>
               <td>{{ p.baseVersion }}</td>
               <td>{{ formatDate(p.createdAt) }}</td>

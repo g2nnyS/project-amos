@@ -80,24 +80,3 @@ export function removeStored(key: string): void {
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
-
-export function isBoolean(value: unknown): value is boolean {
-  return typeof value === 'boolean'
-}
-
-export function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0
-}
-
-export function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-export function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
-
-/** Exposed for tests and diagnostics; does not include stored values. */
-export function hasPersistentStorage(): boolean {
-  return browserStorage() !== null
-}
