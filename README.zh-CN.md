@@ -1,13 +1,30 @@
 <h1 align="center">Project Amos</h1>
 
 <p align="center">
-  <strong>Agent Mandate &amp; Oversight System</strong><br>
-  智能体授权与监管系统
+  <strong>Agent Mandate &amp; Oversight System · 智能体授权与监管系统</strong><br>
+  告别写到上千行却管不住模型越界的 <code>AGENTS.md</code>，也告别让你坐在屏幕前麻木狂按回车的 80 次 Approve 弹窗。
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <strong>中文</strong>
 </p>
+
+<p align="center">
+  <img src="docs/assets/amos-hero.zh-CN.svg" alt="为什么需要 Project Amos：把人类治理与运行期执行拆开" width="100%">
+</p>
+
+> **如果你在日常使用 Coding Agent 时也被“提示词管不住越界、手动点 Approve 点到麻木”困扰过，欢迎在右上角给 Project Amos 点一颗 ⭐ Star —— 你的每一次支持都能帮更多受困于此的开发者看到这个方向。**
+
+---
+
+## 为什么做 Amos？（一眼看懂区别）
+
+| 方案 | 硬性边界拦截能力 | 审批体验与吞吐 | 上下文（Token）开销 | 跨工具治理与可追溯性 |
+| --- | --- | --- | --- | --- |
+| **千行 `AGENTS.md` 软约束** | 依赖模型自觉；Debug 循环“上头”时照样越界删改文件 | 无前置拦截（出事后才发现） | 每轮对话全量挤占上下文，冲淡当前任务注意力 | 散落在各仓库的手写 Markdown |
+| **全手动 Approve 弹窗** | 依赖人眼逐条看清弹窗参数 | 连续点击几十次后陷入审批疲劳，沦为盲按回车的工具人 | 低 | 每次会话临时点击，无统一版本演进 |
+| **Codex `Approve for me` (`auto_review`)** | 内置沙箱 + 越出沙箱边界时由模型审查 | 模型代审越界请求 | 低 | 仅限 Codex 自身生态 |
+| **Project Amos** | **7 算子纯函数引擎（`deny > confirm > log > allow`）前置裁决**；`deny` 直接拦死，审查模型零越权空间 | **Jev 语义审查器强绑定当前捕获的用户需求版本摘要**，签发单次 HMAC 授权（中途改需求旧授权即刻作废） | **同源快照按当前任务路径、区域与字符预算动态注入 `<amos-guidance>`**，且零干扰硬规则 | 本地 SQLite 控制台（Web / Tauri）、不可变提案与原子发布，支持 **Pi 与 OpenCode V2** |
 
 ---
 
@@ -196,6 +213,14 @@ npm run tauri:build  # 生产构建
 - **状态与安全**：[安全模型](docs/security-model.md) · [运行期状态](docs/go-no-go.md) · [产品闭环与宿主投影](docs/product-closure.md) · [实现状态](docs/product-gap-plan.md)
 - **架构与决策**：[产品范围](docs/product-design.md) · [项目激活](docs/project-activation.md) · [Harness gate ADR](docs/adr-harness-gate.md) · [决策记录](docs/decisions.md)
 - **参与贡献**：[CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## 灵感来源与支持
+
+本项目受 Katelyn Lesse 关于多 Agent 系统工程挑战以及“Agent 授权（Authorization）仍是大片空白的问题空间”一文的启发而构建。
+
+如果 Project Amos 切中了你在日常开发中使用 Coding Agent 的痛点，请**在仓库右上角点亮一颗 ⭐ Star**，也欢迎在 Issues 中分享你的真实场景或拍砖建议。
 
 ---
 

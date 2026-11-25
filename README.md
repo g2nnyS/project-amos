@@ -2,12 +2,29 @@
 
 <p align="center">
   <strong>Agent Mandate &amp; Oversight System</strong><br>
-  Human-governed rules, deterministic pre-execution verdicts, dynamic engineering guidance, and a verifiable audit trail for AI agents
+  Stop praying your coding agent reads a 1,000-line <code>AGENTS.md</code> — and stop mashing Enter on 80 manual "Approve?" popups per session.
 </p>
 
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
 </p>
+
+<p align="center">
+  <img src="docs/assets/amos-hero.svg" alt="Why Project Amos: Separate Human Governance from Agent Execution" width="100%">
+</p>
+
+> **If you've ever felt the pain of brittle prompt rules or approval fatigue with coding agents, please consider giving Project Amos a ⭐ Star on GitHub — it helps more builders discover and stress-test this direction.**
+
+---
+
+## Why Amos? (At a glance)
+
+| Approach | Hard Boundary Enforcement | Approval Experience | Context Window Impact | Multi-Harness Governance |
+| --- | --- | --- | --- | --- |
+| **Monolithic `AGENTS.md`** | Relies on model goodwill; ignored when the agent gets tunnel vision | None (until something breaks) | Floods every turn with all rules at once | Copy-pasted markdown files across repos |
+| **Manual "Approve?" Popups** | Depends on a human reading every prompt carefully | Approval fatigue sets in; humans end up rubber-stamping Enter | Low | Per-session ad-hoc clicks |
+| **Codex `Approve for me` (`auto_review`)** | Host sandbox + model review on sandbox boundary crossings | Model reviews escalated actions | Low | Built for Codex CLI |
+| **Project Amos** | **Deterministic 7-operator engine (`deny > confirm > log > allow`) runs first**; reviewer has zero authority to lift a `deny` | **Jev semantic reviewer** adjudicates `confirm` actions **bound to the live user requirement version** + 1-shot HMAC grant | **Same snapshot dynamically injects `<amos-guidance>`** by path, area &amp; character budget | Local SQLite console (Web / Tauri), immutable proposals, works across **Pi &amp; OpenCode V2** |
 
 ---
 
@@ -196,6 +213,14 @@ When `harness.advisoryInjection` is enabled, create one injector session per har
 - **Status and safety**: [Security Model](docs/security-model.md) · [Runtime Status](docs/go-no-go.md) · [Product Closure](docs/product-closure.md) · [Implementation Status](docs/product-gap-plan.md)
 - **Architecture and decisions**: [Product Scope](docs/product-design.md) · [Project Activation](docs/project-activation.md) · [Harness Gate ADR](docs/adr-harness-gate.md) · [Decisions](docs/decisions.md)
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## Inspiration & Support
+
+Inspired by Katelyn Lesse's writing on the engineering challenges of multi-agent systems and the wide-open problem space of agent authorization.
+
+If Project Amos resonates with the challenges you face running coding agents in production or daily development, please **give the repository a ⭐ Star** and share your feedback or edge cases in Issues.
 
 ---
 

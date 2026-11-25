@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 620" width="100%" height="100%" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f17" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="amosGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.9" />
+    </linearGradient>
+    <linearGradient id="flowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="1080" height="620" rx="16" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2" />
+
+  <!-- Top Section Header -->
+  <text x="540" y="38" text-anchor="middle" fill="#94a3b8" font-size="13.5" font-weight="600" letter-spacing="1.5">为什么 CODING AGENT 需要把「人类治理」与「运行期执行」拆开？</text>
+
+  <!-- Card 1: Monolithic AGENTS.md -->
+  <g transform="translate(32, 56)">
+    <rect width="316" height="205" rx="12" fill="#161b26" stroke="#7f1d1d" stroke-width="1.5" />
+    <rect x="16" y="16" width="110" height="24" rx="6" fill="#450a0a" />
+    <text x="71" y="32" text-anchor="middle" fill="#fca5a5" font-size="11.5" font-weight="700">困境 1 · 提示词祈祷</text>
+    <text x="16" y="64" fill="#f8fafc" font-size="17" font-weight="700">千行 AGENTS.md 软约束</text>
+    <text x="16" y="86" fill="#94a3b8" font-size="12.5">“请绝对不要改 dist/ 或执行危险命令……”</text>
+
+    <line x1="16" y1="102" x2="300" y2="102" stroke="#1e293b" stroke-width="1" />
+
+    <circle cx="24" cy="126" r="4" fill="#ef4444" />
+    <text x="36" y="130" fill="#cbd5e1" font-size="12.5">每轮对话全量挤占上下文，冲淡当前任务注意力</text>
+
+    <circle cx="24" cy="154" r="4" fill="#ef4444" />
+    <text x="36" y="158" fill="#cbd5e1" font-size="12.5">完全依赖模型自觉，陷入 Debug 上头时照样越界</text>
+
+    <text x="16" y="191" fill="#f87171" font-size="12" font-weight="600">结局：红线形同虚设 + Token 持续浪费</text>
+  </g>
+
+  <!-- Card 2: Manual Approve Popups -->
+  <g transform="translate(368, 56)">
+    <rect width="316" height="205" rx="12" fill="#161b26" stroke="#78350f" stroke-width="1.5" />
+    <rect x="16" y="16" width="110" height="24" rx="6" fill="#451a03" />
+    <text x="71" y="32" text-anchor="middle" fill="#fcd34d" font-size="11.5" font-weight="700">困境 2 · 弹窗工具人</text>
+    <text x="16" y="64" fill="#f8fafc" font-size="17" font-weight="700">无穷无尽的 Approve 弹窗</text>
+    <text x="16" y="86" fill="#94a3b8" font-size="12.5">[是否允许写入文件? (y/n)] × 每会话 80 次</text>
+
+    <line x1="16" y1="102" x2="300" y2="102" stroke="#1e293b" stroke-width="1" />
+
+    <circle cx="24" cy="126" r="4" fill="#f59e0b" />
+    <text x="36" y="130" fill="#cbd5e1" font-size="12.5">每一步都停下来等人点，人变成系统吞吐瓶颈</text>
+
+    <circle cx="24" cy="154" r="4" fill="#f59e0b" />
+    <text x="36" y="158" fill="#cbd5e1" font-size="12.5">连点几十次后陷入审批疲劳，看都不看盲按回车</text>
+
+    <text x="16" y="191" fill="#fbbf24" font-size="12" font-weight="600">结局：自动化卡死 + 麻木放行失去安全意义</text>
+  </g>
+
+  <!-- Card 3: Project Amos -->
+  <g transform="translate(704, 56)">
+    <rect width="344" height="205" rx="12" fill="url(#amosGrad)" stroke="#10b981" stroke-width="2" />
+    <rect x="16" y="16" width="132" height="24" rx="6" fill="#065f46" />
+    <text x="82" y="32" text-anchor="middle" fill="#6ee7b7" font-size="11.5" font-weight="700">PROJECT AMOS 解法</text>
+    <text x="16" y="64" fill="#ffffff" font-size="17" font-weight="700">一次治理，运行期门禁 + 动态规范</text>
+    <text x="16" y="86" fill="#a7f3d0" font-size="12.5">1 份不可变项目快照 → 拦截与注入双投影</text>
+
+    <line x1="16" y1="102" x2="328" y2="102" stroke="#065f46" stroke-width="1" />
+
+    <circle cx="24" cy="124" r="4" fill="#10b981" />
+    <text x="36" y="128" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">deny</tspan> 执行前确定性硬拦截，模型无权推翻</text>
+
+    <circle cx="24" cy="149" r="4" fill="#10b981" />
+    <text x="36" y="153" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">confirm</tspan> 绑定当前需求版本，由 Jev 代我单次审批</text>
+
+    <circle cx="24" cy="174" r="4" fill="#10b981" />
+    <text x="36" y="178" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">&lt;amos-guidance&gt;</tspan> 按当前任务路径与预算按需注入</text>
+
+    <text x="16" y="196" fill="#34d399" font-size="12" font-weight="700">结果：守住硬边界 · 告别弹窗疲劳 · 省下上下文</text>
+  </g>
+
+  <!-- Divider & Bottom Architecture Flow Header -->
+  <text x="540" y="294" text-anchor="middle" fill="#94a3b8" font-size="13.5" font-weight="600" letter-spacing="1.5">AMOS 三步工作闭环（已支持 PI 与 OPENCODE V2）</text>
+
+  <!-- Bottom Flow Container -->
+  <rect x="32" y="310" width="1016" height="278" rx="14" fill="url(#flowGrad)" stroke="#334155" stroke-width="1.5" />
+
+  <!-- Step 1: Human Control Plane -->
+  <g transform="translate(52, 332)">
+    <rect width="268" height="234" rx="10" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5" />
+    <rect x="16" y="14" width="166" height="22" rx="5" fill="#0c4a6e" />
+    <text x="99" y="29" text-anchor="middle" fill="#7dd3fc" font-size="11.5" font-weight="700">1. 人类治理控制面</text>
+
+    <text x="16" y="58" fill="#f8fafc" font-size="15" font-weight="700">本地控制台 (Web / Tauri)</text>
+    <text x="16" y="80" fill="#94a3b8" font-size="12">• 多维规则构建器 &amp; YAML 导入导出</text>
+    <text x="16" y="100" fill="#94a3b8" font-size="12">• 发布前草稿模拟与正反例验证</text>
+    <text x="16" y="120" fill="#94a3b8" font-size="12">• Agent 可协助提案 (amos-skill)，</text>
+    <text x="24" y="138" fill="#7dd3fc" font-size="12" font-weight="600">审批与发布权严格归属人类</text>
+
+    <rect x="16" y="154" width="236" height="64" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1" />
+    <text x="134" y="175" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">原子写出工作区产物</text>
+    <text x="134" y="194" text-anchor="middle" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/activation.json</text>
+    <text x="134" y="210" text-anchor="middle" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/amos.managed.json</text>
+  </g>
+
+  <!-- Arrows from Step 1 to Fork -->
+  <path d="M 320 400 L 368 400" stroke="#38bdf8" stroke-width="2" fill="none" />
+  <polygon points="368,395 378,400 368,405" fill="#38bdf8" />
+  <path d="M 320 508 L 368 508" stroke="#a855f7" stroke-width="2" fill="none" />
+  <polygon points="368,503 378,508 368,513" fill="#a855f7" />
+
+  <!-- Step 2A: Pre-Call Harness Gate -->
+  <g transform="translate(380, 332)">
+    <rect width="386" height="132" rx="10" fill="#0f172a" stroke="#10b981" stroke-width="1.5" />
+    <rect x="14" y="12" width="236" height="22" rx="5" fill="#064e3b" />
+    <text x="132" y="27" text-anchor="middle" fill="#6ee7b7" font-size="11.5" font-weight="700">2A. 执行前 HARNESS 门禁 (tool_call)</text>
+
+    <text x="14" y="52" fill="#e2e8f0" font-size="12.5">归一化 <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#93c5fd">{tool, operation, target}</tspan> → 纯函数引擎：</text>
+
+    <!-- Verdict Pills -->
+    <rect x="14" y="64" width="106" height="54" rx="6" fill="#450a0a" stroke="#ef4444" stroke-width="1" />
+    <text x="67" y="82" text-anchor="middle" fill="#fca5a5" font-size="12" font-weight="700">DENY 拒绝</text>
+    <text x="67" y="98" text-anchor="middle" fill="#fecaca" font-size="10.5">执行前直接阻断</text>
+    <text x="67" y="111" text-anchor="middle" fill="#fecaca" font-size="10.5">不可被审查推翻</text>
+
+    <rect x="128" y="64" width="154" height="54" rx="6" fill="#451a03" stroke="#f59e0b" stroke-width="1" />
+    <text x="205" y="82" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="700">CONFIRM → JEV</text>
+    <text x="205" y="98" text-anchor="middle" fill="#fde68a" font-size="10.5">核验当前需求版本摘要</text>
+    <text x="205" y="111" text-anchor="middle" fill="#fde68a" font-size="10.5">+ 单次 HMAC 授权放行</text>
+
+    <rect x="290" y="64" width="82" height="54" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1" />
+    <text x="331" y="82" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="700">ALLOW</text>
+    <text x="331" y="98" text-anchor="middle" fill="#a7f3d0" font-size="10.5">先写授权账本</text>
+    <text x="331" y="111" text-anchor="middle" fill="#a7f3d0" font-size="10.5">再执行工具</text>
+  </g>
+
+  <!-- Step 2B: Dynamic Guidance Injector -->
+  <g transform="translate(380, 476)">
+    <rect width="386" height="90" rx="10" fill="#0f172a" stroke="#a855f7" stroke-width="1.5" />
+    <rect x="14" y="12" width="256" height="22" rx="5" fill="#3b0764" />
+    <text x="142" y="27" text-anchor="middle" fill="#d8b4fe" font-size="11.5" font-weight="700">2B. 工程规范动态注入器 (ADVISORY)</text>
+
+    <text x="14" y="53" fill="#e2e8f0" font-size="12">按代码区域、目标路径、任务标签与词元在字符预算内精准挑选</text>
+    <text x="14" y="73" fill="#c084fc" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">&lt;amos-guidance mode="advisory"&gt;  <tspan font-family="ui-sans-serif, sans-serif" fill="#94a3b8">（零干扰，绝不过滤硬规则）</tspan></text>
+  </g>
+
+  <!-- Arrows from Step 2 to Step 3 -->
+  <path d="M 766 400 L 802 400" stroke="#10b981" stroke-width="2" fill="none" />
+  <polygon points="802,395 812,400 802,405" fill="#10b981" />
+  <path d="M 766 520 L 802 520" stroke="#a855f7" stroke-width="2" fill="none" />
+  <polygon points="802,515 812,520 802,525" fill="#a855f7" />
+
+  <!-- Step 3: Verifiable Trail & Receipts -->
+  <g transform="translate(814, 332)">
+    <rect width="214" height="234" rx="10" fill="#0f172a" stroke="#64748b" stroke-width="1.5" />
+    <rect x="14" y="14" width="186" height="22" rx="5" fill="#1e293b" />
+    <text x="107" y="29" text-anchor="middle" fill="#cbd5e1" font-size="11.5" font-weight="700">3. 可核验审计与运行回执</text>
+
+    <text x="14" y="60" fill="#f8fafc" font-size="14" font-weight="700">脱敏 JSONL 审计账本</text>
+    <text x="14" y="80" fill="#94a3b8" font-size="11.5">• 绝不落盘文件内容与密钥</text>
+    <text x="14" y="98" fill="#94a3b8" font-size="11.5">• 未建模工具与黑盒 Shell</text>
+    <text x="22" y="114" fill="#94a3b8" font-size="11.5">显式记录覆盖缺口</text>
+
+    <line x1="14" y1="132" x2="200" y2="132" stroke="#1e293b" stroke-width="1" />
+
+    <text x="14" y="154" fill="#f8fafc" font-size="14" font-weight="700">实时运行期回执</text>
+    <text x="14" y="174" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/runtime.pi.json</text>
+    <text x="14" y="192" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/runtime.opencode.json</text>
+    <text x="14" y="214" fill="#6ee7b7" font-size="11.5" font-weight="600">状态回读: loaded | stale | never</text>
+  </g>
+</svg>
