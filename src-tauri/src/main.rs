@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Mutex;
@@ -120,10 +121,14 @@ fn find_node_on_path() -> Option<std::path::PathBuf> {
     })
 }
 
+struct ControlPlanePaths {
+    node_path: PathBuf,
+    launcher_path: PathBuf,
+    working_dir: PathBuf,
+}
+
 #[cfg(debug_assertions)]
-fn control_plane_paths(
-    _app: &AppHandle,
-) -> Result<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf), String> {
+fn control_plane_paths(_app: &AppHandle) -> Result<ControlPlanePaths, String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to get project root")?
@@ -131,13 +136,15 @@ fn control_plane_paths(
     let launcher_path = root.join("dist/control-plane/desktop-launcher.js");
     let node_path = find_node_on_path()
         .ok_or_else(|| format!("Node executable '{}' not found on PATH", NODE_BIN))?;
-    Ok((node_path, launcher_path, root))
+    Ok(ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir: root,
+    })
 }
 
 #[cfg(not(debug_assertions))]
-fn control_plane_paths(
-    app: &AppHandle,
-) -> Result<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf), String> {
+fn control_plane_paths(app: &AppHandle) -> Result<ControlPlanePaths, String> {
     #[cfg(target_os = "linux")]
     let node_path = find_node_on_path()
         .ok_or("Node.js 26 or later is required; executable 'node' was not found on PATH")?;
@@ -166,7 +173,11 @@ fn control_plane_paths(
             e
         )
     })?;
-    Ok((node_path, launcher_path, data_dir))
+    Ok(ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir: data_dir,
+    })
 }
 
 /// Spawn the desktop launcher, which either starts the CLI with a private IPC
@@ -176,7 +187,11 @@ fn spawn_control_plane(
     app: &AppHandle,
     setup_grant: &str,
 ) -> Result<(Child, ServiceMode, String), String> {
-    let (node_path, launcher_path, working_dir) = control_plane_paths(app)?;
+    let ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir,
+    } = control_plane_paths(app)?;
 
     if !node_path.is_file() {
         return Err(format!(

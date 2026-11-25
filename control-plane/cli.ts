@@ -533,8 +533,10 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
     const env = options.env ?? process.env;
     // Only the desktop's inherited private channel enables launch/native credentials.
     const desktop = typeof process.send === 'function';
-    const systemAuth = desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SYSTEM_AUTH_SECRET ?? '') && env.AMOS_SYSTEM_AUTH_LABEL
-      ? { secret: env.AMOS_SYSTEM_AUTH_SECRET!, label: env.AMOS_SYSTEM_AUTH_LABEL } : undefined;
+    const systemAuthSecret = env.AMOS_SYSTEM_AUTH_SECRET;
+    const systemAuthLabel = env.AMOS_SYSTEM_AUTH_LABEL;
+    const systemAuth = desktop && systemAuthSecret !== undefined && /^[a-f0-9]{64}$/.test(systemAuthSecret) && systemAuthLabel
+      ? { secret: systemAuthSecret, label: systemAuthLabel } : undefined;
     const setupGrant = /^[a-f0-9]{64}$/.test(options.setupGrant ?? '')
       ? options.setupGrant
       : desktop && /^[a-f0-9]{64}$/.test(env.AMOS_SETUP_GRANT ?? '') ? env.AMOS_SETUP_GRANT : undefined;

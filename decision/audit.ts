@@ -54,13 +54,13 @@ export function buildJevAssessmentAudit(
   input: JevAssessmentAuditInput,
 ): AuditAssessment {
   const deterministic = shellVerdictOr(input.shellAssessment, 'deny');
-  const final = engineVerdictOr(input.result?.verdict, deterministic);
+  const final = engineVerdictOr(input.result.verdict, deterministic);
   const requirement = projectRequirement(input.requirement);
 
   let error: AuditAssessment['error'];
-  let facts = input.result?.facts;
+  let facts = input.result.facts;
 
-  if (input.result?.error !== undefined) {
+  if (input.result.error !== undefined) {
     error = 'assessment_failed';
     facts = undefined;
   } else if (requirement === null) {
@@ -69,7 +69,7 @@ export function buildJevAssessmentAudit(
     // the same requirement, so omit them.
     facts = undefined;
   } else {
-    const boundDigest = input.result?.requirementFrameDigest;
+    const boundDigest = input.result.requirementFrameDigest;
     if (boundDigest !== undefined) {
       if (!isDigest(boundDigest) || boundDigest !== requirement.frame_digest) {
         error = 'assessment_failed';

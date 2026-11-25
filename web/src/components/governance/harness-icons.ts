@@ -2,7 +2,7 @@ const assets = import.meta.glob('../../../public/brand/*.svg', { eager: true, im
 const brandUrls: Record<string, string> = {}
 for (const [path, url] of Object.entries(assets)) {
   const name = /([^/]+)\.svg$/.exec(path)?.[1]
-  if (name) brandUrls[name] = url as string
+  if (name) brandUrls[name] = url
 }
 
 const brandFiles: Readonly<Record<string, string>> = {

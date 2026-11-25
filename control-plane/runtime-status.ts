@@ -153,7 +153,7 @@ function readHarnessObservation(
 
 function normalizeExpectation(value: PublishedVersion | RuntimeExpectation): RuntimeExpectation {
   if ('activationDigest' in value && typeof value.activationDigest === 'string') {
-    return value as RuntimeExpectation;
+    return value;
   }
   return expectationFromPublished(value as PublishedVersion);
 }

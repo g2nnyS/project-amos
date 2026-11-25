@@ -358,7 +358,7 @@ async function runCheck(
   check: FixedCheck,
 ): Promise<ChangeCheckResult> {
   const [file, ...args] = check.argv;
-  const raw = await runCommand(execFile, file!, args, {
+  const raw = await runCommand(execFile, file, args, {
     cwd,
     timeout: CHECK_TIMEOUT_MS,
     maxBuffer: CHECK_MAX_BUFFER_BYTES,
