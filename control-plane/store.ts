@@ -55,7 +55,6 @@ import type {
   RuleRolloutRecord,
   RuntimeStatus,
   SimulateInput,
-  TemporaryTighteningRecord,
   TemporaryTighteningStatus,
   UpdateProjectConfigInput,
   ValidationResult,
@@ -401,7 +400,6 @@ class GovernanceControlPlane implements ControlPlane {
         const prepared = this.prepareProposal(
           project,
           input,
-          actor,
           null,
           nowMs,
         );
@@ -833,7 +831,6 @@ class GovernanceControlPlane implements ControlPlane {
             expiresAt: input?.expiresAt,
             candidate,
           },
-          actor,
           version,
           nowMs,
         );
@@ -1746,7 +1743,6 @@ class GovernanceControlPlane implements ControlPlane {
   private prepareProposal(
     project: ProjectRow,
     input: CreateProposalInput,
-    actor: Actor,
     restoreFromVersion: number | null,
     nowMs: number,
   ): {

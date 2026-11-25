@@ -209,7 +209,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
             v-for="group in groups"
             :key="group.policyClass"
             :title="group.title"
-            :policy-class="group.policyClass"
             :rules="group.rules"
             :selected-ids="selectedIds"
             :is-global="isGlobal"

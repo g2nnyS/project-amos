@@ -1,5 +1,5 @@
-import { createInjectorSession, type InjectionBlock, type InjectorSession, type StructuralAction } from '../injector/session.ts';
-import { compileAdvisorySnapshot, type AdvisorySnapshot, type InjectionInput } from '../injector/snapshot.ts';
+import { createInjectorSession, type InjectionBlock, type StructuralAction } from '../injector/session.ts';
+import { compileAdvisorySnapshot, type InjectionInput } from '../injector/snapshot.ts';
 import { ActivationError, type ProjectActivationSnapshot, type RuleRef } from './types.ts';
 import { canonicalJson, digest } from './json.ts';
 

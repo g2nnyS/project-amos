@@ -1,4 +1,4 @@
-import type { AmosDesktopBridge, AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, EvaluateRulePromotionInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessPluginInstallPreview, HarnessPluginInstallResult, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, LoginCredentials, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, SetupVerification, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
+import type { AmosDesktopBridge, AuditPage, AuditQuery, BrowserSession, Candidate, CreateProjectInput, CreateProposalInput, CreateRollbackProposalInput, DecideProposalInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessPluginInstallPreview, HarnessPluginInstallResult, HarnessRuntimeStatus, JevSettingsInput, JevSettingsView, LoginCredentials, ObservationReport, PolicyDecision, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RuleRolloutRecord, RuntimeStatus, SetupVerification, SimulateInput, TemporaryTighteningStatus, UpdateProjectConfigInput, ValidationResult } from '../types/index.js'
 import { t } from '../i18n/index.js'
 
 export class ApiError extends Error {
@@ -135,7 +135,6 @@ export class ApiClient {
   createProject(input: CreateProjectInput): Promise<Project> { return this.json('/api/projects', 'POST', input) }
   policy(id: string): Promise<PublishedVersion | null> { return this.json(`/api/projects/${pathId(id)}/policy`) }
   seed(): Promise<Candidate> { return this.json('/api/seed') }
-  schema(): Promise<Record<string, unknown>> { return this.json('/api/schema') }
   validate(id: string, candidate: Candidate): Promise<ValidationResult> { return this.json(`/api/projects/${pathId(id)}/validate`, 'POST', { candidate }) }
   importYaml(id: string, yaml: string): Promise<{ valid: boolean; issues: ValidationResult['issues']; candidate: Candidate }> { return this.json(`/api/projects/${pathId(id)}/import`, 'POST', { yaml }) }
   runtime(id: string): Promise<HarnessRuntimeStatus> { return this.json(`/api/projects/${pathId(id)}/runtime`) }
@@ -145,11 +144,9 @@ export class ApiClient {
   saveJevSettings(input: JevSettingsInput): Promise<JevSettingsView> { return this.json('/api/jev', 'POST', input) }
   testJevSettings(): Promise<{ ok: true; model: string }> { return this.json('/api/jev/test', 'POST', {}) }
   tightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`) }
-  applyTightening(id: string, input: { templateId: string; ttlMs: number }): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten`, 'POST', input) }
   expireTightenings(id: string): Promise<TemporaryTighteningStatus> { return this.json(`/api/projects/${pathId(id)}/tighten/expire`, 'POST', {}) }
   probes(id: string): Promise<ProbeRunRecord[]> { return this.json(`/api/projects/${pathId(id)}/probes`) }
   rollouts(id: string): Promise<RuleRolloutRecord[]> { return this.json(`/api/projects/${pathId(id)}/rollout`) }
-  promoteRollout(id: string, ruleId: string, input: EvaluateRulePromotionInput): Promise<RolloutEvaluation> { return this.json(`/api/projects/${pathId(id)}/rollout/promote`, 'POST', { ruleId, ...input }) }
   proposals(id: string): Promise<Proposal[]> { return this.json(`/api/projects/${pathId(id)}/proposals`) }
   proposal(id: string): Promise<Proposal> { return this.json(`/api/proposals/${pathId(id)}`) }
   createProposal(id: string, input: CreateProposalInput): Promise<Proposal> { return this.json(`/api/projects/${pathId(id)}/proposals`, 'POST', input) }

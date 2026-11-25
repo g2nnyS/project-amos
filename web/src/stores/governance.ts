@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../lib/api.js'
 import { readStoredJson, writeStoredJson, removeStored } from '../lib/storage.js'
 import { t } from '../i18n/index.js'
-import type { CreateProjectInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsView, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RolloutEvaluation, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
+import type { CreateProjectInput, GlobalConfigUpdateResult, GlobalHarnessConfig, HarnessRuntimeStatus, JevSettingsView, ProbeRunRecord, Project, ProjectConfigView, Proposal, PublishedVersion, RuleRolloutRecord, RuntimeStatus, TemporaryTighteningStatus, UpdateProjectConfigInput } from '../types/index.js'
 
 const KEY = 'amos:console:activeProjectId'
 
@@ -122,16 +122,6 @@ export const useGovernanceStore = defineStore('governance', () => {
       if (current === epoch) globalConfigSaving.value = false
     }
   }
-  async function applyTightening(templateId: string, ttlMs: number): Promise<TemporaryTighteningStatus | null> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) return null
-    const current = epoch
-    const result = await api.applyTightening(id, { templateId, ttlMs })
-    if (current !== epoch || id !== activeProjectId.value) return null
-    tightenings.value = result
-    await refreshRuntime()
-    return result
-  }
   async function expireTightenings(): Promise<TemporaryTighteningStatus | null> {
     const id = activeProjectId.value
     if (!id || isGlobalProject(activeProject.value)) return null
@@ -142,22 +132,5 @@ export const useGovernanceStore = defineStore('governance', () => {
     await refreshRuntime()
     return result
   }
-  async function refreshRollout(): Promise<void> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) { probes.value = []; rollouts.value = []; return }
-    try {
-      const [probe, roll] = await Promise.all([api.probes(id), api.rollouts(id)])
-      probes.value = probe; rollouts.value = roll
-    } catch { probes.value = []; rollouts.value = [] }
-  }
-  async function promoteRollout(ruleId: string, input: Parameters<typeof api.promoteRollout>[2]): Promise<RolloutEvaluation | null> {
-    const id = activeProjectId.value
-    if (!id || isGlobalProject(activeProject.value)) return null
-    const current = epoch
-    const result = await api.promoteRollout(id, ruleId, input)
-    if (current !== epoch || id !== activeProjectId.value) return null
-    await refreshRollout()
-    return result
-  }
-  return { projects, activeProjectId, activeProject, currentVersion, policy, proposals, versions, status, runtime, config, globalConfig, globalConfigSaving, jev, tightenings, probes, rollouts, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, refreshJev, refreshRollout, createProject, updateGlobalConfig, updateProjectConfig, applyTightening, expireTightenings, promoteRollout, clear }
+  return { projects, activeProjectId, activeProject, currentVersion, policy, proposals, versions, status, runtime, config, globalConfig, globalConfigSaving, jev, tightenings, probes, rollouts, loading, error, initialize, refreshProjects, selectProject, refreshProject, refreshRuntime, refreshJev, createProject, updateGlobalConfig, updateProjectConfig, expireTightenings, clear }
 })

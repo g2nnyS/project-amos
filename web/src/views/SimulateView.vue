@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { FlaskConical, Play } from 'lucide-vue-next'
+import { Play } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { useGovernanceStore } from '@/stores/governance'
 import SimulationPresets from '@/components/editor/SimulationPresets.vue'
