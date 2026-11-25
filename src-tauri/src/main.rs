@@ -202,7 +202,6 @@ fn spawn_control_plane(
         .spawn()
         .map_err(|e| format!("Failed to spawn control plane launcher: {}", e))?;
 
-    // Read stdout to get the URL
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
     // The URL is the first of several startup lines. Keep draining stdout to

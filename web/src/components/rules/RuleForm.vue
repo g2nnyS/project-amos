@@ -119,7 +119,6 @@ watch(sourceDraft, () => {
         <div class="panel-body space-y-4">
           <textarea v-if="advisoryOnly" v-model="rule.narrative" aria-labelledby="rule-editor-purpose" aria-describedby="rule-editor-purpose-note" rows="3" class="control w-full" />
           <template v-else>
-            <!-- Column headers -->
             <div class="condition-header">
               <span>{{ t('ruleForm.conditionBuilder.fieldColumn') }}</span>
               <span>{{ t('ruleForm.conditionBuilder.operatorColumn') }}</span>
@@ -180,7 +179,6 @@ watch(sourceDraft, () => {
               {{ t('ruleForm.addCondition') }}
             </Button>
 
-            <!-- Expression preview -->
             <div class="rounded-md border border-border bg-muted/40 p-3">
               <div class="mb-1.5 flex items-center justify-between">
                 <span class="field-label">{{ t('ruleForm.conditionBuilder.previewLabel') }}</span>
@@ -194,7 +192,6 @@ watch(sourceDraft, () => {
         </div>
       </section>
 
-      <!-- Action -->
       <section v-if="!advisoryOnly" class="panel">
         <div class="panel-header">
           <div>
@@ -217,7 +214,6 @@ watch(sourceDraft, () => {
         </div>
       </section>
 
-      <!-- Attributes -->
       <section class="panel">
         <div class="panel-header">
           <h3 class="panel-title">{{ t('ruleForm.attributes.heading') }}</h3>
