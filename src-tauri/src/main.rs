@@ -58,7 +58,7 @@ fn desktop_bridge(service_url: &Url) -> String {
 }
 
 struct ServiceState {
-    process: Mutex<Option<Child>>,
+    launcher: Mutex<Option<Child>>,
     service_url: Url,
     /// One-use, ten-minute first-password grant. Taken by the main window.
     /// `None` when the launcher attached to an already running console, so the
@@ -77,7 +77,7 @@ enum ServiceMode {
 /// Parse the launcher's URL startup line. The owned launcher forwards the
 /// CLI's line; a reused session reports the existing console instead.
 fn classify_startup_line(line: &str) -> Option<(ServiceMode, String)> {
-    for (marker, mode) in [
+    for (marker, service_mode) in [
         ("已有控制台:", ServiceMode::Reused),
         ("本地控制台:", ServiceMode::Owned),
     ] {
@@ -93,7 +93,7 @@ fn classify_startup_line(line: &str) -> Option<(ServiceMode, String)> {
         if parsed.scheme() != "http" || parsed.host_str() != Some("127.0.0.1") {
             continue;
         }
-        return Some((mode, url.to_string()));
+        return Some((service_mode, url.to_string()));
     }
     None
 }
@@ -256,7 +256,7 @@ fn spawn_control_plane(
     let deadline = Instant::now() + URL_TIMEOUT;
     loop {
         match url_rx.recv_timeout(URL_POLL_INTERVAL) {
-            Ok((mode, url)) => return Ok((child, mode, url)),
+            Ok((service_mode, url)) => return Ok((child, service_mode, url)),
             Err(RecvTimeoutError::Disconnected) => {
                 let detail = match child.try_wait() {
                     Ok(Some(status)) => format!(" ({})", status),
@@ -349,13 +349,13 @@ fn get_setup_grant(
     if window.label() != MAIN_WINDOW {
         return Err("setup_grant_denied".to_string());
     }
-    let current = window.url().map_err(|_| "setup_grant_denied".to_string())?;
-    if !is_service_document(&current, &state.service_url) {
+    let current_url = window.url().map_err(|_| "setup_grant_denied".to_string())?;
+    if !is_service_document(&current_url, &state.service_url) {
         return Err("setup_grant_denied".to_string());
     }
     {
         let mut process = state
-            .process
+            .launcher
             .lock()
             .map_err(|_| "setup_grant_unavailable".to_string())?;
         let running = match process.as_mut() {
@@ -379,8 +379,8 @@ fn window_control_guard(window: &WebviewWindow, state: &ServiceState) -> Result<
     if window.label() != MAIN_WINDOW {
         return Err("window_control_denied".to_string());
     }
-    let current = window.url().map_err(|_| "window_control_denied".to_string())?;
-    if !is_service_document(&current, &state.service_url) {
+    let current_url = window.url().map_err(|_| "window_control_denied".to_string())?;
+    if !is_service_document(&current_url, &state.service_url) {
         return Err("window_control_denied".to_string());
     }
     Ok(())
@@ -403,12 +403,12 @@ fn toggle_main_window_maximize(
     let maximized = window
         .is_maximized()
         .map_err(|_| "window_control_failed".to_string())?;
-    let result = if maximized {
+    let toggle = if maximized {
         window.unmaximize()
     } else {
         window.maximize()
     };
-    result.map_err(|_| "window_control_failed".to_string())
+    toggle.map_err(|_| "window_control_failed".to_string())
 }
 
 #[tauri::command]
@@ -460,14 +460,14 @@ fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
             let setup_grant = generate_setup_grant()?;
-            let (child, mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
+            let (child, service_mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
             let service_url =
                 Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
 
             app.manage(ServiceState {
-                process: Mutex::new(Some(child)),
+                launcher: Mutex::new(Some(child)),
                 service_url: service_url.clone(),
-                setup_grant: Mutex::new(match mode {
+                setup_grant: Mutex::new(match service_mode {
                     ServiceMode::Owned => Some(setup_grant),
                     ServiceMode::Reused => None,
                 }),
@@ -518,7 +518,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
-            if let Ok(mut process) = app_handle.state::<ServiceState>().process.lock() {
+            if let Ok(mut process) = app_handle.state::<ServiceState>().launcher.lock() {
                 if let Some(mut child) = process.take() {
                     shutdown_launcher(&mut child);
                 }

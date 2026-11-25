@@ -20,8 +20,8 @@ const route = useRoute()
 const router = useRouter()
 const { toast } = useToast()
 
-const number = computed(() => Number(route.params.version))
-const item = ref<PublishedVersion | null>(null)
+const versionNumber = computed(() => Number(route.params.version))
+const publishedVersion = ref<PublishedVersion | null>(null)
 const rolloutRows = computed(() => store.rollouts)
 const loading = ref(false)
 const error = ref('')
@@ -32,8 +32,8 @@ let generation = 0
 async function load() {
   const ticket = ++generation
   const project = store.activeProjectId
-  const version = number.value
-  item.value = null
+  const version = versionNumber.value
+  publishedVersion.value = null
   error.value = ''
   loading.value = false
   busy.value = false
@@ -43,7 +43,7 @@ async function load() {
   loading.value = true
   try {
     const result = await api.version(project, version)
-    if (ticket === generation && result.projectId === project) item.value = result
+    if (ticket === generation && result.projectId === project) publishedVersion.value = result
   } catch (e) {
     if (ticket === generation) error.value = e instanceof Error ? e.message : t('version.loadError')
   } finally {
@@ -51,7 +51,7 @@ async function load() {
   }
 }
 
-watch([() => store.activeProjectId, number], load, { immediate: true })
+watch([() => store.activeProjectId, versionNumber], load, { immediate: true })
 
 function openRestore() {
   restoreOpen.value = true
@@ -59,7 +59,7 @@ function openRestore() {
 
 async function download(format: 'yaml' | 'json') {
   const project = store.activeProjectId
-  const version = item.value?.version
+  const version = publishedVersion.value?.version
   const ticket = generation
   if (!project || !version || busy.value) return
   busy.value = true
@@ -75,7 +75,7 @@ async function download(format: 'yaml' | 'json') {
 
 async function restore() {
   const project = store.activeProjectId
-  const version = item.value?.version
+  const version = publishedVersion.value?.version
   const ticket = generation
   if (!project || !version || busy.value) return
   if (store.loading || store.error) { error.value = t('version.restoreProjectUnavailable'); return }
@@ -119,7 +119,7 @@ async function restore() {
 
     <EmptyState v-if="!store.activeProjectId" :title="t('common.selectProject')" :description="t('version.emptyProject')" />
     <div v-else-if="loading" class="panel p-5 text-sm" role="status">{{ t('version.loading') }}</div>
-    <div v-else-if="!item" class="panel p-5 text-sm text-destructive" role="alert">{{ error || t('version.loadFailed') }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button></div>
+    <div v-else-if="!publishedVersion" class="panel p-5 text-sm text-destructive" role="alert">{{ error || t('version.loadFailed') }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button></div>
 
     <template v-else>
       <div v-if="error && !restoreOpen" class="panel p-5 text-sm text-destructive" role="alert">{{ error }}</div>
@@ -127,19 +127,19 @@ async function restore() {
       <section class="panel">
         <div class="panel-header">
           <div>
-            <h2 class="text-base font-semibold">{{ t('common.version', { version: item.version }) }}</h2>
-            <p class="panel-kicker">{{ item.previousVersion == null ? t('version.initial') : t('version.basedOn', { version: item.previousVersion }) }} · {{ t('version.ruleCount', { count: item.candidate.rules.length }) }}</p>
+            <h2 class="text-base font-semibold">{{ t('common.version', { version: publishedVersion.version }) }}</h2>
+            <p class="panel-kicker">{{ publishedVersion.previousVersion == null ? t('version.initial') : t('version.basedOn', { version: publishedVersion.previousVersion }) }} · {{ t('version.ruleCount', { count: publishedVersion.candidate.rules.length }) }}</p>
           </div>
         </div>
         <div class="panel-body grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.proposal') }}</dt><dd class="break-all font-mono">{{ item.proposalId }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.approver') }}</dt><dd>{{ item.approvedBy.id }} · {{ item.approvedBy.role }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.publishedAt') }}</dt><dd>{{ formatDate(item.createdAt) }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.candidateDigest') }}</dt><dd class="break-all font-mono">{{ item.snapshot.candidateDigest.slice(0, 16) }}…</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.proposal') }}</dt><dd class="break-all font-mono">{{ publishedVersion.proposalId }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.approver') }}</dt><dd>{{ publishedVersion.approvedBy.id }} · {{ publishedVersion.approvedBy.role }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.publishedAt') }}</dt><dd>{{ formatDate(publishedVersion.createdAt) }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.candidateDigest') }}</dt><dd class="break-all font-mono">{{ publishedVersion.snapshot.candidateDigest.slice(0, 16) }}…</dd></div>
         </div>
         <div class="panel-body border-t border-hairline text-xs">
           <p class="field-label">{{ t('version.snapshotDigest') }}</p>
-          <p class="mt-1 break-all font-mono">{{ item.snapshot.digest }}</p>
+          <p class="mt-1 break-all font-mono">{{ publishedVersion.snapshot.digest }}</p>
         </div>
         <div class="flex flex-wrap gap-2 border-t border-hairline p-4">
           <Button size="sm" variant="outline" :disabled="busy" @click="download('yaml')"><Download class="mr-1 size-3.5" />{{ t('version.downloadYaml') }}</Button>
@@ -171,12 +171,12 @@ async function restore() {
         </div>
       </section>
 
-      <CandidateView :candidate="item.candidate" />
+      <CandidateView :candidate="publishedVersion.candidate" />
 
       <Dialog v-model:open="restoreOpen">
         <DialogContent class="max-h-[90dvh] overflow-y-auto rounded-md sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{{ t('version.restoreTitle', { version: item.version }) }}</DialogTitle>
+            <DialogTitle>{{ t('version.restoreTitle', { version: publishedVersion.version }) }}</DialogTitle>
             <DialogDescription>{{ t('version.restoreDescription') }}</DialogDescription>
           </DialogHeader>
           <form class="space-y-4" @submit.prevent="restore">

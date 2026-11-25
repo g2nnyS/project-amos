@@ -22,7 +22,7 @@ const error = ref('')
 const result = ref<PolicyDecision | null>(null)
 let generation = 0
 
-function snapshot(candidate: Candidate): string {
+function fingerprint(candidate: Candidate): string {
   return JSON.stringify(candidate)
 }
 
@@ -39,12 +39,12 @@ function applyPreset(action: SimulationAction) {
   target.value = action.target
 }
 
-watch([() => props.projectId, () => snapshot(props.candidate)], invalidate, { flush: 'sync' })
+watch([() => props.projectId, () => fingerprint(props.candidate)], invalidate, { flush: 'sync' })
 
 async function run() {
   const id = props.projectId
   const current = props.candidate
-  const currentSnapshot = snapshot(current)
+  const currentFingerprint = fingerprint(current)
   const request = ++generation
   loading.value = true
   error.value = ''
@@ -55,7 +55,7 @@ async function run() {
       candidate: current,
     })
     if (generation !== request) return
-    if (snapshot(props.candidate) !== currentSnapshot) {
+    if (fingerprint(props.candidate) !== currentFingerprint) {
       error.value = t('editor.simulateChanged')
       return
     }

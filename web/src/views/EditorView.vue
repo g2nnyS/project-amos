@@ -58,7 +58,7 @@ onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 onBeforeRouteLeave(() => !dirty.value || window.confirm(t('editor.confirmLeave')))
 
-function install(candidate: Candidate, version: number) {
+function replaceDraft(candidate: Candidate, version: number) {
   draft.value = clone(candidate)
   baseVersion.value = version
   initial.value = JSON.stringify(draft.value)
@@ -78,14 +78,14 @@ async function load(source: 'current' | 'seed' | 'history') {
   try {
     if (source === 'seed') {
       const candidate = await api.seed()
-      if (run === epoch) install(candidate, governance.policy?.version ?? 0)
+      if (run === epoch) replaceDraft(candidate, governance.policy?.version ?? 0)
     } else if (source === 'history') {
       const version = Number(route.query.baseVersion)
       if (!Number.isSafeInteger(version) || version < 1) { error.value = t('editor.invalidHistory'); return }
       const policy = await api.version(project, version)
-      if (run === epoch) install(policy.candidate, governance.policy?.version ?? 0)
+      if (run === epoch) replaceDraft(policy.candidate, governance.policy?.version ?? 0)
     } else if (governance.policy) {
-      install(governance.policy.candidate, governance.policy.version)
+      replaceDraft(governance.policy.candidate, governance.policy.version)
     } else {
       error.value = t('editor.noPolicy')
     }
@@ -112,7 +112,7 @@ async function importFile(event: Event) {
     if (run !== epoch) return
     validation.value = { valid: result.valid, issues: result.issues }
     if (!result.valid) { error.value = t('editor.importInvalid'); return }
-    install(result.candidate, governance.policy?.version ?? 0)
+    replaceDraft(result.candidate, governance.policy?.version ?? 0)
     toast(t('editor.imported'), t('editor.importedNote'), 'success')
   } catch {
     if (run === epoch) error.value = t('editor.importFailed')
