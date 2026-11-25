@@ -30,7 +30,7 @@ const SETUP_GRANT_BYTES: usize = 32;
 /// top-frame checks keep the bridge out of iframes and any other document.
 fn desktop_bridge(service_url: &Url) -> String {
     let origin = service_url.origin().ascii_serialization();
-    let origin = serde_json::to_string(&origin).unwrap_or_else(|_| "\"\"".to_string());
+    let origin = serde_json::to_string(&origin).expect("serializing an origin string cannot fail");
     let native_controls = cfg!(target_os = "macos");
     format!(
         r#"(() => {{
@@ -59,7 +59,7 @@ fn desktop_bridge(service_url: &Url) -> String {
 
 struct ServiceState {
     process: Mutex<Option<Child>>,
-    service_url: String,
+    service_url: Url,
     /// One-use, ten-minute first-password grant. Taken by the main window.
     /// `None` when the launcher attached to an already running console, so the
     /// web UI falls back to human-token enrollment.
@@ -324,13 +324,7 @@ fn shutdown_launcher(child: &mut Child) {
 
 /// A navigable console document: exact loopback origin and path, no query,
 /// userinfo, or alternate scheme. The fragment is local state and is ignored.
-fn is_service_document(candidate: &Url, service_url: &str) -> bool {
-    let Ok(expected) = Url::parse(service_url) else {
-        return false;
-    };
-    if expected.scheme() != "http" || expected.host_str() != Some("127.0.0.1") {
-        return false;
-    }
+fn is_service_document(candidate: &Url, expected: &Url) -> bool {
     let (Some(expected_port), Some(candidate_port)) = (expected.port(), candidate.port()) else {
         return false;
     };
@@ -449,23 +443,17 @@ async fn pick_workspace_directory(
     let picked = receiver
         .await
         .map_err(|_| "pick_dialog_failed".to_string())?;
-    match picked {
-        None => Ok(None),
-        Some(tauri_plugin_dialog::FilePath::Path(path)) => path
-            .into_os_string()
-            .into_string()
-            .map(Some)
-            .map_err(|_| "pick_dialog_failed".to_string()),
-        Some(tauri_plugin_dialog::FilePath::Url(url)) => {
-            let path = url
-                .to_file_path()
-                .map_err(|_| "pick_dialog_failed".to_string())?;
-            path.into_os_string()
-                .into_string()
-                .map(Some)
-                .map_err(|_| "pick_dialog_failed".to_string())
-        }
-    }
+    let path = match picked {
+        None => return Ok(None),
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => path,
+        Some(tauri_plugin_dialog::FilePath::Url(url)) => url
+            .to_file_path()
+            .map_err(|_| "pick_dialog_failed".to_string())?,
+    };
+    path.into_os_string()
+        .into_string()
+        .map(Some)
+        .map_err(|_| "pick_dialog_failed".to_string())
 }
 
 fn main() {
@@ -473,6 +461,8 @@ fn main() {
         .setup(|app| {
             let setup_grant = generate_setup_grant()?;
             let (child, mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
+            let service_url =
+                Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
 
             app.manage(ServiceState {
                 process: Mutex::new(Some(child)),
@@ -483,16 +473,15 @@ fn main() {
                 }),
             });
 
-            let window_url =
-                Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
-            let bridge = desktop_bridge(&window_url);
+            let bridge = desktop_bridge(&service_url);
+            let navigation_url = service_url.clone();
 
-            let mut builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(window_url))
+            let mut builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(service_url))
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(960.0, 640.0)
                 .resizable(true)
                 .initialization_script(bridge)
-                .on_navigation(move |url| is_service_document(url, &service_url))
+                .on_navigation(move |url| is_service_document(url, &navigation_url))
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
 
             // Frameless window. macOS overlays the native close/minimize/zoom

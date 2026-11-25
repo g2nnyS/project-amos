@@ -58,8 +58,11 @@ export class ApiClient {
   }
   private async json<T>(path: string, method: 'GET' | 'POST' = 'GET', body?: unknown, epoch = this.generation): Promise<T> {
     const response = await this.request(path, method, body, epoch)
-    try { const result = await response.json() as T; if (epoch !== this.generation) throw stale(); return result }
-    catch (error) { if (error instanceof ApiError) throw error; throw new ApiError('invalid_response', t('api.invalidResponse')) }
+    let result: T
+    try { result = await response.json() as T }
+    catch { throw new ApiError('invalid_response', t('api.invalidResponse')) }
+    if (epoch !== this.generation) throw stale()
+    return result
   }
   private async getSession(epoch: number): Promise<BrowserSession> {
     const session = await this.json<BrowserSession>('/api/session', 'GET', undefined, epoch)
