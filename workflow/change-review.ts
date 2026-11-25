@@ -206,12 +206,8 @@ const defaultExecFile: ExecFileLike = (file, args, options, callback) => {
   );
 };
 
-function npmExecutable(platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32' ? 'npm.cmd' : 'npm';
-}
-
 function fixedChecks(platform: NodeJS.Platform = process.platform): readonly FixedCheck[] {
-  const npm = npmExecutable(platform);
+  const npm = platform === 'win32' ? 'npm.cmd' : 'npm';
   return [
     { id: 'typecheck', argv: [npm, 'run', 'typecheck'] },
     { id: 'test', argv: [npm, 'test'] },

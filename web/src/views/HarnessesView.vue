@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ServerCog } from 'lucide-vue-next'
+import { Blocks, ServerCog } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { harnessBrandIcon, harnessFallbackIcon } from '@/components/governance/harness-icons'
+import { harnessBrandIcon } from '@/components/governance/harness-icons'
 import { useToast } from '@/composables/useToast'
 import { api } from '@/lib/api'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -179,7 +179,7 @@ async function confirmInstall() {
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 p-1.5">
                     <img v-if="harnessBrandIcon(h.id, preferences.resolvedTheme)" :src="harnessBrandIcon(h.id, preferences.resolvedTheme)!" alt="" class="size-full object-contain" />
-                    <component :is="harnessFallbackIcon()" v-else class="size-4" aria-hidden="true" />
+                    <component :is="Blocks" v-else class="size-4" aria-hidden="true" />
                   </span>
                   <h3 class="font-medium" :class="{ 'text-foreground': h.detected }">{{ h.name }}</h3>
                   <span
