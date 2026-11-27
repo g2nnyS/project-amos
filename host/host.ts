@@ -22,8 +22,6 @@ import {
   parseRequest,
   safeOperationId,
   type ManagedConfirmBasis,
-  type ManagedExecutionBinding,
-  type ManagedFileCapability,
   type ManagedFileHost,
   type ManagedFileTool,
   type ManagedHostOptions,

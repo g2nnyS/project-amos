@@ -399,7 +399,6 @@
   top: 10px;
 }
 
-/* Sidebar ------------------------------------------------------------------ */
 .app-sidebar {
   display: none;
   flex: 0 0 auto;
@@ -612,7 +611,6 @@
   color: hsl(var(--sidebar-accent-foreground));
 }
 
-/* Collapsed sidebar -------------------------------------------------------- */
 .app-shell[data-collapsed="true"] .sidebar-project {
   justify-items: center;
   padding: 8px 6px;
@@ -661,7 +659,6 @@
   padding: 0;
 }
 
-/* Main column and top bar -------------------------------------------------- */
 .app-main {
   display: flex;
   flex: 1 1 auto;
@@ -830,7 +827,6 @@
   }
 }
 
-/* Workspace --------------------------------------------------------------- */
 .workspace {
   flex: 1 1 auto;
   min-height: 0;

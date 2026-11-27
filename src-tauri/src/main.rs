@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Mutex;
@@ -29,7 +30,7 @@ const SETUP_GRANT_BYTES: usize = 32;
 /// top-frame checks keep the bridge out of iframes and any other document.
 fn desktop_bridge(service_url: &Url) -> String {
     let origin = service_url.origin().ascii_serialization();
-    let origin = serde_json::to_string(&origin).unwrap_or_else(|_| "\"\"".to_string());
+    let origin = serde_json::to_string(&origin).expect("serializing an origin string cannot fail");
     let native_controls = cfg!(target_os = "macos");
     format!(
         r#"(() => {{
@@ -57,8 +58,8 @@ fn desktop_bridge(service_url: &Url) -> String {
 }
 
 struct ServiceState {
-    process: Mutex<Option<Child>>,
-    service_url: String,
+    launcher: Mutex<Option<Child>>,
+    service_url: Url,
     /// One-use, ten-minute first-password grant. Taken by the main window.
     /// `None` when the launcher attached to an already running console, so the
     /// web UI falls back to human-token enrollment.
@@ -76,7 +77,7 @@ enum ServiceMode {
 /// Parse the launcher's URL startup line. The owned launcher forwards the
 /// CLI's line; a reused session reports the existing console instead.
 fn classify_startup_line(line: &str) -> Option<(ServiceMode, String)> {
-    for (marker, mode) in [
+    for (marker, service_mode) in [
         ("已有控制台:", ServiceMode::Reused),
         ("本地控制台:", ServiceMode::Owned),
     ] {
@@ -92,7 +93,7 @@ fn classify_startup_line(line: &str) -> Option<(ServiceMode, String)> {
         if parsed.scheme() != "http" || parsed.host_str() != Some("127.0.0.1") {
             continue;
         }
-        return Some((mode, url.to_string()));
+        return Some((service_mode, url.to_string()));
     }
     None
 }
@@ -120,10 +121,14 @@ fn find_node_on_path() -> Option<std::path::PathBuf> {
     })
 }
 
+struct ControlPlanePaths {
+    node_path: PathBuf,
+    launcher_path: PathBuf,
+    working_dir: PathBuf,
+}
+
 #[cfg(debug_assertions)]
-fn control_plane_paths(
-    _app: &AppHandle,
-) -> Result<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf), String> {
+fn control_plane_paths(_app: &AppHandle) -> Result<ControlPlanePaths, String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to get project root")?
@@ -131,13 +136,15 @@ fn control_plane_paths(
     let launcher_path = root.join("dist/control-plane/desktop-launcher.js");
     let node_path = find_node_on_path()
         .ok_or_else(|| format!("Node executable '{}' not found on PATH", NODE_BIN))?;
-    Ok((node_path, launcher_path, root))
+    Ok(ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir: root,
+    })
 }
 
 #[cfg(not(debug_assertions))]
-fn control_plane_paths(
-    app: &AppHandle,
-) -> Result<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf), String> {
+fn control_plane_paths(app: &AppHandle) -> Result<ControlPlanePaths, String> {
     #[cfg(target_os = "linux")]
     let node_path = find_node_on_path()
         .ok_or("Node.js 26 or later is required; executable 'node' was not found on PATH")?;
@@ -166,7 +173,11 @@ fn control_plane_paths(
             e
         )
     })?;
-    Ok((node_path, launcher_path, data_dir))
+    Ok(ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir: data_dir,
+    })
 }
 
 /// Spawn the desktop launcher, which either starts the CLI with a private IPC
@@ -176,7 +187,11 @@ fn spawn_control_plane(
     app: &AppHandle,
     setup_grant: &str,
 ) -> Result<(Child, ServiceMode, String), String> {
-    let (node_path, launcher_path, working_dir) = control_plane_paths(app)?;
+    let ControlPlanePaths {
+        node_path,
+        launcher_path,
+        working_dir,
+    } = control_plane_paths(app)?;
 
     if !node_path.is_file() {
         return Err(format!(
@@ -202,7 +217,6 @@ fn spawn_control_plane(
         .spawn()
         .map_err(|e| format!("Failed to spawn control plane launcher: {}", e))?;
 
-    // Read stdout to get the URL
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
     // The URL is the first of several startup lines. Keep draining stdout to
@@ -242,7 +256,7 @@ fn spawn_control_plane(
     let deadline = Instant::now() + URL_TIMEOUT;
     loop {
         match url_rx.recv_timeout(URL_POLL_INTERVAL) {
-            Ok((mode, url)) => return Ok((child, mode, url)),
+            Ok((service_mode, url)) => return Ok((child, service_mode, url)),
             Err(RecvTimeoutError::Disconnected) => {
                 let detail = match child.try_wait() {
                     Ok(Some(status)) => format!(" ({})", status),
@@ -310,13 +324,7 @@ fn shutdown_launcher(child: &mut Child) {
 
 /// A navigable console document: exact loopback origin and path, no query,
 /// userinfo, or alternate scheme. The fragment is local state and is ignored.
-fn is_service_document(candidate: &Url, service_url: &str) -> bool {
-    let Ok(expected) = Url::parse(service_url) else {
-        return false;
-    };
-    if expected.scheme() != "http" || expected.host_str() != Some("127.0.0.1") {
-        return false;
-    }
+fn is_service_document(candidate: &Url, expected: &Url) -> bool {
     let (Some(expected_port), Some(candidate_port)) = (expected.port(), candidate.port()) else {
         return false;
     };
@@ -341,13 +349,13 @@ fn get_setup_grant(
     if window.label() != MAIN_WINDOW {
         return Err("setup_grant_denied".to_string());
     }
-    let current = window.url().map_err(|_| "setup_grant_denied".to_string())?;
-    if !is_service_document(&current, &state.service_url) {
+    let current_url = window.url().map_err(|_| "setup_grant_denied".to_string())?;
+    if !is_service_document(&current_url, &state.service_url) {
         return Err("setup_grant_denied".to_string());
     }
     {
         let mut process = state
-            .process
+            .launcher
             .lock()
             .map_err(|_| "setup_grant_unavailable".to_string())?;
         let running = match process.as_mut() {
@@ -371,8 +379,8 @@ fn window_control_guard(window: &WebviewWindow, state: &ServiceState) -> Result<
     if window.label() != MAIN_WINDOW {
         return Err("window_control_denied".to_string());
     }
-    let current = window.url().map_err(|_| "window_control_denied".to_string())?;
-    if !is_service_document(&current, &state.service_url) {
+    let current_url = window.url().map_err(|_| "window_control_denied".to_string())?;
+    if !is_service_document(&current_url, &state.service_url) {
         return Err("window_control_denied".to_string());
     }
     Ok(())
@@ -395,12 +403,12 @@ fn toggle_main_window_maximize(
     let maximized = window
         .is_maximized()
         .map_err(|_| "window_control_failed".to_string())?;
-    let result = if maximized {
+    let toggle = if maximized {
         window.unmaximize()
     } else {
         window.maximize()
     };
-    result.map_err(|_| "window_control_failed".to_string())
+    toggle.map_err(|_| "window_control_failed".to_string())
 }
 
 #[tauri::command]
@@ -435,50 +443,45 @@ async fn pick_workspace_directory(
     let picked = receiver
         .await
         .map_err(|_| "pick_dialog_failed".to_string())?;
-    match picked {
-        None => Ok(None),
-        Some(tauri_plugin_dialog::FilePath::Path(path)) => path
-            .into_os_string()
-            .into_string()
-            .map(Some)
-            .map_err(|_| "pick_dialog_failed".to_string()),
-        Some(tauri_plugin_dialog::FilePath::Url(url)) => {
-            let path = url
-                .to_file_path()
-                .map_err(|_| "pick_dialog_failed".to_string())?;
-            path.into_os_string()
-                .into_string()
-                .map(Some)
-                .map_err(|_| "pick_dialog_failed".to_string())
-        }
-    }
+    let path = match picked {
+        None => return Ok(None),
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => path,
+        Some(tauri_plugin_dialog::FilePath::Url(url)) => url
+            .to_file_path()
+            .map_err(|_| "pick_dialog_failed".to_string())?,
+    };
+    path.into_os_string()
+        .into_string()
+        .map(Some)
+        .map_err(|_| "pick_dialog_failed".to_string())
 }
 
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
             let setup_grant = generate_setup_grant()?;
-            let (child, mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
+            let (child, service_mode, service_url) = spawn_control_plane(app.handle(), &setup_grant)?;
+            let service_url =
+                Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
 
             app.manage(ServiceState {
-                process: Mutex::new(Some(child)),
+                launcher: Mutex::new(Some(child)),
                 service_url: service_url.clone(),
-                setup_grant: Mutex::new(match mode {
+                setup_grant: Mutex::new(match service_mode {
                     ServiceMode::Owned => Some(setup_grant),
                     ServiceMode::Reused => None,
                 }),
             });
 
-            let window_url =
-                Url::parse(&service_url).map_err(|_| "Failed to parse service URL".to_string())?;
-            let bridge = desktop_bridge(&window_url);
+            let bridge = desktop_bridge(&service_url);
+            let navigation_url = service_url.clone();
 
-            let mut builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(window_url))
+            let mut builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(service_url))
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(960.0, 640.0)
                 .resizable(true)
                 .initialization_script(bridge)
-                .on_navigation(move |url| is_service_document(url, &service_url))
+                .on_navigation(move |url| is_service_document(url, &navigation_url))
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
 
             // Frameless window. macOS overlays the native close/minimize/zoom
@@ -515,7 +518,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
-            if let Ok(mut process) = app_handle.state::<ServiceState>().process.lock() {
+            if let Ok(mut process) = app_handle.state::<ServiceState>().launcher.lock() {
                 if let Some(mut child) = process.take() {
                     shutdown_launcher(&mut child);
                 }

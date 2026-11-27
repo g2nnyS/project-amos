@@ -7,7 +7,6 @@ import { createControlPlane } from './store.ts';
 import type {
   Actor,
   Candidate,
-  CandidateActivation,
   ControlPlane,
   RuleRecord,
   RuleSource,

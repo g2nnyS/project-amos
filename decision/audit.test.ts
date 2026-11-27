@@ -11,7 +11,6 @@ import { createUserLiteralGrant, userTurnDigest } from './grant.ts';
 import {
   createRequirementFrame,
   requirementFrameDigest,
-  type RequirementFrame,
 } from './requirement.ts';
 import type { AssessmentFacts } from './types.ts';
 import type { ShellAssessment } from '../workflow/shell-policy.ts';

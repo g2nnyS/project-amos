@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 620" width="100%" height="100%" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f17" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="amosGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.9" />
+    </linearGradient>
+    <linearGradient id="flowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="1080" height="620" rx="16" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2" />
+
+  <!-- Top Section Header -->
+  <text x="540" y="38" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="600" letter-spacing="1.5">WHY CODING AGENTS NEED SEPARATE GOVERNANCE &amp; EXECUTION</text>
+
+  <!-- Card 1: Monolithic AGENTS.md -->
+  <g transform="translate(32, 56)">
+    <rect width="316" height="205" rx="12" fill="#161b26" stroke="#7f1d1d" stroke-width="1.5" />
+    <rect x="16" y="16" width="94" height="24" rx="6" fill="#450a0a" />
+    <text x="63" y="32" text-anchor="middle" fill="#fca5a5" font-size="11" font-weight="700">TRAP 1 · PROMPT</text>
+    <text x="16" y="64" fill="#f8fafc" font-size="17" font-weight="700">1,000-Line AGENTS.md</text>
+    <text x="16" y="86" fill="#94a3b8" font-size="12.5">"Please never touch dist/ or run rm -rf..."</text>
+
+    <line x1="16" y1="102" x2="300" y2="102" stroke="#1e293b" stroke-width="1" />
+
+    <circle cx="24" cy="124" r="4" fill="#ef4444" />
+    <text x="36" y="128" fill="#cbd5e1" font-size="12.5">Floods context window on every turn</text>
+
+    <circle cx="24" cy="150" r="4" fill="#ef4444" />
+    <text x="36" y="154" fill="#cbd5e1" font-size="12.5">Relies on model goodwill; ignored when</text>
+    <text x="36" y="171" fill="#cbd5e1" font-size="12.5">the agent gets tunnel vision in a loop</text>
+
+    <text x="16" y="193" fill="#f87171" font-size="11.5" font-weight="600">Result: Silent rule violations &amp; wasted tokens</text>
+  </g>
+
+  <!-- Card 2: Manual Approve Popups -->
+  <g transform="translate(368, 56)">
+    <rect width="316" height="205" rx="12" fill="#161b26" stroke="#78350f" stroke-width="1.5" />
+    <rect x="16" y="16" width="108" height="24" rx="6" fill="#451a03" />
+    <text x="70" y="32" text-anchor="middle" fill="#fcd34d" font-size="11" font-weight="700">TRAP 2 · MANUAL</text>
+    <text x="16" y="64" fill="#f8fafc" font-size="17" font-weight="700">Endless "Approve?" Popups</text>
+    <text x="16" y="86" fill="#94a3b8" font-size="12.5">[Allow file write? (y/n)] × 80 per session</text>
+
+    <line x1="16" y1="102" x2="300" y2="102" stroke="#1e293b" stroke-width="1" />
+
+    <circle cx="24" cy="124" r="4" fill="#f59e0b" />
+    <text x="36" y="128" fill="#cbd5e1" font-size="12.5">Human becomes the throughput bottleneck</text>
+
+    <circle cx="24" cy="150" r="4" fill="#f59e0b" />
+    <text x="36" y="154" fill="#cbd5e1" font-size="12.5">Approval fatigue sets in after 20 clicks —</text>
+    <text x="36" y="171" fill="#cbd5e1" font-size="12.5">you end up mashing Enter blindly</text>
+
+    <text x="16" y="193" fill="#fbbf24" font-size="11.5" font-weight="600">Result: Stalled autonomy &amp; rubber-stamp security</text>
+  </g>
+
+  <!-- Card 3: Project Amos -->
+  <g transform="translate(704, 56)">
+    <rect width="344" height="205" rx="12" fill="url(#amosGrad)" stroke="#10b981" stroke-width="2" />
+    <rect x="16" y="16" width="124" height="24" rx="6" fill="#065f46" />
+    <text x="78" y="32" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">PROJECT AMOS</text>
+    <text x="16" y="64" fill="#ffffff" font-size="17" font-weight="700">Govern Once, Gate &amp; Guide Live</text>
+    <text x="16" y="86" fill="#a7f3d0" font-size="12.5">1 Immutable Snapshot → 2 Runtime Projections</text>
+
+    <line x1="16" y1="102" x2="328" y2="102" stroke="#065f46" stroke-width="1" />
+
+    <circle cx="24" cy="124" r="4" fill="#10b981" />
+    <text x="36" y="128" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">deny</tspan> blocks deterministically before execution</text>
+
+    <circle cx="24" cy="150" r="4" fill="#10b981" />
+    <text x="36" y="154" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">confirm</tspan> reviewed by Jev bound to live requirement</text>
+
+    <circle cx="24" cy="174" r="4" fill="#10b981" />
+    <text x="36" y="178" fill="#ecfdf5" font-size="12.5"><tspan font-weight="700" fill="#6ee7b7">&lt;amos-guidance&gt;</tspan> injects only matched rules</text>
+
+    <text x="16" y="196" fill="#34d399" font-size="11.5" font-weight="700">Result: Enforced boundaries without popup fatigue</text>
+  </g>
+
+  <!-- Divider & Bottom Architecture Flow Header -->
+  <text x="540" y="294" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="600" letter-spacing="1.5">HOW AMOS WORKS IN 3 STEPS (PI &amp; OPENCODE V2)</text>
+
+  <!-- Bottom Flow Container -->
+  <rect x="32" y="310" width="1016" height="278" rx="14" fill="url(#flowGrad)" stroke="#334155" stroke-width="1.5" />
+
+  <!-- Step 1: Human Control Plane -->
+  <g transform="translate(52, 332)">
+    <rect width="268" height="234" rx="10" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5" />
+    <rect x="16" y="14" width="180" height="22" rx="5" fill="#0c4a6e" />
+    <text x="106" y="29" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700">1. HUMAN CONTROL PLANE</text>
+
+    <text x="16" y="58" fill="#f8fafc" font-size="15" font-weight="700">Local Console (Web / Tauri)</text>
+    <text x="16" y="80" fill="#94a3b8" font-size="12">• Multi-dimensional rule builder &amp; YAML</text>
+    <text x="16" y="100" fill="#94a3b8" font-size="12">• Policy simulation before publishing</text>
+    <text x="16" y="120" fill="#94a3b8" font-size="12">• Agent proposes (amos-skill),</text>
+    <text x="24" y="137" fill="#7dd3fc" font-size="12" font-weight="600">only Human approves &amp; publishes</text>
+
+    <rect x="16" y="154" width="236" height="64" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1" />
+    <text x="134" y="175" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Atomic Workspace Artifacts</text>
+    <text x="134" y="194" text-anchor="middle" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/activation.json</text>
+    <text x="134" y="210" text-anchor="middle" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/amos.managed.json</text>
+  </g>
+
+  <!-- Arrows from Step 1 to Fork -->
+  <path d="M 320 400 L 368 400" stroke="#38bdf8" stroke-width="2" fill="none" />
+  <polygon points="368,395 378,400 368,405" fill="#38bdf8" />
+  <path d="M 320 508 L 368 508" stroke="#a855f7" stroke-width="2" fill="none" />
+  <polygon points="368,503 378,508 368,513" fill="#a855f7" />
+
+  <!-- Step 2A: Pre-Call Harness Gate -->
+  <g transform="translate(380, 332)">
+    <rect width="386" height="132" rx="10" fill="#0f172a" stroke="#10b981" stroke-width="1.5" />
+    <rect x="14" y="12" width="236" height="22" rx="5" fill="#064e3b" />
+    <text x="132" y="27" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">2A. PRE-CALL HARNESS GATE (tool_call)</text>
+
+    <text x="14" y="52" fill="#e2e8f0" font-size="12.5">Normalized <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#93c5fd">{tool, operation, target}</tspan> → Pure Engine:</text>
+
+    <!-- Verdict Pills -->
+    <rect x="14" y="64" width="106" height="54" rx="6" fill="#450a0a" stroke="#ef4444" stroke-width="1" />
+    <text x="67" y="82" text-anchor="middle" fill="#fca5a5" font-size="12" font-weight="700">DENY</text>
+    <text x="67" y="98" text-anchor="middle" fill="#fecaca" font-size="10.5">Hard block</text>
+    <text x="67" y="111" text-anchor="middle" fill="#fecaca" font-size="10.5">(no override)</text>
+
+    <rect x="128" y="64" width="154" height="54" rx="6" fill="#451a03" stroke="#f59e0b" stroke-width="1" />
+    <text x="205" y="82" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="700">CONFIRM → JEV</text>
+    <text x="205" y="98" text-anchor="middle" fill="#fde68a" font-size="10.5">Checks requirement v#</text>
+    <text x="205" y="111" text-anchor="middle" fill="#fde68a" font-size="10.5">+ 1-shot HMAC grant</text>
+
+    <rect x="290" y="64" width="82" height="54" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1" />
+    <text x="331" y="82" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="700">ALLOW</text>
+    <text x="331" y="98" text-anchor="middle" fill="#a7f3d0" font-size="10.5">Journaled</text>
+    <text x="331" y="111" text-anchor="middle" fill="#a7f3d0" font-size="10.5">&amp; executed</text>
+  </g>
+
+  <!-- Step 2B: Dynamic Guidance Injector -->
+  <g transform="translate(380, 476)">
+    <rect width="386" height="90" rx="10" fill="#0f172a" stroke="#a855f7" stroke-width="1.5" />
+    <rect x="14" y="12" width="268" height="22" rx="5" fill="#3b0764" />
+    <text x="148" y="27" text-anchor="middle" fill="#d8b4fe" font-size="11" font-weight="700">2B. DYNAMIC GUIDANCE INJECTOR (ADVISORY)</text>
+
+    <text x="14" y="53" fill="#e2e8f0" font-size="12">Routes conventions by area, path, task tag &amp; tokens within budget</text>
+    <text x="14" y="73" fill="#c084fc" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">&lt;amos-guidance mode="advisory"&gt;  <tspan font-family="ui-sans-serif, sans-serif" fill="#94a3b8">(never filters hard rules)</tspan></text>
+  </g>
+
+  <!-- Arrows from Step 2 to Step 3 -->
+  <path d="M 766 400 L 802 400" stroke="#10b981" stroke-width="2" fill="none" />
+  <polygon points="802,395 812,400 802,405" fill="#10b981" />
+  <path d="M 766 520 L 802 520" stroke="#a855f7" stroke-width="2" fill="none" />
+  <polygon points="802,515 812,520 802,525" fill="#a855f7" />
+
+  <!-- Step 3: Verifiable Trail & Receipts -->
+  <g transform="translate(814, 332)">
+    <rect width="214" height="234" rx="10" fill="#0f172a" stroke="#64748b" stroke-width="1.5" />
+    <rect x="14" y="14" width="186" height="22" rx="5" fill="#1e293b" />
+    <text x="107" y="29" text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="700">3. VERIFIABLE AUDIT TRAIL</text>
+
+    <text x="14" y="60" fill="#f8fafc" font-size="14" font-weight="700">Sanitized JSONL Journal</text>
+    <text x="14" y="80" fill="#94a3b8" font-size="11.5">• Zero raw file contents/secrets</text>
+    <text x="14" y="98" fill="#94a3b8" font-size="11.5">• Explicit coverage records for</text>
+    <text x="22" y="114" fill="#94a3b8" font-size="11.5">unmodeled tools / shells</text>
+
+    <line x1="14" y1="132" x2="200" y2="132" stroke="#1e293b" stroke-width="1" />
+
+    <text x="14" y="154" fill="#f8fafc" font-size="14" font-weight="700">Live Runtime Receipts</text>
+    <text x="14" y="174" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/runtime.pi.json</text>
+    <text x="14" y="192" fill="#38bdf8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.pi/runtime.opencode.json</text>
+    <text x="14" y="214" fill="#6ee7b7" font-size="11.5" font-weight="600">Status: loaded | stale | never</text>
+  </g>
+</svg>

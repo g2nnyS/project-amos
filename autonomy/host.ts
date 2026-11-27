@@ -40,10 +40,10 @@ export function createPolicyBoundHost(options: PolicyBoundHostOptions): PolicyBo
   let clockFailed = false;
   let lastTime = journal.lastTime;
   const clock = (): number => {
-    let n: number;
-    try { n = now(); } catch { clockFailed = true; journal.poison(); throw new AutonomyError(); }
-    if (clockFailed || !Number.isSafeInteger(n) || n < lastTime || n < 0) { clockFailed = true; journal.poison(); throw new AutonomyError(); }
-    lastTime = n; return n;
+    let nowMs: number;
+    try { nowMs = now(); } catch { clockFailed = true; journal.poison(); throw new AutonomyError(); }
+    if (clockFailed || !Number.isSafeInteger(nowMs) || nowMs < lastTime || nowMs < 0) { clockFailed = true; journal.poison(); throw new AutonomyError(); }
+    lastTime = nowMs; return nowMs;
   };
   const revoked = () => core.capabilityIds.filter((id) => journal.revoked.has(Journal.capabilityId(id)));
   const cancel = (job: PreparedFileExecution) => { try { job.cancel(); } catch { /* best effort */ } };

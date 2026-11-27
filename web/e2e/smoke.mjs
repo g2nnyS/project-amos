@@ -224,7 +224,10 @@ try {
 
   async function click(selector, text) {
     const locate = `function (selector, text, mode) {
-      const e = Array.from(document.querySelectorAll(selector)).find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && (text === null || el.textContent.trim().includes(text)))
+      const visible = Array.from(document.querySelectorAll(selector)).filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none')
+      const e = text === null
+        ? visible[0]
+        : visible.find((el) => el.textContent.trim().includes(text)) ?? visible.find((el) => (el.getAttribute('aria-label') || '').trim().includes(text))
       if (mode === 'scroll') { e?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); return null }
       if (!e) return null
       const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2, top = document.elementFromPoint(x, y)
@@ -450,24 +453,34 @@ try {
   })
 
   await mkdir(workspace, { recursive: true })
+  const guidance = '修改项目前先说明影响范围。'
+  const guidanceInput = 'textarea[aria-labelledby="rule-editor-purpose"]'
+  const hitSelect = 'select:has(option[value="deny"])'
 
-  await check('global baseline is selected by default and supports rule editing', async () => {
+  await check('switch a draft between match actions and editable context guidance', async () => {
     await nav('编辑草稿')
     await click('button', '内置示例')
     await waitFor(`document.body.innerText.includes('规则字段') && ${visible('button')}`)
     await click('button', '添加')
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
     await setByLabel('规则 ID', 'global-smoke-rule')
-    await setByLabel('说明', 'E2E global baseline smoke rule; never an execution authorization.')
+    await setByLabel('处理方式', 'deny')
+    await setByLabel('规则类型', 'advisory_only')
+    await waitFor(visible(guidanceInput))
+    assert.equal(await evaluate(`!!document.querySelector(${q(`.condition-grid, ${hitSelect}, select:has(option[value="runtime"])`)})`), false, 'guidance exposes a match or execution control')
+    await setBySelector(guidanceInput, guidance)
+    await evaluate(`document.querySelector(${q(guidanceInput)}).closest('section').scrollIntoView({ block: 'center' })`)
+    await screenshot('desktop-rule-editor-guidance')
+    await setByLabel('规则类型', 'deterministic')
+    await waitFor(visible('.condition-grid'))
+    assert.equal(await evaluate(`document.querySelector(${q(hitSelect)}).value`), 'deny')
+    assert.equal(await evaluate(`document.querySelector('textarea').value`), guidance)
+    await setByLabel('规则类型', 'advisory_only')
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
   await check('submit and approve a global baseline proposal', async () => {
-    await setByLabel('标题', 'E2E global baseline proposal')
-    await setByLabel('理由', 'Synthetic global baseline rationale; never an execution authorization.')
-    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('申请过期时间（本地时间）', expiry)
     await click('button', '提交审批')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
@@ -480,6 +493,12 @@ try {
   await check('global baseline version is visible in version history', async () => {
     await nav('版本')
     await waitFor(`document.body.innerText.includes('版本 1')`)
+    await click('a', '版本 1')
+    await waitFor(`Array.from(document.querySelectorAll('details summary')).some(e => e.textContent.includes('global-smoke-rule') && e.textContent.includes('仅建议'))`)
+    await click('[role="tab"]', '原始 JSON')
+    await waitFor(visible('[role="tabpanel"] pre'))
+    const saved = await evaluate(`JSON.parse(document.querySelector('[role="tabpanel"] pre').textContent).rules.find(r => r.id === 'global-smoke-rule')`)
+    assert.deepEqual([saved.expressivity, saved.enforcement, saved.predicate, saved.on_hit, saved.narrative], ['advisory_only', 'advisory', null, 'deny', guidance])
     await nav('规则库')
     await waitFor(`document.querySelector('h1')?.textContent.includes('全局规则')`)
     await screenshot('desktop-global-rules')
@@ -625,24 +644,272 @@ try {
     await waitFor(`document.body.innerText.includes('new-rule-1')`)
     await setByLabel('规则 ID', 'project-smoke-rule')
     await setByLabel('说明', 'E2E project-specific smoke rule; never an execution authorization.')
+
+    // Condition-builder regression: measured control widths, labelled icon
+    // buttons and a real add/remove value round-trip before server validation.
+    const conditionBuilderGeometry = `function () {
+      const section = document.querySelector('.condition-grid')?.closest('section.panel')
+      const rect = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
+      const grid = section?.querySelector('.condition-grid') ?? null
+      const selects = grid ? Array.from(grid.querySelectorAll('select')) : []
+      const input = grid?.querySelector('.value-row input') ?? null
+      const buttons = section ? Array.from(section.querySelectorAll('button')) : []
+      const addValue = buttons.find(b => b.textContent.trim().includes('添加值')) ?? null
+      const iconButtons = grid ? Array.from(grid.querySelectorAll('button[aria-label]')).map(b => ({ label: (b.getAttribute('aria-label') || '').trim(), svg: !!b.querySelector('svg'), rect: rect(b) })) : []
+      const main = document.querySelector('main.workspace')
+      return {
+        visible: !!section && section.getClientRects().length > 0,
+        field: selects[0] ? rect(selects[0]) : null,
+        operator: selects[1] ? rect(selects[1]) : null,
+        value: input ? rect(input) : null,
+        addValue: addValue ? rect(addValue) : null,
+        valueRows: grid ? grid.querySelectorAll('.value-row').length : 0,
+        iconButtons,
+        doc: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth },
+        main: main ? { scroll: main.scrollWidth, client: main.clientWidth } : null,
+      }
+    }`
+    const conditionBuilderScroll = `function () {
+      const section = document.querySelector('.condition-grid')?.closest('section.panel')
+      if (!section) return false
+      section.scrollIntoView({ block: 'center', behavior: 'instant' })
+      return true
+    }`
+
+    await waitForCall(`function () {
+      return document.querySelectorAll('.condition-grid .value-row input').length === 1
+    }`)
+    assert.equal(await callInPage(conditionBuilderScroll), true, 'condition builder section missing')
+    await sleep(150)
+    const builder = await callInPage(conditionBuilderGeometry)
+    assert.equal(builder.visible, true, 'condition builder is not visible')
+    assert.ok(builder.field && builder.field.width >= 120 && builder.field.height >= 30, `field control is too small: ${JSON.stringify(builder.field)}`)
+    assert.ok(builder.operator && builder.operator.width >= 110 && builder.operator.height >= 30, `operator control is too small: ${JSON.stringify(builder.operator)}`)
+    assert.ok(builder.value && builder.value.width >= 140 && builder.value.height >= 30, `value control is too small: ${JSON.stringify(builder.value)}`)
+    assert.equal(builder.valueRows, 1, 'seeded rule did not start with exactly one value row')
+    assert.ok(builder.iconButtons.length >= 2, 'condition builder icon buttons are missing')
+    for (const button of builder.iconButtons) {
+      assert.ok(button.label.length > 0, 'condition builder icon button has no aria-label')
+      assert.equal(button.svg, true, `condition builder icon button "${button.label}" has no svg glyph`)
+    }
+    assert.ok(builder.doc.scroll <= builder.doc.client, `rule editor overflows horizontally: ${JSON.stringify(builder.doc)}`)
+    assert.ok(!builder.main || builder.main.scroll <= builder.main.client, `rule editor main area overflows: ${JSON.stringify(builder.main)}`)
+    await screenshot('desktop-rule-editor-condition-builder')
+
+    await click('button', '添加值')
+    await waitForCall(`function () {
+      return document.querySelectorAll('.condition-grid .value-row').length === 2 && !!document.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
+    }`)
+    const markedDelete = await evaluate(`(() => {
+      const input = document.querySelector('.condition-grid .value-row input[aria-label="条件 1 参数 2"]')
+      const button = input?.closest('.value-row')?.querySelector('button[aria-label]')
+      if (!button) return false
+      button.setAttribute('data-e2e-delete-value', '')
+      return true
+    })()`)
+    assert.ok(markedDelete, 'added value row has no delete control')
+    await click('button[data-e2e-delete-value]')
+    await waitForCall(`function () {
+      const inputs = Array.from(document.querySelectorAll('.condition-grid .value-row input'))
+      return inputs.length === 1 && inputs[0].value === 'file_read'
+    }`)
+
+    // Mobile layout: single-column conditions with every control inside the viewport.
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await waitForCall(`function () {
+        const selects = Array.from(document.querySelectorAll('.condition-grid select'))
+        if (selects.length < 2) return false
+        return selects[1].getBoundingClientRect().top >= selects[0].getBoundingClientRect().bottom - 1
+      }`, [], 5000)
+      assert.equal(await callInPage(conditionBuilderScroll), true, 'condition builder section missing at 390px')
+      await sleep(150)
+      const mobileBuilder = await callInPage(conditionBuilderGeometry)
+      assert.ok(mobileBuilder.doc.scroll <= mobileBuilder.doc.client, `mobile rule editor overflows horizontally: ${JSON.stringify(mobileBuilder.doc)}`)
+      assert.ok(!mobileBuilder.main || mobileBuilder.main.scroll <= mobileBuilder.main.client, `mobile rule editor main area overflows: ${JSON.stringify(mobileBuilder.main)}`)
+      for (const [name, control] of Object.entries({ field: mobileBuilder.field, operator: mobileBuilder.operator, value: mobileBuilder.value, addValue: mobileBuilder.addValue })) {
+        assert.ok(control && control.width > 0 && control.left >= 0 && control.right <= mobileBuilder.doc.client + 1, `mobile ${name} control is outside the viewport: ${JSON.stringify(control)}`)
+      }
+      for (const button of mobileBuilder.iconButtons) {
+        assert.ok(button.rect.left >= 0 && button.rect.right <= mobileBuilder.doc.client + 1, `mobile icon button is outside the viewport: ${JSON.stringify(button)}`)
+      }
+      assert.equal(mobileBuilder.valueRows, 1, 'mobile condition builder lost the seeded value row')
+      await screenshot('mobile-rule-editor-condition-builder')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+
     await click('button', '检查草稿')
     await waitFor(`document.body.innerText.includes('检查通过')`)
   })
 
+  await check('simulate draft before submission and assert editor has no request fields', async () => {
+    await click('button', '模拟草稿')
+    await waitFor(`${visible('section.panel')} && document.body.innerText.includes('工具') && document.body.innerText.includes('操作') && document.body.innerText.includes('对象')`)
+    assert.equal(await evaluate(`document.body.innerText.includes('申请信息')`), false, 'editor still shows request information section')
+    assert.equal(await evaluate(`document.querySelector('input[type="datetime-local"]')`), null, 'editor still has expiry field')
+
+    await click('button', '读取源码文件')
+    await sleep(200)
+    const presetValues = await evaluate(`(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const value = (text) => labels.find(l => l.textContent.trim().includes(text))?.querySelector('input,select')?.value ?? ''
+      return { tool: value('工具'), operation: value('操作'), target: value('对象') }
+    })()`)
+    assert.equal(presetValues.tool, 'fs', 'preset did not fill tool')
+    assert.equal(presetValues.operation, 'file_read', 'preset did not fill operation')
+    assert.ok(presetValues.target.startsWith(workspace) && presetValues.target.endsWith('/src/main.ts'), `preset target is not workspace-relative: ${presetValues.target}`)
+
+    await click('button', '读取 SSH 私钥')
+    await sleep(200)
+    const denyPresetValues = await evaluate(`(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const value = (text) => labels.find(l => l.textContent.trim().includes(text))?.querySelector('input,select')?.value ?? ''
+      return { tool: value('工具'), operation: value('操作'), target: value('对象') }
+    })()`)
+    assert.equal(denyPresetValues.tool, 'fs', 'deny preset did not fill tool')
+    assert.equal(denyPresetValues.operation, 'file_read', 'deny preset did not fill operation')
+    assert.ok(denyPresetValues.target.startsWith(workspace) && denyPresetValues.target.endsWith('/.ssh/id_ed25519'), `deny preset target is not workspace-relative: ${denyPresetValues.target}`)
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('credential-0-1') && /处理结果\s*deny/i.test(panel.textContent)
+    }`)
+
+    await setByLabel('工具', 'shell')
+    await setByLabel('操作', 'file_read')
+    await setByLabel('对象', workspace)
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('project-smoke-rule') && /处理结果\s*log/i.test(panel.textContent)
+    }`)
+
+    await setBySelector('.condition-grid .value-row input', 'execute')
+    await setByLabel('处理方式', 'deny')
+
+    await setByLabel('操作', 'execute')
+    await click('button', '开始模拟')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '模拟草稿')
+      return !!panel && panel.textContent.includes('project-smoke-rule') && /处理结果\s*deny/i.test(panel.textContent)
+    }`)
+    const draftNote = await evaluate(`document.body.innerText.includes('只反映当前编辑器内容，不会发布新版本')`)
+    assert.equal(draftNote, true, 'draft simulation does not show unpublished disclaimer')
+  })
+
   await check('submit immutable proposal from the editor', async () => {
-    await setByLabel('标题', 'E2E smoke proposal')
-    await setByLabel('理由', 'Synthetic smoke rationale; never an execution authorization.')
-    const expiry = await evaluate(`(() => { const d = new Date(Date.now() + 7 * 86400000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); })()`)
-    await setByLabel('申请过期时间（本地时间）', expiry)
     await click('button', '提交审批')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('申请详情')`)
     await waitFor(`document.body.innerText.includes('待审批')`)
   })
 
+  await check('draft changes topbar spans the panel and raw JSON stays usable on desktop and mobile', async () => {
+    const draftPanelScroll = `function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      if (!panel) return false
+      panel.scrollIntoView({ block: 'start', behavior: 'instant' })
+      return true
+    }`
+    const draftPanelGeometry = `function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      const rect = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
+      const list = panel?.querySelector('[role="tablist"]') ?? null
+      const tabs = list ? Array.from(list.querySelectorAll('[role="tab"]')).map(t => ({ text: t.textContent.trim(), selected: t.getAttribute('aria-selected') === 'true', rect: rect(t) })) : []
+      const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) ?? null : null
+      const grid = tabpanel ? Array.from(tabpanel.children).find(c => c.classList.contains('grid')) ?? null : null
+      const main = document.querySelector('main.workspace')
+      return {
+        panel: panel ? rect(panel) : null,
+        panelScroll: panel ? { scroll: panel.scrollWidth, client: panel.clientWidth } : null,
+        list: list ? rect(list) : null,
+        tabs,
+        tabpanel: tabpanel ? rect(tabpanel) : null,
+        blocks: grid ? Array.from(grid.children).map(rect) : [],
+        doc: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth },
+        main: main ? { scroll: main.scrollWidth, client: main.clientWidth } : null,
+      }
+    }`
+
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      return !!panel && !!panel.querySelector('[role="tablist"]') && panel.querySelectorAll('[role="tab"]').length === 3 && Array.from(panel.querySelectorAll('[role="tabpanel"]')).some(p => p.getClientRects().length)
+    }`)
+    assert.equal(await callInPage(draftPanelScroll), true, 'draft changes panel missing')
+    await sleep(150)
+
+    const assertTopbar = (layout, label) => {
+      assert.ok(layout.panel && layout.list && layout.tabpanel, `${label}: draft changes panel, tablist or tab content missing`)
+      assert.deepEqual(layout.tabs.map(tab => tab.text), ['内容改动', '选用范围', '原始 JSON'], `${label}: tab labels changed`)
+      const top = layout.tabs[0].rect.top
+      for (const tab of layout.tabs) assert.ok(Math.abs(tab.rect.top - top) <= 2, `${label}: tab "${tab.text}" is not on the same row`)
+      for (let i = 1; i < layout.tabs.length; i += 1) assert.ok(layout.tabs[i].rect.left > layout.tabs[i - 1].rect.left, `${label}: tab "${layout.tabs[i].text}" is not to the right of its neighbour`)
+      assert.ok(layout.list.bottom <= layout.tabpanel.top + 1, `${label}: tablist is not above the tab content`)
+      assert.ok(layout.list.width >= layout.panel.width - 8, `${label}: tablist does not span the panel (${layout.list.width} of ${layout.panel.width})`)
+      assert.ok(layout.list.left - layout.panel.left <= 8, `${label}: tablist is inset from the panel`)
+      for (const tab of layout.tabs) assert.ok(tab.rect.right <= layout.panel.right + 1 && tab.rect.left >= layout.panel.left - 1, `${label}: tab "${tab.text}" escapes the panel`)
+    }
+
+    const topbar = await callInPage(draftPanelGeometry)
+    assertTopbar(topbar, 'desktop')
+    assert.ok(topbar.tabs.find(tab => tab.text === '内容改动')?.selected, 'desktop: semantic tab is not selected')
+    assert.ok(topbar.doc.scroll <= topbar.doc.client, `desktop: draft changes page overflows: ${JSON.stringify(topbar.doc)}`)
+    assert.ok(!topbar.main || topbar.main.scroll <= topbar.main.client, `desktop: main area overflows: ${JSON.stringify(topbar.main)}`)
+
+    await click('[role="tab"]', '原始 JSON')
+    await waitForCall(`function () {
+      const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+      const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) : null
+      return !!tabpanel && tabpanel.textContent.includes('草稿 JSON') && tabpanel.textContent.includes('当前已发布 JSON')
+    }`)
+    const raw = await callInPage(draftPanelGeometry)
+    assertTopbar(raw, 'desktop raw')
+    assert.equal(raw.blocks.length, 2, 'desktop raw tab does not show both JSON documents')
+    const [leftJson, rightJson] = raw.blocks
+    assert.ok(leftJson.right <= rightJson.left, `desktop JSON blocks overlap: ${JSON.stringify(raw.blocks)}`)
+    assert.ok(Math.abs(leftJson.top - rightJson.top) <= 2, 'desktop JSON blocks are not side by side')
+    assert.ok(leftJson.width >= 200 && rightJson.width >= 200, `desktop JSON blocks are too narrow: ${JSON.stringify(raw.blocks)}`)
+    assert.ok(leftJson.left >= raw.panel.left - 1 && rightJson.right <= raw.panel.right + 1, 'desktop JSON blocks escape the panel')
+    assert.ok(raw.doc.scroll <= raw.doc.client, `desktop raw JSON overflows the page: ${JSON.stringify(raw.doc)}`)
+    assert.ok(!raw.main || raw.main.scroll <= raw.main.client, `desktop raw JSON overflows main: ${JSON.stringify(raw.main)}`)
+    await screenshot('desktop-candidate-raw-topbar')
+
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await waitForCall(`function () {
+        const panel = Array.from(document.querySelectorAll('section.panel')).find(s => s.querySelector('.panel-title')?.textContent.trim() === '草稿改动')
+        const tabpanel = panel ? Array.from(panel.querySelectorAll('[role="tabpanel"]')).find(p => p.getClientRects().length) : null
+        const grid = tabpanel ? Array.from(tabpanel.children).find(c => c.classList.contains('grid')) : null
+        if (!grid || grid.children.length < 2) return false
+        return grid.children[1].getBoundingClientRect().top >= grid.children[0].getBoundingClientRect().bottom
+      }`, [], 5000)
+      assert.equal(await callInPage(draftPanelScroll), true, 'draft changes panel missing at 390px')
+      await sleep(150)
+      const mobileRaw = await callInPage(draftPanelGeometry)
+      assertTopbar(mobileRaw, 'mobile raw')
+      assert.ok(mobileRaw.tabs.find(tab => tab.text === '原始 JSON')?.selected, 'mobile: raw tab is not selected')
+      assert.ok(mobileRaw.doc.scroll <= mobileRaw.doc.client, `mobile raw JSON overflows the page: ${JSON.stringify(mobileRaw.doc)}`)
+      assert.ok(!mobileRaw.main || mobileRaw.main.scroll <= mobileRaw.main.client, `mobile raw JSON overflows main: ${JSON.stringify(mobileRaw.main)}`)
+      assert.ok(mobileRaw.panelScroll.scroll <= mobileRaw.panelScroll.client, `mobile draft changes panel content overflows: ${JSON.stringify(mobileRaw.panelScroll)}`)
+      assert.equal(mobileRaw.blocks.length, 2, 'mobile raw tab does not show both JSON documents')
+      const [mobileTop, mobileBottom] = mobileRaw.blocks
+      assert.ok(mobileBottom.top >= mobileTop.bottom, `mobile JSON blocks are not single-column: ${JSON.stringify(mobileRaw.blocks)}`)
+      await screenshot('mobile-candidate-raw-topbar')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+
+    await click('[role="tab"]', '内容改动')
+    await waitForCall(`function () {
+      const tab = Array.from(document.querySelectorAll('[role="tab"]')).find(t => t.textContent.trim() === '内容改动')
+      return !!tab && tab.getAttribute('aria-selected') === 'true' && Array.from(document.querySelectorAll('[role="tabpanel"]')).some(p => p.getClientRects().length)
+    }`)
+  })
+
   await check('new proposal is immediately visible in the shared proposal list', async () => {
     await click('a', '返回申请列表')
-    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('E2E smoke proposal')`)
-    await click('a', 'E2E smoke proposal')
+    await waitFor(`location.hash === '#/proposals' && document.body.innerText.includes('规则变更')`)
+    await click('table tbody tr:first-child td:first-child a')
     await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
   })
 
@@ -658,39 +925,253 @@ try {
     await waitFor(`Array.from(document.querySelectorAll('article')).some(e => e.querySelector('.eyebrow')?.textContent.trim() === '当前版本' && e.textContent.includes('v1') && !e.textContent.includes('尚未发布'))`)
   })
 
-  await check('matrix filters update URL and search survives navigation back', async () => {
+  /** Fetch the published policy once; every rule-table expectation derives from it. */
+  const projectId = await evaluate(`document.querySelector('#project-select')?.value`)
+  assert.ok(projectId, 'active project missing')
+  const policy = await evaluate(`fetch(${q(`/api/projects/${encodeURIComponent(projectId)}/policy`)}).then((response) => response.json())`)
+  assert.ok(policy && Array.isArray(policy.candidate?.rules) && policy.candidate.rules.length > 0, 'published policy rules missing')
+  const publishedRules = policy.candidate.rules
+  const groupsFor = (rules) => [
+    { policyClass: 'security', ids: rules.filter((rule) => rule.policy_class === 'security').map((rule) => rule.id).sort() },
+    { policyClass: 'engineering', ids: rules.filter((rule) => rule.policy_class === 'engineering').map((rule) => rule.id).sort() },
+  ].filter((group) => group.ids.length)
+  const unfilteredGroups = groupsFor(publishedRules)
+  const readGroups = `(() => {
+    const groups = { security: [], engineering: [] }
+    for (const section of document.querySelectorAll('.rules-category')) {
+      const title = section.querySelector('h3')?.textContent || ''
+      const policyClass = title.includes('安全') ? 'security' : title.includes('工程') ? 'engineering' : null
+      if (policyClass) groups[policyClass] = Array.from(section.querySelectorAll('.rules-category-link')).map((button) => button.textContent.trim()).sort()
+    }
+    return groups
+  })()`
+
+  async function assertGroups(expected, label) {
+    const expectedIds = { security: [], engineering: [] }
+    for (const group of expected) expectedIds[group.policyClass] = group.ids
+    await waitFor(`JSON.stringify(${readGroups}) === ${q(JSON.stringify(expectedIds))}`)
+    assert.deepEqual(await evaluate(readGroups), expectedIds, `${label}: grouped rule IDs`)
+  }
+
+  async function markRuleRow(ruleId) {
+    const marked = await evaluate(`(() => {
+      const target = Array.from(document.querySelectorAll('.rules-category-link')).find((button) => button.textContent.trim() === ${q(ruleId)})
+      if (!target) return false
+      document.querySelectorAll('[data-e2e-rule-row]').forEach((element) => element.removeAttribute('data-e2e-rule-row'))
+      target.setAttribute('data-e2e-rule-row', '')
+      target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+      return true
+    })()`)
+    assert.ok(marked, `rule row link not found: ${ruleId}`)
+    await sleep(100)
+  }
+
+  const advancedFiltersVisible = `(${visible('select[aria-label="筛选领域"]')}) && (${visible('select[aria-label="筛选应用方式"]')}) && (${visible('select[aria-label="筛选类型"]')})`
+  async function ensureMoreFilters() {
+    if (await evaluate(advancedFiltersVisible)) return
+    await click('button, [role="button"], summary', '更多筛选')
+    await waitFor(advancedFiltersVisible)
+  }
+
+  const securityDenyRules = publishedRules.filter((rule) => rule.policy_class === 'security' && rule.expressivity === 'deterministic' && rule.on_hit === 'deny')
+  assert.ok(securityDenyRules.length > 0, 'published policy has no security deny rules')
+
+  await check('rule library renders grouped security and engineering tables from the published policy', async () => {
     await nav('规则库')
-    await waitFor(`document.body.innerText.includes('规则矩阵') && !!document.querySelector('section table tbody tr td:nth-child(2) button, section table tbody tr td:nth-child(3) button, section table tbody tr td:nth-child(4) button')`)
-    const cell = await evaluate(`(() => {
-      const section = Array.from(document.querySelectorAll('section')).find(s => s.querySelector('h2')?.textContent.includes('规则矩阵'));
-      for (const row of section.querySelectorAll('tbody tr')) {
-        const cells = row.querySelectorAll('td');
-        for (let i = 1; i <= 3; i++) if (cells[i]?.querySelector('button')) return { dimension: cells[0].innerText.trim(), hit: ['deny','confirm','log'][i - 1], row: Array.from(row.parentElement.children).indexOf(row) + 1, column: i + 1 };
+    await assertGroups(unfilteredGroups, 'unfiltered')
+    await screenshot('desktop-rules-groups')
+  })
+
+  await check('dark desktop rules preview is captured and the prior theme preference is restored', async () => {
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    const priorTheme = await evaluate(`(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('amos:console:preferences') || '{}')
+        return ['light', 'dark', 'system'].includes(stored.theme) ? stored.theme : 'light'
+      } catch { return 'light' }
+    })()`)
+    const priorLabel = { light: '浅色', dark: '深色', system: '跟随系统' }[priorTheme]
+    const priorDark = await evaluate(`document.documentElement.classList.contains('dark')`)
+    try {
+      await nav('设置')
+      await click('nav[aria-label="设置分区"] button', '外观与语言')
+      await waitFor(visible('#pref-appearance'))
+      await click('#pref-appearance button', '深色')
+      await waitFor(`document.documentElement.classList.contains('dark')`)
+      await nav('规则库')
+      await assertGroups(unfilteredGroups, 'dark desktop')
+      await evaluate(`document.querySelector('main.workspace')?.scrollTo(0, 0)`)
+      await screenshot('desktop-rules-groups-dark')
+    } finally {
+      await nav('设置')
+      await click('nav[aria-label="设置分区"] button', '外观与语言')
+      await waitFor(visible('#pref-appearance'))
+      await click('#pref-appearance button', priorLabel)
+      await waitForCall(`function (label) {
+        return Array.from(document.querySelectorAll('#pref-appearance button[aria-pressed="true"]')).some((button) => button.textContent.includes(label))
+      }`, [priorLabel])
+      await waitForCall(`function (theme) {
+        try { return JSON.parse(localStorage.getItem('amos:console:preferences') || '{}').theme === theme } catch { return false }
+      }`, [priorTheme])
+      await waitForCall(`function (dark) {
+        return document.documentElement.classList.contains('dark') === dark
+      }`, [priorDark])
+      assert.equal(await evaluate(`document.documentElement.classList.contains('dark')`), priorDark, 'resolved theme was not restored')
+      await nav('规则库')
+      await assertGroups(unfilteredGroups, 'after theme restore')
+    }
+  })
+
+  await check('390px rules preview shows the populated grouped list without horizontal overflow', async () => {
+    await nav('规则库')
+    await assertGroups(unfilteredGroups, 'before 390px')
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+    try {
+      await sleep(300)
+      await assertGroups(unfilteredGroups, '390px')
+      const layout = await evaluate(`(() => {
+        const main = document.querySelector('main.workspace')
+        return { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, mainScroll: main?.scrollWidth ?? 0, mainClient: main?.clientWidth ?? 0 }
+      })()`)
+      assert.ok(layout.scroll <= layout.client, `390px rules preview overflows horizontally: ${JSON.stringify(layout)}`)
+      assert.ok(layout.mainScroll <= layout.mainClient, `390px rules preview main area overflows: ${JSON.stringify(layout)}`)
+      await evaluate(`document.querySelector('main.workspace')?.scrollTo(0, 0)`)
+      await screenshot('mobile-rules-groups')
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+    }
+  })
+
+  await check('combined rule filters narrow both groups and persist in the URL across reload', async () => {
+    // advisory_only + advisory keeps rules from both security and engineering
+    // visible, so both group tables must react to the same combined filter.
+    const sharedRules = publishedRules.filter((rule) => rule.expressivity === 'advisory_only' && rule.enforcement === 'advisory')
+    const searchRule = sharedRules
+      .filter((rule) => rule.policy_class === 'engineering')
+      .sort((a, b) => b.id.length - a.id.length)[0]
+    assert.ok(searchRule, 'no engineering advisory rule for the search filter')
+
+    await ensureMoreFilters()
+    await setBySelector('[aria-label="筛选类型"]', 'advisory_only')
+    await setBySelector('[aria-label="筛选应用方式"]', 'advisory')
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('expressivity') === 'advisory_only' && p.get('enforcement') === 'advisory'
+    })()`)
+    await assertGroups(groupsFor(sharedRules), 'combined advisory filters')
+    const adviceLabels = await evaluate(`Array.from(document.querySelectorAll('.rules-category-action'), cell => cell.innerText.trim())`)
+    assert.ok(adviceLabels.every(label => label === '仅建议'), 'a guidance rule is labeled as a match action')
+
+    await setBySelector('[aria-label="筛选分类"]', 'engineering')
+    await setBySelector('[aria-label="筛选命中后处理"]', 'log')
+    await waitFor(`new URLSearchParams(location.hash.split('?')[1]).get('onHit') === 'log'`)
+    await assertGroups([], 'advice has no log action')
+    await setBySelector('[aria-label="筛选命中后处理"]', '')
+    await setBySelector('[aria-label="搜索规则"]', searchRule.id)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('policyClass') === 'engineering' && !p.has('onHit')
+        && p.get('enforcement') === 'advisory' && p.get('expressivity') === 'advisory_only'
+        && p.get('search') === ${q(searchRule.id)} && !p.has('dimension')
+    })()`)
+    await assertGroups(groupsFor([searchRule]), 'combined engineering filters')
+    const controls = await evaluate(`(() => {
+      const value = (label) => document.querySelector('select[aria-label="' + label + '"], input[aria-label="' + label + '"]')?.value ?? null
+      return {
+        search: value('搜索规则'), policyClass: value('筛选分类'), onHit: value('筛选命中后处理'),
+        enforcement: value('筛选应用方式'), expressivity: value('筛选类型'),
       }
-      return null;
+    })()`)
+    assert.deepEqual(controls, {
+      search: searchRule.id, policyClass: 'engineering', onHit: '',
+      enforcement: 'advisory', expressivity: 'advisory_only',
+    }, 'filter controls do not reflect the combined URL state')
+    await screenshot('desktop-rules-combined-filters')
+
+    await send('Page.reload', { ignoreCache: true })
+    await waitFor(`document.readyState === 'complete' && ${visible('#project-select')} && new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(searchRule.id)}`)
+    await assertGroups(groupsFor([searchRule]), 'after reload')
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), 'engineering', 'filter control did not survive reload')
+
+    await click('button', '重置')
+    await waitFor(`!location.hash.includes('?')`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="搜索规则"]')?.value`), '', 'search was not cleared')
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), '', 'policy class was not cleared')
+    await assertGroups(unfilteredGroups, 'after reset')
+  })
+
+  await check('matrix filters, deep links and browser history keep grouped data aligned with the URL', async () => {
+    await click('button, [role="button"], summary', '规则矩阵')
+    await waitFor(visible('#rule-matrix-panel'))
+    const advice = publishedRules.filter(rule => rule.expressivity === 'advisory_only')
+    const totals = await evaluate(`Array.from(document.querySelector('#rule-matrix-panel tbody tr:last-child').cells, cell => Number(cell.textContent)).slice(1)`)
+    const hardTotals = ['deny', 'confirm', 'log'].map(hit => publishedRules.filter(rule => rule.expressivity === 'deterministic' && rule.on_hit === hit).length)
+    assert.deepEqual(totals, [...hardTotals, advice.length, publishedRules.length], 'advice counted as a match action')
+    await click('#rule-matrix-panel th button', '仅建议')
+    await waitFor(`new URLSearchParams(location.hash.split('?')[1]).get('expressivity') === 'advisory_only'`)
+    await assertGroups(groupsFor(advice), 'advice matrix column')
+    await click('button', '规则矩阵')
+    await waitFor(visible('#rule-matrix-panel'))
+    const cell = await evaluate(`(() => {
+      for (const row of document.querySelectorAll('#rule-matrix-panel tbody tr')) {
+        const cells = row.querySelectorAll('td')
+        for (let i = 1; i <= 3; i++) {
+          const button = cells[i]?.querySelector('button')
+          if (!button) continue
+          document.querySelectorAll('[data-e2e-matrix-cell]').forEach((element) => element.removeAttribute('data-e2e-matrix-cell'))
+          button.setAttribute('data-e2e-matrix-cell', '')
+          return { dimension: cells[0].innerText.trim(), hit: ['deny', 'confirm', 'log'][i - 1] }
+        }
+      }
+      return null
     })()`)
     assert.ok(cell, 'no non-empty matrix cell')
-    await click(`section:has(h2) table tbody tr:nth-child(${cell.row}) td:nth-child(${cell.column}) button`)
+    await click('[data-e2e-matrix-cell]')
     await waitForCall(`function (dimension, hit) {
       const p = new URLSearchParams(location.hash.split('?')[1] || '')
-      return p.get('dimension') === dimension && p.get('onHit') === hit
+      return p.get('dimension') === dimension && p.get('onHit') === hit && !p.has('search') && !p.has('policyClass') && !p.has('enforcement') && !p.has('expressivity')
     }`, [cell.dimension, cell.hit])
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]').value`), cell.dimension)
-    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]').value`), cell.hit)
-    const id = await evaluate(`document.querySelector('section:has(input[aria-label="搜索规则"]) tbody tr button span:last-child')?.textContent.trim()`)
-    assert.ok(id, 'filtered rule missing')
-    await setBySelector('[aria-label="搜索规则"]', id)
-    await waitFor(`new URLSearchParams(location.hash.split('?')[1] || '').get('search') === ${q(id)}`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选领域"]')?.value`), cell.dimension)
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]')?.value`), cell.hit)
+    const matrixRules = publishedRules.filter((rule) => rule.dimension === cell.dimension && rule.expressivity === 'deterministic' && rule.on_hit === cell.hit)
+    assert.ok(matrixRules.length > 0, 'matrix filter has no published rules')
+    await assertGroups(groupsFor(matrixRules), 'matrix filter')
+
+    const focusRule = matrixRules.slice().sort((a, b) => b.id.length - a.id.length)[0]
+    await setBySelector('[aria-label="搜索规则"]', focusRule.id)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('search') === ${q(focusRule.id)} && p.get('dimension') === ${q(cell.dimension)} && p.get('onHit') === ${q(cell.hit)}
+    })()`)
+    await assertGroups(groupsFor([focusRule]), 'matrix filter plus search')
+
     await nav('项目概况')
     await waitFor(`location.hash === '#/boundary' && document.querySelector('h1')?.textContent.includes('项目概况')`)
     await evaluate('history.back()')
-    await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(id)}`)
+    await waitFor(`location.hash.startsWith('#/rules?') && document.querySelector('[aria-label="搜索规则"]')?.value === ${q(focusRule.id)}`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('dimension')`), cell.dimension)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('onHit')`), cell.hit)
+    await assertGroups(groupsFor([focusRule]), 'after browser back')
+
+    const directFilters = { policyClass: 'security', onHit: 'deny' }
+    await evaluate(`location.hash = ${q(`#/rules?${new URLSearchParams(directFilters).toString()}`)}`)
+    await waitFor(`(() => {
+      const p = new URLSearchParams(location.hash.split('?')[1] || '')
+      return p.get('policyClass') === 'security' && p.get('onHit') === 'deny'
+    })()`)
+    await ensureMoreFilters()
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选分类"]')?.value`), 'security')
+    assert.equal(await evaluate(`document.querySelector('[aria-label="筛选命中后处理"]')?.value`), 'deny')
+    await assertGroups(groupsFor(securityDenyRules), 'direct deep link')
   })
 
   await check('rule inspector tabs, read-only raw data and Escape focus restoration', async () => {
-    const rowButton = 'section:has(input[aria-label="搜索规则"]) tbody tr:first-child button'
+    const target = securityDenyRules[0]
+    await markRuleRow(target.id)
+    const rowButton = '[data-e2e-rule-row]'
     await click(rowButton)
     const inspector = '[role="complementary"][aria-label="规则检查器"]'
     await waitFor(visible(inspector))
@@ -706,17 +1187,20 @@ try {
       const pre = panel.querySelector('pre')
       return { text: pre?.textContent, editable: !!panel.querySelector('input,textarea,[contenteditable="true"]') }
     }`, [inspector])
-    assert.ok(raw.text && JSON.parse(raw.text).id, 'raw rule JSON missing or invalid')
+    assert.ok(raw.text, 'raw rule JSON missing')
+    assert.equal(JSON.parse(raw.text).id, target.id, 'raw inspector shows a different rule')
     assert.equal(raw.editable, false, 'raw inspector contains editable fields')
     await screenshot('desktop-rules-inspector')
     await key('Escape')
     await waitFor(`!${visible(inspector)} && document.activeElement === document.querySelector(${q(rowButton)})`)
     assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').has('id')`), false)
+    assert.equal(await evaluate(`new URLSearchParams(location.hash.split('?')[1] || '').get('policyClass')`), 'security')
   })
 
   await check('mobile rule inspector is accessible and does not cause global overflow', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     const inspector = '[role="dialog"][aria-labelledby="rule-inspector-title"]'
+    const target = securityDenyRules[0]
     try {
       await sleep(400)
       assert.ok(await evaluate(`document.querySelectorAll('[aria-label^="关闭提示"]').length <= 2`), 'notifications exceed visible cap')
@@ -726,7 +1210,8 @@ try {
         button.click()
         return true
       })()`)) await sleep(50)
-      await click('section:has(input[aria-label="搜索规则"]) tbody tr:first-child button')
+      await markRuleRow(target.id)
+      await click('[data-e2e-rule-row]')
       await waitFor(visible(inspector))
       const layout = await callInPage(`function (selector) {
         const e = document.querySelector(selector), r = e.getBoundingClientRect()
@@ -894,9 +1379,10 @@ try {
     await waitFor(`document.body.innerText.includes('版本 1')`)
     await click('button', '申请回滚到此版本')
     await waitFor(visible('[role="dialog"]'))
-    await setByLabel('理由', 'Synthetic rollback rationale.')
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"] input[type="datetime-local"]')`), null, 'rollback still has an expiry field')
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"] textarea')`), null, 'rollback still has a rationale field')
     await click('[role="dialog"] button', '提交申请')
-    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批')`)
+    await waitFor(`location.hash.startsWith('#/proposals/') && document.body.innerText.includes('待审批') && document.body.innerText.includes('回滚到版本 1')`)
     await click('button', '批准并发布')
     await waitFor(visible('[role="alertdialog"]'))
     await click('[role="alertdialog"] button', '确认')

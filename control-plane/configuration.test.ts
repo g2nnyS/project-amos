@@ -431,6 +431,68 @@ test('preauthorized tightening applies, persists, re-emits, expires, and survive
   fixture.cp.close();
 });
 
+test('candidate simulation evaluates the draft instead of published or tightened snapshots', (t) => {
+  const clock = createTestClock(START);
+  const fixture = open(t, clock);
+  t.after(() => fixture.cp.close());
+  const project = createProject(fixture.cp, fixture.workspace);
+  const { tighteningRule } = publishFixture(fixture, project.id);
+  fixture.cp.updateProjectConfig(
+    project.id,
+    {
+      tightening: {
+        enabled: true,
+        quota: { maxActive: 2, maxApplications: 5, windowMs: 3_600_000 },
+        templates: [templateFor(tighteningRule)],
+      },
+    },
+    human(),
+  );
+
+  const read = {
+    tool: 'read',
+    operation: 'file_read',
+    target: `${fixture.workspace}/secret.txt`,
+  };
+  const write = {
+    tool: 'write',
+    operation: 'file_write',
+    target: `${fixture.workspace}/src/x.ts`,
+  };
+  assert.equal(fixture.cp.simulate(project.id, { action: read }).verdict, 'deny');
+  fixture.cp.applyTemporaryTightening(
+    project.id,
+    { templateId: 'template-write', ttlMs: 60_000 },
+    agent(),
+  );
+  assert.equal(fixture.cp.simulate(project.id, { action: write }).verdict, 'deny');
+
+  clock.advance(61_000);
+  const auditBefore = fixture.cp.listAudit({ projectId: project.id, limit: 200 }).items.length;
+  const activationPath = join(fixture.workspace, '.pi', 'activation.json');
+  const managedPath = join(fixture.workspace, '.pi', 'amos.managed.json');
+  const activationBefore = readFileSync(activationPath, 'utf8');
+  const managedBefore = readFileSync(managedPath, 'utf8');
+
+  const draft = makeCandidate([makeRule('draft-read-deny')]);
+  const draftRead = fixture.cp.simulate(project.id, {
+    action: read,
+    candidate: draft,
+  });
+  assert.equal(draftRead.verdict, 'deny');
+  assert.deepEqual(draftRead.matched_rule_ids, ['draft-read-deny']);
+  assert.equal(
+    fixture.cp.simulate(project.id, { action: write, candidate: draft }).verdict,
+    'allow',
+  );
+  assert.equal(
+    fixture.cp.listAudit({ projectId: project.id, limit: 200 }).items.length,
+    auditBefore,
+  );
+  assert.equal(readFileSync(activationPath, 'utf8'), activationBefore);
+  assert.equal(readFileSync(managedPath, 'utf8'), managedBefore);
+});
+
 test('staggered tightening expiry keeps the snapshot chain recoverable', (t) => {
   const clock = createTestClock(START);
   const fixture = open(t, clock);

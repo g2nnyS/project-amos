@@ -8,6 +8,7 @@ import CandidateView from '@/components/governance/CandidateView.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
+import { generateRollbackProposalMeta } from '@/lib/editor'
 import { formatDate } from '@/lib/format'
 import { useGovernanceStore } from '@/stores/governance'
 import { useToast } from '@/composables/useToast'
@@ -19,23 +20,20 @@ const route = useRoute()
 const router = useRouter()
 const { toast } = useToast()
 
-const number = computed(() => Number(route.params.version))
-const item = ref<PublishedVersion | null>(null)
+const versionNumber = computed(() => Number(route.params.version))
+const publishedVersion = ref<PublishedVersion | null>(null)
 const rolloutRows = computed(() => store.rollouts)
 const loading = ref(false)
 const error = ref('')
 const busy = ref(false)
 const restoreOpen = ref(false)
-const title = ref('')
-const rationale = ref('')
-const expires = ref('')
 let generation = 0
 
 async function load() {
   const ticket = ++generation
   const project = store.activeProjectId
-  const version = number.value
-  item.value = null
+  const version = versionNumber.value
+  publishedVersion.value = null
   error.value = ''
   loading.value = false
   busy.value = false
@@ -45,7 +43,7 @@ async function load() {
   loading.value = true
   try {
     const result = await api.version(project, version)
-    if (ticket === generation && result.projectId === project) item.value = result
+    if (ticket === generation && result.projectId === project) publishedVersion.value = result
   } catch (e) {
     if (ticket === generation) error.value = e instanceof Error ? e.message : t('version.loadError')
   } finally {
@@ -53,20 +51,15 @@ async function load() {
   }
 }
 
-watch([() => store.activeProjectId, number], load, { immediate: true })
+watch([() => store.activeProjectId, versionNumber], load, { immediate: true })
 
 function openRestore() {
-  title.value = t('version.restoreDefaultTitle', { version: number.value })
-  rationale.value = ''
-  const d = new Date(Date.now() + 7 * 86400000)
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  expires.value = d.toISOString().slice(0, 16)
   restoreOpen.value = true
 }
 
 async function download(format: 'yaml' | 'json') {
   const project = store.activeProjectId
-  const version = item.value?.version
+  const version = publishedVersion.value?.version
   const ticket = generation
   if (!project || !version || busy.value) return
   busy.value = true
@@ -82,24 +75,21 @@ async function download(format: 'yaml' | 'json') {
 
 async function restore() {
   const project = store.activeProjectId
-  const version = item.value?.version
+  const version = publishedVersion.value?.version
   const ticket = generation
-  const expiry = new Date(expires.value)
   if (!project || !version || busy.value) return
-  if (!title.value.trim() || !rationale.value.trim() || !expires.value || !Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) {
-    error.value = t('version.restoreMissingFields')
-    return
-  }
   if (store.loading || store.error) { error.value = t('version.restoreProjectUnavailable'); return }
+  const baseVersion = store.policy?.version ?? 0
+  const meta = generateRollbackProposalMeta(project, baseVersion, version)
   busy.value = true
   error.value = ''
   let proposal: Proposal
   try {
     proposal = await api.restore(project, version, {
-      title: title.value.trim(),
-      rationale: rationale.value.trim(),
-      baseVersion: store.policy?.version ?? 0,
-      expiresAt: expiry.toISOString()
+      title: meta.title,
+      rationale: meta.rationale,
+      baseVersion,
+      expiresAt: meta.expiresAt
     })
   } catch (e) {
     if (ticket === generation) {
@@ -129,7 +119,7 @@ async function restore() {
 
     <EmptyState v-if="!store.activeProjectId" :title="t('common.selectProject')" :description="t('version.emptyProject')" />
     <div v-else-if="loading" class="panel p-5 text-sm" role="status">{{ t('version.loading') }}</div>
-    <div v-else-if="!item" class="panel p-5 text-sm text-destructive" role="alert">{{ error || t('version.loadFailed') }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button></div>
+    <div v-else-if="!publishedVersion" class="panel p-5 text-sm text-destructive" role="alert">{{ error || t('version.loadFailed') }} <button class="ml-2 underline" @click="load">{{ t('common.retry') }}</button></div>
 
     <template v-else>
       <div v-if="error && !restoreOpen" class="panel p-5 text-sm text-destructive" role="alert">{{ error }}</div>
@@ -137,19 +127,19 @@ async function restore() {
       <section class="panel">
         <div class="panel-header">
           <div>
-            <h2 class="text-base font-semibold">{{ t('common.version', { version: item.version }) }}</h2>
-            <p class="panel-kicker">{{ item.previousVersion == null ? t('version.initial') : t('version.basedOn', { version: item.previousVersion }) }} · {{ t('version.ruleCount', { count: item.candidate.rules.length }) }}</p>
+            <h2 class="text-base font-semibold">{{ t('common.version', { version: publishedVersion.version }) }}</h2>
+            <p class="panel-kicker">{{ publishedVersion.previousVersion == null ? t('version.initial') : t('version.basedOn', { version: publishedVersion.previousVersion }) }} · {{ t('version.ruleCount', { count: publishedVersion.candidate.rules.length }) }}</p>
           </div>
         </div>
         <div class="panel-body grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.proposal') }}</dt><dd class="break-all font-mono">{{ item.proposalId }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.approver') }}</dt><dd>{{ item.approvedBy.id }} · {{ item.approvedBy.role }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.publishedAt') }}</dt><dd>{{ formatDate(item.createdAt) }}</dd></div>
-          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.candidateDigest') }}</dt><dd class="break-all font-mono">{{ item.snapshot.candidateDigest.slice(0, 16) }}…</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.proposal') }}</dt><dd class="break-all font-mono">{{ publishedVersion.proposalId }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.approver') }}</dt><dd>{{ publishedVersion.approvedBy.id }} · {{ publishedVersion.approvedBy.role }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.publishedAt') }}</dt><dd>{{ formatDate(publishedVersion.createdAt) }}</dd></div>
+          <div><dt class="text-[11px] text-muted-foreground">{{ t('version.candidateDigest') }}</dt><dd class="break-all font-mono">{{ publishedVersion.snapshot.candidateDigest.slice(0, 16) }}…</dd></div>
         </div>
         <div class="panel-body border-t border-hairline text-xs">
           <p class="field-label">{{ t('version.snapshotDigest') }}</p>
-          <p class="mt-1 break-all font-mono">{{ item.snapshot.digest }}</p>
+          <p class="mt-1 break-all font-mono">{{ publishedVersion.snapshot.digest }}</p>
         </div>
         <div class="flex flex-wrap gap-2 border-t border-hairline p-4">
           <Button size="sm" variant="outline" :disabled="busy" @click="download('yaml')"><Download class="mr-1 size-3.5" />{{ t('version.downloadYaml') }}</Button>
@@ -181,29 +171,17 @@ async function restore() {
         </div>
       </section>
 
-      <CandidateView :candidate="item.candidate" />
+      <CandidateView :candidate="publishedVersion.candidate" />
 
       <Dialog v-model:open="restoreOpen">
         <DialogContent class="max-h-[90dvh] overflow-y-auto rounded-md sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{{ t('version.restoreTitle', { version: item.version }) }}</DialogTitle>
+            <DialogTitle>{{ t('version.restoreTitle', { version: publishedVersion.version }) }}</DialogTitle>
             <DialogDescription>{{ t('version.restoreDescription') }}</DialogDescription>
           </DialogHeader>
           <form class="space-y-4" @submit.prevent="restore">
             <div v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</div>
             <p class="text-xs text-muted-foreground">{{ t('version.restoreBase', { version: store.policy?.version ?? 0 }) }}</p>
-            <label class="block text-xs">
-              {{ t('common.title') }}
-              <input v-model="title" required maxlength="160" class="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
-            </label>
-            <label class="block text-xs">
-              {{ t('common.rationale') }}
-              <textarea v-model="rationale" required rows="3" class="mt-1 w-full rounded-md border border-input bg-background p-2 text-sm" />
-            </label>
-            <label class="block text-xs">
-              {{ t('version.restoreExpires') }}
-              <input v-model="expires" required type="datetime-local" class="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
-            </label>
             <DialogFooter>
               <Button type="button" variant="outline" :disabled="busy" @click="restoreOpen = false">{{ t('common.cancel') }}</Button>
               <Button type="submit" :disabled="busy">{{ busy ? t('common.submitting') : t('version.restoreSubmit') }}</Button>

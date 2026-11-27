@@ -153,8 +153,6 @@ const skippedRun = (overrides: Record<string, unknown> = {}): ProbeRun =>
     ...overrides,
   });
 
-// 1. digest determinism and strict validation; impossible probe combinations.
-
 test('probe digests are deterministic and content-bound', () => {
   const first = makeRun();
   const second = makeRun();
@@ -290,8 +288,6 @@ test('reviewer calibration references are shape-checked and frozen', () => {
   );
 });
 
-// 2. successful single-stage promotion.
-
 test('log_only -> selective_deny promotes on complete trusted evidence', () => {
   const result = evaluatePromotion(baseInput());
   assert.equal(result.decision, 'promote');
@@ -312,8 +308,6 @@ test('threshold maxima are inclusive', () => {
   );
   assert.equal(result.decision, 'promote');
 });
-
-// 3. missing cases / coverage.
 
 test('insufficient violation cases hold', () => {
   const result = evaluatePromotion(
@@ -372,8 +366,6 @@ test('a probe with no pre-registered coverage cannot satisfy thresholds', () => 
   assert.ok(result.reasons.includes('coverage_missing'));
 });
 
-// 4. synthetic/mock/skipped/inconclusive evidence.
-
 test('synthetic, mock, skipped, inconclusive, and failed evidence hold', () => {
   const cases: readonly [string, ProbeRun, string][] = [
     [
@@ -401,8 +393,6 @@ test('a trusted-os observed driver is required', () => {
   assert.throws(() => makeRun({ driver: 'synthetic' }));
   assert.throws(() => makeRun({ driver: 'mock' }));
 });
-
-// 5. binding mismatches.
 
 test('wrong rule version, activation, host, check, or environment hold', () => {
   const cases: readonly [string, ProbeRun, string][] = [
@@ -459,8 +449,6 @@ test('threshold rule/stage mismatch holds rather than promotes', () => {
   assert.ok(wrongStage.reasons.includes('threshold_stage_mismatch'));
 });
 
-// 6. expiry.
-
 test('expired probes and thresholds hold', () => {
   const expiredProbe = evaluatePromotion(
     baseInput({
@@ -493,8 +481,6 @@ test('expired probes and thresholds hold', () => {
   assert.ok(futureEvidence.reasons.includes('evidence_from_future'));
 });
 
-// 7. unauthorized side effects.
-
 test('any unauthorized side effect holds', () => {
   const run = makeRun({
     sideEffects: { expected: 1, observed: 2, unauthorized: 1 },
@@ -513,8 +499,6 @@ test('any unauthorized side effect holds', () => {
   assert.equal(aggregate.decision, 'hold');
   assert.ok(aggregate.reasons.includes('unauthorized_side_effects'));
 });
-
-// 8. false allow / false deny rates.
 
 test('false allow and false deny rates above the threshold hold', () => {
   const threshold = makeThreshold({
@@ -540,8 +524,6 @@ test('false allow and false deny rates above the threshold hold', () => {
   assert.equal(deny.decision, 'hold');
   assert.ok(deny.reasons.includes('false_deny_rate_exceeded'));
 });
-
-// 9. confirm_enabled reviewer calibration.
 
 test('confirm_enabled requires a reviewer binding and calibration', () => {
   const noBinding = evaluatePromotion(
@@ -673,8 +655,6 @@ test('confirm_enabled requires a check binding and a valid calibration', () => {
   assert.equal(valid.nextStage, 'confirm_enabled');
 });
 
-// 10. stage skipping, retired, invalid transitions.
-
 test('terminal stages and skipped transitions reject', () => {
   const skipped = evaluatePromotion(
     baseInput({
@@ -726,8 +706,6 @@ test('terminal stages and skipped transitions reject', () => {
   assert.ok(invalidStage.reasons.includes('invalid_stage'));
 });
 
-// 11. required multi-host / multi-environment matrices.
-
 test('a required host or environment matrix must be fully covered', () => {
   const threshold = makeThreshold({
     requiredHosts: [HOST_A, HOST_B],
@@ -770,8 +748,6 @@ test('a required host or environment matrix must be fully covered', () => {
   assert.ok(changedHost.reasons.includes('current_host_not_registered'));
 });
 
-// 12. forged or contradictory input.
-
 test('forged digests and duplicate evidence reject', () => {
   const run = makeRun();
   const forgedProbe = { ...run, digest: sha('f') };
@@ -807,8 +783,6 @@ test('forged digests and duplicate evidence reject', () => {
   assert.equal(extraField.decision, 'reject');
   assert.ok(extraField.reasons.includes('invalid_input'));
 });
-
-// 13. purity.
 
 test('evaluation is pure and deterministic', () => {
   const input = baseInput();

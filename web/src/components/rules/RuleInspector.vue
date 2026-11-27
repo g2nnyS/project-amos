@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, FileText, Zap, Bookmark, Code } from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CandidateActivation, RuleRecord } from '@/types'
+import { effectLabel, fieldOf, ruleEffect, values, type Field, type Operator } from './model'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -26,17 +27,14 @@ const included = computed(() => {
 })
 const excluded = computed(() => props.activation.excludedRuleIds.includes(props.rule.id))
 const active = computed(() => included.value && !excluded.value)
+const effect = computed(() => ruleEffect(props.rule))
 
-function predicateSummary(p: RuleRecord['predicate']): string {
-  if (!p || p.length === 0) return t('ruleInspector.noPredicate')
-  return p.map(item => `${item.op}(${values(item).join(', ')})`).join(' · ')
-}
-function values(p: NonNullable<RuleRecord['predicate']>[number]): string[] {
-  return Object.values(p.args)[0] ?? []
-}
 function json(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
+
+const fieldLabelKey = (field: Field) => `ruleForm.conditionBuilder.fields.${field}` as const
+const operatorLabelKey = (op: Operator) => `ruleForm.conditionBuilder.operators.${op}` as const
 
 onMounted(() => {
   closeButton.value?.focus()
@@ -53,8 +51,8 @@ function onKeydown(event: KeyboardEvent) {
   if (desktop.value || event.key !== 'Tab' || !panel.value) return
   const nodes = [...panel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(node => node.offsetParent !== null)
   if (!nodes.length) return
-  const first = nodes[0]!
-  const last = nodes[nodes.length - 1]!
+  const first = nodes[0]
+  const last = nodes[nodes.length - 1]
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
@@ -72,7 +70,7 @@ const activationLabel = computed(() => {
     <div class="flex h-[60px] shrink-0 items-center justify-between border-b border-border px-4">
       <div class="min-w-0">
         <h2 id="rule-inspector-title" class="truncate text-sm font-semibold" :title="rule.id">{{ rule.id }}</h2>
-        <p class="truncate text-[11px] text-muted-foreground">{{ rule.dimension }} · {{ rule.policy_class }}</p>
+        <p class="truncate text-[11px] text-muted-foreground">{{ rule.dimension }} · {{ t(`rules.${rule.policy_class}`) }}</p>
       </div>
       <button ref="closeButton" type="button" class="ml-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border hover:bg-accent" :aria-label="t('ruleInspector.close')" @click="emit('close')"><X class="size-4" /></button>
     </div>
@@ -82,36 +80,54 @@ const activationLabel = computed(() => {
           <span class="size-1.5 rounded-full" :class="active ? 'bg-info' : 'bg-muted-foreground'" />
           {{ activationLabel.text }}
         </span>
-        <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ rule.on_hit }}</span>
-        <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ rule.enforcement }}</span>
+        <span class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ effectLabel(effect) }}</span>
+        <span v-if="effect !== 'advisory_only'" class="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{{ t(`ruleValues.enforcement.${rule.enforcement}`) }}</span>
         <span v-if="publishedVersion" class="text-muted-foreground">{{ t('common.version', { version: publishedVersion }) }}</span>
       </div>
     </div>
     <Tabs v-model="activeTab" class="min-h-0 flex-1 flex flex-col">
       <TabsList class="mx-4 mt-3 grid w-auto grid-cols-4">
         <TabsTrigger value="semantics" class="text-[11px]"><FileText class="mr-1 size-3" />{{ t('ruleInspector.semantics') }}</TabsTrigger>
-        <TabsTrigger value="execution" class="text-[11px]"><Zap class="mr-1 size-3" />{{ t('ruleInspector.execution') }}</TabsTrigger>
+        <TabsTrigger value="execution" class="text-[11px]"><Zap class="mr-1 size-3" />{{ t(effect === 'advisory_only' ? 'candidate.activationTab' : 'ruleInspector.execution') }}</TabsTrigger>
         <TabsTrigger value="evidence" class="text-[11px]"><Bookmark class="mr-1 size-3" />{{ t('ruleInspector.evidence') }}</TabsTrigger>
         <TabsTrigger value="raw" class="text-[11px]"><Code class="mr-1 size-3" />{{ t('ruleInspector.raw') }}</TabsTrigger>
       </TabsList>
       <div class="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
         <TabsContent value="semantics" class="mt-0 space-y-4 text-xs">
-          <div><p class="field-label">{{ t('ruleFields.narrativeField') }}</p><p class="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{{ rule.narrative || '—' }}</p></div>
+          <div>
+            <p class="field-label">{{ t(effect === 'advisory_only' ? 'ruleForm.guidance' : 'ruleFields.narrativeField') }}</p>
+            <p class="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{{ rule.narrative }}</p>
+            <p v-if="effect === 'advisory_only'" class="mt-1.5 text-muted-foreground">{{ t('ruleForm.advisoryNote') }}</p>
+          </div>
           <dl class="grid grid-cols-2 gap-3">
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.dimension') }}</dt><dd>{{ rule.dimension }}</dd></div>
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.level') }}</dt><dd>{{ rule.level }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.policyClass') }}</dt><dd>{{ rule.policy_class }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.expressivity') }}</dt><dd>{{ rule.expressivity }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.policyClass') }}</dt><dd>{{ t(`rules.${rule.policy_class}`) }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.expressivity') }}</dt><dd>{{ t(effect === 'advisory_only' ? 'rules.advisoryOnly' : 'rules.deterministic') }}</dd></div>
           </dl>
-          <div><p class="field-label">{{ t('ruleFields.predicateField') }}</p><p v-if="!rule.predicate || rule.predicate.length === 0" class="mt-1.5 text-muted-foreground">{{ t('ruleInspector.advisory') }}</p><ul v-else class="mt-1.5 space-y-2"><li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-2"><code class="text-[11px]">{{ p.op }}</code><p class="mt-1 break-all text-muted-foreground">{{ values(p).join(' · ') }}</p></li></ul></div>
+          <div v-if="effect !== 'advisory_only'">
+            <p class="field-label">{{ t('ruleFields.predicateField') }}</p>
+            <ul class="mt-1.5 space-y-2">
+              <li v-for="(p, i) in rule.predicate" :key="i" class="rounded-md border border-border p-3">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span class="font-medium">{{ t(fieldLabelKey(fieldOf(p.op))) }}</span>
+                  <span class="text-muted-foreground">{{ t(operatorLabelKey(p.op)) }}</span>
+                </div>
+                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                  <span v-for="v in values(p)" :key="v" class="inline-block rounded border border-border bg-muted/50 px-1.5 py-0.5 break-all text-muted-foreground">{{ v }}</span>
+                  <span v-if="!values(p).length" class="text-muted-foreground">{{ t('ruleForm.conditionBuilder.emptyPreview') }}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
         </TabsContent>
         <TabsContent value="execution" class="mt-0 space-y-4 text-xs">
           <dl class="grid grid-cols-2 gap-3">
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.onHitField') }}</dt><dd>{{ rule.on_hit }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.scopeField') }}</dt><dd>{{ rule.scope }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.enforcementField') }}</dt><dd>{{ rule.enforcement }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.ownerField') }}</dt><dd>{{ rule.owner }}</dd></div>
-            <div><dt class="text-[11px] text-muted-foreground">TTL</dt><dd>{{ rule.ttl ?? t('common.none') }}</dd></div>
+            <div v-if="effect !== 'advisory_only'"><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.onHitField') }}</dt><dd>{{ effectLabel(effect) }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.scopeField') }}</dt><dd>{{ t(`ruleValues.scope.${rule.scope}`) }}</dd></div>
+            <div v-if="effect !== 'advisory_only'"><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.enforcementField') }}</dt><dd>{{ t(`ruleValues.enforcement.${rule.enforcement}`) }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.ownerField') }}</dt><dd>{{ t(`roles.${rule.owner}`) }}</dd></div>
+            <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleFields.ttl') }}</dt><dd>{{ rule.ttl ?? t('common.none') }}</dd></div>
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleInspector.activation') }}</dt><dd :class="active ? 'text-info' : 'text-muted-foreground'">{{ activationLabel.text }}</dd></div>
             <div><dt class="text-[11px] text-muted-foreground">{{ t('ruleInspector.deployment') }}</dt><dd>{{ t('common.unknown') }}</dd></div>
           </dl>
@@ -121,7 +137,7 @@ const activationLabel = computed(() => {
         </TabsContent>
         <TabsContent value="evidence" class="mt-0 space-y-4 text-xs">
           <div><p class="field-label">{{ t('ruleFields.probeField') }}</p><p class="mt-1.5 whitespace-pre-wrap break-words text-muted-foreground">{{ rule.probe || '—' }}</p></div>
-          <div v-if="rule.source"><p class="field-label">{{ t('ruleFields.sourceField') }}</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ key }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
+          <div v-if="rule.source"><p class="field-label">{{ t('ruleFields.sourceField') }}</p><dl class="mt-1.5 space-y-2"><div v-for="(value, key) in rule.source" :key="key"><dt class="text-[11px] text-muted-foreground">{{ t(`ruleForm.source.labels.${key}`) }}</dt><dd class="whitespace-pre-wrap break-words">{{ value || '—' }}</dd></div></dl></div>
         </TabsContent>
         <TabsContent value="raw" class="mt-0 text-xs">
           <pre class="scroll-thin overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed">{{ json(rule) }}</pre>

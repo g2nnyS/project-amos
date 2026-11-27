@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Eye, RefreshCw } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import type { ObservationReport } from '@/types'
 import PageHeader from '@/components/common/PageHeader.vue'

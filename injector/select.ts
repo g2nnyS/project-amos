@@ -316,9 +316,10 @@ function routeMatches(
       return false;
     }
   }
-  if (match.pathHint !== undefined) {
+  const pathHint = match.pathHint;
+  if (pathHint !== undefined) {
     conditions += 1;
-    if (!signals.paths.some((path) => matchesPathHint(path, match.pathHint!))) {
+    if (!signals.paths.some((path) => matchesPathHint(path, pathHint))) {
       return false;
     }
   }

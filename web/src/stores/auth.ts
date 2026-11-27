@@ -1,10 +1,12 @@
 import { computed, onScopeDispose, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { api } from '../lib/api.js'
-import { authErrorMessage } from '../lib/errors.js'
-import { t } from '../i18n/index.js'
+import { ApiError, api } from '../lib/api.js'
+import { t, type MessageKey } from '../i18n/index.js'
 import { useGovernanceStore } from './governance.js'
 import type { AuthMethod, BrowserSession, LoginCredentials, SetupVerification } from '../types/index.js'
+
+const messages: Readonly<Record<string, MessageKey>> = { password_busy: 'auth.errors.passwordBusy', password_invalid: 'auth.errors.passwordLength', enrollment_required: 'auth.errors.enrollmentRequired', setup_already_complete: 'auth.errors.setupComplete', invalid_credentials: 'auth.errors.invalidCredentials', rate_limited: 'auth.errors.rateLimited' }
+function authErrorMessage(error: unknown): string { if (error instanceof ApiError) { const key = messages[error.code]; return key ? t(key) : error.message } return error instanceof Error ? error.message : t('auth.errors.generic') }
 
 export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false), loading = ref(false), session = ref<BrowserSession | null>(null), error = ref<string | null>(null)

@@ -255,6 +255,84 @@ test('full login -> project -> seed proposal -> approve -> version -> export -> 
   }
 });
 
+test('simulate evaluates an unpublished candidate draft over HTTP', async () => {
+  const harness = await createHarness();
+  try {
+    const auth = await loginHuman(harness);
+    const project = await createProject(harness, auth);
+    const candidate = await seedCandidate(harness, auth);
+    const action = {
+      tool: 'read',
+      operation: 'file_read',
+      target: join(harness.dir, 'workspace/secret.txt'),
+    };
+
+    const draft = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/simulate`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({ action, candidate }),
+      },
+    );
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
+    assert.ok(
+      ['allow', 'confirm', 'deny', 'log'].includes(
+        (draft.body as { verdict: string }).verdict,
+      ),
+    );
+    const projectAfter = await fetchJson(
+      harness,
+      `/api/projects/${project.id}`,
+      { headers: { Cookie: auth.cookie } },
+    );
+    assert.equal(
+      (projectAfter.body as { currentVersion: number | null }).currentVersion,
+      null,
+      'candidate simulation must not publish',
+    );
+
+    const both = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/simulate`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({ action, candidate, version: 1 }),
+      },
+    );
+    assert.equal(both.status, 400);
+    assert.deepEqual(both.body, { error: { code: 'invalid_request' } });
+
+    const invalid = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/simulate`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({ action, candidate: { rules: 'nope' } }),
+      },
+    );
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(invalid.body, { error: { code: 'candidate_invalid' } });
+
+    const missingVersion = await fetchJson(
+      harness,
+      `/api/projects/${project.id}/simulate`,
+      {
+        method: 'POST',
+        headers: humanHeaders(auth, harness.url),
+        body: JSON.stringify({ action, version: 1 }),
+      },
+    );
+    assert.equal(missingVersion.status, 404);
+    assert.deepEqual(missingVersion.body, { error: { code: 'not_found' } });
+  } finally {
+    await harness.close();
+  }
+});
+
 test('Host is unique, numeric, and bound to the actual loopback port', async () => {
   const harness = await createHarness();
   try {

@@ -209,7 +209,7 @@ export function compileAdvisorySnapshot(
     rules,
     routes,
   };
-  const computedDigest = `sha256:${sha256(stableStringify(content))}`;
+  const computedDigest = `sha256:${sha256(JSON.stringify(sortForDigest(content)))}`;
 
   let advisoryDigest = computedDigest;
   if (hasOwn(record, 'advisoryDigest')) {
@@ -480,10 +480,6 @@ function isPrivatePathHint(normalized: string): boolean {
     );
   }
   return false;
-}
-
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortForDigest(value));
 }
 
 function sortForDigest(value: unknown): unknown {

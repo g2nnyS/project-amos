@@ -34,7 +34,6 @@ const baseline = computed<Candidate>(() => store.policy?.candidate ?? { rules: [
 const stale = computed(() => !!proposal.value && proposal.value.baseVersion !== (store.policy?.version ?? 0))
 const expired = computed(() => !!proposal.value && Date.parse(proposal.value.expiresAt) <= Date.now())
 const pending = computed(() => proposal.value?.status === 'pending' && !expired.value)
-const badgeStatus: Record<string, string> = { pending: 'pending', approved: 'approved', rejected: 'rejected', withdrawn: 'withdrawn', expired: 'expired' }
 
 async function load() {
   const ticket = ++generation
@@ -115,7 +114,7 @@ async function submit() {
             <h2 class="text-base font-semibold">{{ proposal.title }}</h2>
             <p class="panel-kicker">{{ t('proposal.id', { id: proposal.id }) }}</p>
           </div>
-          <StatusBadge :status="badgeStatus[proposal.status]" />
+          <StatusBadge :status="proposal.status" />
         </div>
         <div class="panel-body grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
           <div><dt class="text-[11px] text-muted-foreground">{{ t('proposal.author') }}</dt><dd>{{ proposal.author.id }} · {{ proposal.author.role }}</dd></div>

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createAuthorizationCore } from './authorization.ts';
 import { makeSnapshot, makeLease, makeContext, makeRequest, TEST_NOW } from './test-support.ts';
 import { digest } from '../activation/json.ts';
-import type { CapabilityLease } from './contracts.ts';
 import { createProjectActivationCompiler } from '../activation/compiler.ts';
 import { entry } from '../activation/test-support.ts';
 import { RAW_SCHEMA } from '../activation/test-support.ts';

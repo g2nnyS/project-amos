@@ -270,7 +270,7 @@ export function createGovernanceServer(
     const pathname = url.pathname;
 
     if (!pathname.startsWith('/api/')) {
-      await handleStatic(req, res, method, req.url?.split('?', 1)[0] ?? '');
+      await handleStatic(res, method, req.url?.split('?', 1)[0] ?? '');
       return;
     }
 
@@ -279,7 +279,6 @@ export function createGovernanceServer(
   }
 
   async function handleStatic(
-    req: IncomingMessage,
     res: ServerResponse,
     method: string,
     pathname: string,
@@ -764,11 +763,14 @@ export function createGovernanceServer(
         requireMethod(method, 'POST');
         requireAnyActor(req);
         requireBrowserMutation(req, port);
-        const body = asObject(await readJsonBody(req, maxBodyBytes, requestTimeoutMs));
+        const body = asObject(
+          await readJsonBody(req, candidateMaxBodyBytes, requestTimeoutMs),
+        );
         if (!Object.prototype.hasOwnProperty.call(body, 'action')) {
           throw new HttpError(400, 'invalid_body');
         }
         const version = optionalVersion(body.version);
+        const hasCandidate = Object.prototype.hasOwnProperty.call(body, 'candidate');
         // The action is evaluated transiently and never logged by transport.
         sendJson(
           res,
@@ -776,6 +778,7 @@ export function createGovernanceServer(
           service.simulate(id, {
             action: body.action,
             ...(version === undefined ? {} : { version }),
+            ...(hasCandidate ? { candidate: body.candidate } : {}),
           }),
         );
         return;

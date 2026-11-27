@@ -46,8 +46,8 @@ export class Journal {
       this.lockPath = `/proc/self/fd/${this.dir}/${base}.lock`;
       this.lock = fs.openSync(this.lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
       this.fd = fs.openSync(`/proc/self/fd/${this.dir}/${base}`, fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
-      const st = fs.fstatSync(this.fd);
-      if (!st.isFile() || st.nlink !== 1 || (st.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && st.uid !== process.getuid())) throw new AutonomyError();
+      const stats = fs.fstatSync(this.fd);
+      if (!stats.isFile() || stats.nlink !== 1 || (stats.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stats.uid !== process.getuid())) throw new AutonomyError();
       const text = fs.readFileSync(this.fd, 'utf8');
       if (text && !text.endsWith('\n')) throw new AutonomyError();
       for (const line of text ? text.slice(0, -1).split('\n') : []) this.accept(JSON.parse(line));

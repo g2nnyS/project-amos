@@ -1,8 +1,8 @@
 # 封闭命中条件词表（G0 冻结）
 
-冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除产品专属条目后剩余 9 条。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
+冻结时间：2026-10-24。规则集翻译完成后冻结；2026-11-07 移除产品专属条目后剩余 9 条安全规则。当前示例表共 21 条：9 条 `policy_class: security`（6 条 deterministic + 3 条 advisory_only）与 12 条 `policy_class: engineering` 的 advisory_only 工程规范（`engineering-2-1` 至 `engineering-2-12`）。后续规则只能复用下表，无法表达时标 `advisory_only`，不得新增一次性命中条件操作符。机器字段名保留 `predicate`；中文口径统一为「命中条件」。
 
-规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 9 条规则的 `policy_class` 均为 `security`。
+规则表采用严格 schema：顶层数组至少 1 条规则；`rule`、`source`、`predicate` 及每种 `args` 均禁止未知字段。每条规则必须声明 `policy_class`（`security` 或 `engineering`）与 `enforcement`（`runtime`、`ci`、`server` 或 `advisory`）。`advisory_only` 必须搭配 `enforcement: advisory` 且 `predicate: null`；`deterministic` 只能使用 `runtime`、`ci` 或 `server`。当前 21 条规则中 9 条为 `security`（6 条 deterministic runtime、3 条 advisory_only），12 条为 `engineering` 的 advisory_only 工程规范。
 
 当前引擎中只有 `predicate`、`on_hit` 和 `ttl` 直接参与裁决；`dimension`、`scope`、`owner`、`policy_class` 与 `enforcement` 是经过校验并写入审计的治理元数据。按 `scope` 选规则、按 `owner` 实施写权限、按 `policy_class` 选择策略包尚未实现，不能当成已成立的能力。
 

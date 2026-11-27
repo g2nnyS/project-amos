@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { FlaskConical, Play } from 'lucide-vue-next'
+import { Play } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { useGovernanceStore } from '@/stores/governance'
+import SimulationPresets from '@/components/editor/SimulationPresets.vue'
 import type { PolicyDecision } from '@/types'
+import type { SimulationAction } from '@/lib/simulatePresets'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { Button } from '@/components/ui/button'
@@ -27,6 +29,13 @@ function invalidateResult() {
   error.value = ''
   loading.value = false
 }
+
+function applyPreset(action: SimulationAction) {
+  tool.value = action.tool
+  operation.value = action.operation
+  target.value = action.target
+}
+
 watch([tool, operation, target, version, () => governance.policy?.version], invalidateResult, { flush: 'sync' })
 watch(() => governance.activeProjectId, () => {
   invalidateResult()
@@ -72,6 +81,7 @@ async function simulate() {
       <section class="panel">
         <div class="panel-header"><div><h2 class="panel-title">{{ t('simulate.inputTitle') }}</h2></div></div>
         <form class="space-y-4 p-4" @submit.prevent="simulate">
+          <SimulationPresets :workspace="governance.activeProject?.workspace" @apply-preset="applyPreset" />
           <label class="field">
             <span class="field-label">{{ t('simulate.tool') }}</span>
             <input v-model="tool" required class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />

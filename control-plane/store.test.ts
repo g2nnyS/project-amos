@@ -615,6 +615,109 @@ test('simulate uses published enforcement rules and treats rule TTL as engine ti
   assert.equal(cp.simulate(project.id, { action }).verdict, 'allow');
 });
 
+test('candidate simulation evaluates an unpublished draft without publishing it', (t) => {
+  const dir = makeTempDir(t);
+  const clock = createTestClock();
+  let artifactWrites = 0;
+  const cp = createControlPlane({
+    databasePath: join(dir, 'governance.sqlite'),
+    rawSchema: readSchema(),
+    now: clock.now,
+    publishArtifact: () => {
+      artifactWrites += 1;
+    },
+  });
+  t.after(() => cp.close());
+  const project = createProject(cp);
+
+  const published = createSimpleProposal(cp, project.id, clock, {
+    candidate: makeCandidate([makeRule('published-deny')]),
+  });
+  approve(cp, published);
+  const read = {
+    tool: 'read',
+    operation: 'file_read',
+    target: '/workspace/demo/secret.txt',
+  };
+  const write = {
+    tool: 'write',
+    operation: 'file_write',
+    target: '/workspace/demo/out.txt',
+  };
+  assert.equal(cp.simulate(project.id, { action: read }).verdict, 'deny');
+
+  const draft = makeCandidate([
+    makeRule('draft-deny', {
+      predicate: [{ op: 'op_in', args: { operations: ['file_write'] } }],
+    }),
+  ]);
+  const auditBefore = auditOf(cp, project.id).length;
+  assert.equal(
+    cp.simulate(project.id, { action: read, candidate: draft }).verdict,
+    'allow',
+  );
+  const draftWrite = cp.simulate(project.id, { action: write, candidate: draft });
+  assert.equal(draftWrite.verdict, 'deny');
+  assert.deepEqual(draftWrite.matched_rule_ids, ['draft-deny']);
+
+  // The published version and its published path remain untouched.
+  assert.equal(
+    cp.simulate(project.id, { action: read, version: 1 }).verdict,
+    'deny',
+  );
+  assert.equal(cp.getProject(project.id).currentVersion, 1);
+  assert.equal(cp.listVersions(project.id).length, 1);
+  assert.equal(cp.listProposals(project.id).length, 1);
+  assert.equal(auditOf(cp, project.id).length, auditBefore);
+  assert.equal(artifactWrites, 1);
+});
+
+test('candidate simulation works before the project has a published version', (t) => {
+  const { cp } = createServiceFixture(t);
+  const project = createProject(cp);
+  const read = {
+    tool: 'read',
+    operation: 'file_read',
+    target: '/workspace/demo/secret.txt',
+  };
+  const draft = makeCandidate([makeRule('unpublished-deny')]);
+
+  const decision = cp.simulate(project.id, { action: read, candidate: draft });
+  assert.equal(decision.verdict, 'deny');
+  assert.deepEqual(decision.matched_rule_ids, ['unpublished-deny']);
+  assert.equal(cp.getProject(project.id).currentVersion, null);
+  assert.deepEqual(cp.listVersions(project.id), []);
+  assert.equal(kinds(cp, project.id).includes('project_created'), true);
+  assert.equal(kinds(cp, project.id).includes('version_published'), false);
+});
+
+test('candidate simulation rejects version pairing and invalid drafts', (t) => {
+  const { cp } = createServiceFixture(t);
+  const project = createProject(cp);
+  const action = {
+    tool: 'read',
+    operation: 'file_read',
+    target: '/workspace/demo/secret.txt',
+  };
+  const draft = makeCandidate([makeRule('draft-rule')]);
+
+  expectDomainError(
+    () => cp.simulate(project.id, { action, candidate: draft, version: 1 }),
+    'invalid_request',
+    400,
+  );
+  expectDomainError(
+    () => cp.simulate(project.id, { action, candidate: { rules: 'nope' } }),
+    'candidate_invalid',
+    400,
+  );
+  expectDomainError(
+    () => cp.simulate(project.id, { action }),
+    'not_found',
+    404,
+  );
+});
+
 test('approval revalidates the stored proposal digest before publishing', (t) => {
   const { cp, clock, databasePath } = createServiceFixture(t);
   const project = createProject(cp);
@@ -1179,4 +1282,75 @@ test('rollout promotion rejects prototype-affecting rule ids before any write', 
     Object.getOwnPropertyNames(Object.prototype).sort(),
     prototypeKeysBefore,
   );
+});
+
+
+test('human can delete a rule state by setting it to null', (t) => {
+  const { cp, clock } = createServiceFixture(t);
+  const project = createProject(cp);
+  const ruleId = 'test-rule';
+
+  // Publish a version with a rule
+  const rule = makeRule(ruleId);
+  approve(
+    cp,
+    createSimpleProposal(cp, project.id, clock, {
+      candidate: makeCandidate([rule]),
+    }),
+  );
+
+  // Set initial rollout state and threshold
+  cp.updateProjectConfig(
+    project.id,
+    {
+      rollout: {
+        ruleStates: {
+          [ruleId]: 'log_only',
+        },
+        thresholdsByRule: {
+          [ruleId]: createPromotionThresholds({
+            format: 'amos-rollout-thresholds',
+            version: 1,
+            id: 'threshold-test',
+            ruleRef: { id: ruleId, version: 1 },
+            fromStage: 'draft',
+            toStage: 'log_only',
+            minViolationCases: 1,
+            minControlCases: 1,
+            minCoverage: 1,
+            maxFalseAllowRate: 0,
+            maxFalseDenyRate: 0,
+            requiredHosts: [],
+            requiredEnvironments: [],
+            reviewer: null,
+            registeredAt: clock.now() - 1_000,
+            expiresAt: clock.now() + 3_600_000,
+          }),
+        },
+      },
+    },
+    human(),
+  );
+
+  let config = cp.getProjectConfig(project.id);
+  assert.equal(config.rollout.ruleStates[ruleId], 'log_only');
+  assert.equal(Object.hasOwn(config.rollout.thresholdsByRule, ruleId), true);
+
+  // Delete the rule state by setting it to null
+  cp.updateProjectConfig(
+    project.id,
+    {
+      rollout: {
+        ruleStates: {
+          [ruleId]: null,
+        },
+      },
+    },
+    human(),
+  );
+
+  config = cp.getProjectConfig(project.id);
+  assert.equal(Object.hasOwn(config.rollout.ruleStates, ruleId), false);
+  // Associated threshold should also be deleted
+  assert.equal(Object.hasOwn(config.rollout.thresholdsByRule, ruleId), false);
 });

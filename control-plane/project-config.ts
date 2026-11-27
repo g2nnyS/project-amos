@@ -502,10 +502,19 @@ function normalizeRollout(
     if (entries.length > MAX_ROLLOUT_MAP) throw new DomainError('invalid_request');
     ruleStates = {};
     for (const [key, state] of entries) {
-      if (!isValidRuleKey(key) || !isRolloutStage(state)) {
+      if (!isValidRuleKey(key)) {
         throw new DomainError('invalid_request');
       }
-      ruleStates[key] = state;
+      // null deletes the rule state; non-null must be a valid stage
+      if (state !== null && !isRolloutStage(state)) {
+        throw new DomainError('invalid_request');
+      }
+      if (state !== null) {
+        ruleStates[key] = state;
+      } else {
+        // Also remove any associated thresholds when deleting a rule
+        delete thresholdsByRule[key];
+      }
     }
   }
   if (Object.keys(thresholdsByRule).length > MAX_ROLLOUT_MAP) {

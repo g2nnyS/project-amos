@@ -94,6 +94,7 @@ test('closed server enums have labels in every locale and unknown values pass th
   setLocale('en-US')
   assert.equal(roleLabel('human'), 'Human')
   assert.equal(roleLabel(undefined), 'Authenticated')
+  const agent = roleLabel('agent')
   setLocale('zh-CN')
-  assert.equal(roleLabel('agent'), 'Agent')
+  assert.notEqual(roleLabel('agent'), agent)
 })

@@ -379,10 +379,6 @@ function deepEqual(left: unknown, right: unknown): boolean {
   return false;
 }
 
-function opencodeAdapterDirFor(adapterDir: string): string {
-  return adapterDir.replace(/\\/g, '/').replace(/\/+$/, '');
-}
-
 function plannedOpencodeEntry(adapterDir: string): Record<string, unknown> {
   return {
     package: adapterDir,
@@ -423,7 +419,7 @@ export function findAmosPluginEntry(
 
   for (const entry of plugins) {
     if (!isRecord(entry) || typeof entry.package !== 'string') continue;
-    const normalized = opencodeAdapterDirFor(entry.package);
+    const normalized = entry.package.replace(/\\/g, '/').replace(/\/+$/, '');
     if (!normalized.includes(AMOS_OPENCODE_ADAPTER_SEGMENT)) continue;
     const expected = planned ?? plannedOpencodeEntry(adapterDir);
     return {
