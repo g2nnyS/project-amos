@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
@@ -7,15 +7,29 @@ const auth = useAuthStore()
 const password = ref(''), confirmation = ref(''), token = ref('')
 const setupRequired = computed(() => auth.authentication?.setupRequired === true)
 const needsEnrollmentToken = computed(() => setupRequired.value && !auth.setupGranted)
+const mode = ref<'password' | 'token'>('password')
+
+// Default to password setup on every fresh login surface; no persisted skip.
+watch(setupRequired, () => { mode.value = 'password' }, { immediate: true })
+
+function setMode(next: 'password' | 'token') {
+  mode.value = next
+  auth.error = null
+}
+
 async function submit() {
   if (auth.loading) return
-  if (setupRequired.value) {
+  if (setupRequired.value && mode.value === 'password') {
     if (password.value.length < 12 || password.value.length > 1024) { auth.error = t('auth.errors.passwordLength'); return }
     if (password.value !== confirmation.value) { auth.error = t('auth.passwordMismatch'); return }
     try {
       await auth.setup(password.value, needsEnrollmentToken.value ? { token: token.value } : undefined)
       password.value = ''; confirmation.value = ''; token.value = ''
     } catch {}
+    return
+  }
+  if (mode.value === 'token') {
+    try { await auth.login(token.value); token.value = '' } catch {}
     return
   }
   try { await auth.loginWith({ method: 'password', password: password.value }); password.value = '' } catch {}
@@ -28,34 +42,84 @@ async function submit() {
         <div class="login-body">
           <div class="login-head">
             <p class="eyebrow">{{ t('auth.eyebrow') }}</p>
-            <h1 id="login-title" class="login-title">{{ setupRequired ? t('auth.setupTitle') : t('auth.loginTitle') }}</h1>
-            <p class="login-lede">{{ setupRequired ? t('auth.setupLede') : t('auth.loginLede') }}</p>
+            <h1 id="login-title" class="login-title">
+              {{ setupRequired && mode === 'password' ? t('auth.setupTitle') : t('auth.loginTitle') }}
+            </h1>
+            <p class="login-lede">
+              {{ setupRequired
+                ? (mode === 'token' ? t('auth.loginTokenLede') : t('auth.setupLede'))
+                : (mode === 'token' ? t('auth.loginTokenLede') : t('auth.loginLede')) }}
+            </p>
           </div>
 
           <form class="login-form" :aria-busy="auth.loading" @submit.prevent="submit">
             <template v-if="setupRequired">
-              <label class="field">
-                <span class="field-label">{{ t('auth.newPassword') }}</span>
-                <input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required class="control login-control" />
-              </label>
-              <label class="field">
-                <span class="field-label">{{ t('auth.confirmPassword') }}</span>
-                <input v-model="confirmation" type="password" autocomplete="new-password" required class="control login-control" />
-              </label>
-              <label v-if="needsEnrollmentToken" class="field">
-                <span class="field-label">{{ t('auth.enrollmentToken') }}</span>
-                <input v-model="token" type="password" autocomplete="off" required class="control login-control" />
-                <span class="field-hint">{{ t('auth.enrollmentTokenHelp') }}</span>
+              <div class="segmented" role="group" :aria-label="t('auth.setupModeLabel')">
+                <button
+                  type="button"
+                  class="segmented-item"
+                  :aria-pressed="mode === 'password'"
+                  @click="setMode('password')"
+                >
+                  {{ t('auth.setupModePassword') }}
+                </button>
+                <button
+                  type="button"
+                  class="segmented-item"
+                  :aria-pressed="mode === 'token'"
+                  @click="setMode('token')"
+                >
+                  {{ t('auth.setupModeToken') }}
+                </button>
+              </div>
+              <p v-if="mode === 'password'" class="login-hint">{{ t('auth.setupOptionalHint') }}</p>
+            </template>
+
+            <template v-if="mode === 'password'">
+              <template v-if="setupRequired">
+                <label class="field">
+                  <span class="field-label">{{ t('auth.newPassword') }}</span>
+                  <input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required class="control login-control" />
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ t('auth.confirmPassword') }}</span>
+                  <input v-model="confirmation" type="password" autocomplete="new-password" required class="control login-control" />
+                </label>
+                <label v-if="needsEnrollmentToken" class="field">
+                  <span class="field-label">{{ t('auth.enrollmentToken') }}</span>
+                  <input v-model="token" type="password" autocomplete="off" required class="control login-control" />
+                  <span class="field-hint">{{ t('auth.enrollmentTokenHelp') }}</span>
+                </label>
+              </template>
+
+              <label v-else class="field">
+                <span class="field-label">{{ t('auth.password') }}</span>
+                <input v-model="password" type="password" autocomplete="current-password" required class="control login-control" />
               </label>
             </template>
 
-            <label v-else class="field">
-              <span class="field-label">{{ t('auth.password') }}</span>
-              <input v-model="password" type="password" autocomplete="current-password" required class="control login-control" />
-            </label>
+            <template v-else>
+              <label class="field">
+                <span class="field-label">{{ t('auth.tokenLabel') }}</span>
+                <input v-model="token" type="password" autocomplete="off" required class="control login-control" />
+                <span class="field-hint">{{ t('auth.tokenHelp') }}</span>
+              </label>
+            </template>
 
             <p v-if="auth.error" class="login-error" role="alert">{{ auth.error }}</p>
-            <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">{{ auth.loading ? t('common.processing') : setupRequired ? t('auth.setupSubmit') : t('auth.loginSubmit') }}</Button>
+            <Button type="submit" size="sm" class="login-submit w-full" :disabled="auth.loading">
+              {{ auth.loading ? t('common.processing') : setupRequired && mode === 'password' ? t('auth.setupSubmit') : t('auth.loginSubmit') }}
+            </Button>
+
+            <p v-if="!setupRequired" class="login-mode-toggle">
+              <button
+                type="button"
+                class="login-mode-link"
+                @click="setMode(mode === 'password' ? 'token' : 'password')"
+              >
+                {{ mode === 'password' ? t('auth.useTokenInstead') : t('auth.usePasswordInstead') }}
+              </button>
+            </p>
           </form>
         </div>
       </section>
@@ -141,6 +205,36 @@ async function submit() {
   display: grid;
   gap: 11px;
   margin-top: 18px;
+}
+
+.login-hint {
+  color: hsl(var(--muted-foreground));
+  font-size: 11.5px;
+  line-height: 1.55;
+  margin-top: -4px;
+}
+
+.login-mode-toggle {
+  text-align: center;
+  margin-top: 2px;
+}
+
+.login-mode-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 90ms linear;
+}
+
+.login-mode-link:hover {
+  color: hsl(var(--foreground));
 }
 
 .login-control {

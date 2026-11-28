@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { ApiClient, ApiError, api } from '../src/lib/api.js'
+import { t } from '../src/i18n/index.js'
 import { useAuthStore } from '../src/stores/auth.js'
 import type { AuthMethod } from '../src/types/index.js'
 
@@ -208,4 +209,26 @@ test('auth store logout epoch prevents a delayed native login from reviving sess
   assert.equal(auth.loading, false)
   assert.equal(auth.error, null)
   assert.deepEqual(calls, ['/api/session', '/api/logout'])
+})
+
+test('token login maps server auth errors to the localized auth.error surface', async ctx => {
+  browser(ctx)
+  const previousFetch = globalThis.fetch
+  ctx.after(() => { globalThis.fetch = previousFetch; api.invalidate() })
+  let attempt = 0
+  globalThis.fetch = async path => {
+    if (path === '/api/session') return json(anonymous('token-csrf', false, ['token']))
+    attempt++
+    return json({ error: { code: attempt === 1 ? 'invalid_credentials' : 'rate_limited' } }, 401)
+  }
+  api.invalidate()
+  const pinia = createPinia(); setActivePinia(pinia); ctx.after(() => disposePinia(pinia))
+  const auth = useAuthStore()
+  await auth.bootstrap()
+  assert.deepEqual(auth.methods, ['token'])
+  await assert.rejects(auth.login('wrong-token'), (e: unknown) => e instanceof ApiError && (e as ApiError).code === 'invalid_credentials')
+  assert.equal(auth.error, t('auth.errors.invalidCredentials'))
+  await assert.rejects(auth.login('wrong-token-again'), (e: unknown) => e instanceof ApiError && (e as ApiError).code === 'rate_limited')
+  assert.equal(auth.error, t('auth.errors.rateLimited'))
+  assert.equal(auth.authenticated, false)
 })
