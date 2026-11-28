@@ -424,28 +424,52 @@ try {
   const harnessCardText = (name) =>
     `(Array.from(document.querySelectorAll('article')).find(e => e.querySelector('h3')?.textContent.trim() === ${q(name)})?.innerText ?? '')`
 
-  await check('first launch sets a desktop password through the one-time setup grant', async () => {
+  await check('first launch offers token sign-in, then password setup through the one-time grant', async () => {
     await waitFor(`document.querySelector('h1')?.textContent.includes('设置登录密码')`)
     await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2`)
     assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="current-password"]')`), false)
     assert.equal(await evaluate(`!!document.querySelector('input[autocomplete="off"]')`), false)
     const bodyText = await evaluate('document.body.innerText')
-    assert.equal(/human\s*token/i.test(bodyText), false, 'setup page still mentions a human token')
-    assert.equal(/token\s*恢复/i.test(bodyText), false, 'setup page still offers token recovery')
-    await screenshot('desktop-password-setup')
+    assert.equal(/人类令牌/.test(bodyText), true, 'setup page no longer offers human token sign-in')
+    assert.equal(/token\s*恢复/i.test(bodyText), false, 'setup page still mentions token recovery')
+    await screenshot('desktop-setup-choice')
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
-    await screenshot('mobile-password-setup')
+    await screenshot('mobile-setup-choice')
     await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
-    await setBySelector('input[autocomplete="new-password"]', password)
-    await setByLabel('确认密码', password + '-mismatch')
-    await click('button', '设置密码')
-    await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
-    await setByLabel('确认密码', password)
-    await click('button', '设置密码')
+
+    // Skip password setup and sign in with the human token.
+    await click('button', '使用人类令牌')
+    await waitFor(`document.querySelector('h1')?.textContent.includes('登录控制台')`)
+    await waitFor(`document.querySelectorAll('input[autocomplete="off"]').length === 1`)
+    assert.equal(await evaluate(`document.querySelectorAll('input[autocomplete="new-password"]').length`), 0)
+    assert.equal(await evaluate(`document.querySelectorAll('input[autocomplete="current-password"]').length`), 0)
+    await screenshot('desktop-token-login')
+    await setByLabel('人类令牌', token)
+    await click('button[type="submit"]')
     await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('全局规则')`)
     const selectedGlobal = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.trim() === '全局'`)
-    assert.equal(selectedGlobal, true, 'global project is not selected by default')
+    assert.equal(selectedGlobal, true, 'global project is not selected by default after token sign-in')
+
+    // Logging out brings the choice back because no password exists yet.
+    await click('[aria-label="退出登录"]')
+    await waitFor(visible('input[type=password]'))
+    const sessionAfterLogout = await evaluate(`fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s => s.authenticated)`)
+    assert.equal(sessionAfterLogout, false, 'server session remained authenticated after logout')
+
+    // Set a password by enrolling with the human token (the one-time desktop
+    // grant was already consumed during the first bootstrap).
+    await waitFor(`document.querySelectorAll('input[autocomplete="new-password"]').length === 2`)
+    await setBySelector('input[autocomplete="new-password"]', password)
+    await setByLabel('确认密码', password + '-mismatch')
+    await setByLabel('人类令牌', token)
+    await click('button[type="submit"]')
+    await waitFor(`document.querySelector('[role="alert"]')?.textContent.includes('不一致')`)
+    await setByLabel('确认密码', password)
+    await click('button[type="submit"]')
+    await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('全局规则')`)
+    const selectedGlobalAfterSetup = await evaluate(`Array.from(document.querySelectorAll('#project-select option')).find(o => o.selected)?.textContent.trim() === '全局'`)
+    assert.equal(selectedGlobalAfterSetup, true, 'global project is not selected by default after password setup')
     const stored = await readFile(path.join(dataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)
     assert.equal((await stat(path.join(dataDir, 'human-password.json'))).mode & 0o777, 0o600)
@@ -1637,7 +1661,7 @@ try {
     await setBySelector('input[autocomplete="new-password"]', password)
     await setByLabel('确认密码', password)
     await setByLabel('人类令牌', token)
-    await click('button', '设置密码')
+    await click('button[type="submit"]')
     await waitFor(`!document.querySelector('.login-shell') && ${visible('nav[aria-label="主导航"]')} && document.body.innerText.includes('新建项目')`)
     const stored = await readFile(path.join(enrollmentDataDir, 'human-password.json'), 'utf8')
     assert.equal(stored.includes(password), false)

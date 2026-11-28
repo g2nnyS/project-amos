@@ -34,7 +34,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(token: string) {
     clear(); const current = ++epoch; loading.value = true; error.value = null
     try { const value = await api.login(token); if (current !== epoch) return; session.value = publicSession(value); ready.value = true }
-    catch (e) { if (current === epoch) { session.value = null; error.value = e instanceof Error ? e.message : t('auth.errors.login') } throw e }
+    catch (e) { if (current === epoch) { session.value = null; error.value = authErrorMessage(e) } throw e }
     finally { if (current === epoch) { loading.value = false; ready.value = true } }
   }
   async function loginWith(value: LoginCredentials) {
